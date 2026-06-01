@@ -45,6 +45,23 @@ APK подписан стабильным release-сертификатом (сх
   эффективность каждой анти-DPI хитрости.
 - **Каталог прокси** — топ по рейтингу с детальной карточкой по каждому хосту.
 
+## 📸 Скриншоты
+
+<table>
+<tr>
+<td align="center"><img src="docs/screenshots/connector.png" width="200"><br><sub>Коннектор — Telegram подключён</sub></td>
+<td align="center"><img src="docs/screenshots/scan.png" width="200"><br><sub>Скан и статистика</sub></td>
+<td align="center"><img src="docs/screenshots/catalog.png" width="200"><br><sub>Каталог прокси</sub></td>
+<td align="center"><img src="docs/screenshots/logs.png" width="200"><br><sub>Логи релея</sub></td>
+</tr>
+<tr>
+<td align="center"><img src="docs/screenshots/settings.png" width="200"><br><sub>Настройки</sub></td>
+<td align="center"><img src="docs/screenshots/subscriptions.png" width="200"><br><sub>Подписки (источники)</sub></td>
+<td align="center"><img src="docs/screenshots/export.png" width="200"><br><sub>Экспорт tg://-ссылок</sub></td>
+<td align="center"><img src="docs/screenshots/connector-active.png" width="200"><br><sub>Коннектор — активная сессия</sub></td>
+</tr>
+</table>
+
 ## 🏗️ Архитектура
 
 Стек — **Kotlin Multiplatform (KMP) + Compose Multiplatform**.
