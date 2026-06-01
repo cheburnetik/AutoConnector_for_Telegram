@@ -62,49 +62,6 @@ APK подписан стабильным release-сертификатом (сх
 </tr>
 </table>
 
-## 🏗️ Архитектура
-
-Стек — **Kotlin Multiplatform (KMP) + Compose Multiplatform**.
-
-Суть приложения — нативный сетевой движок (слушающие TCP-сокеты, MTProto-крипто
-на сырых сокетах, фоновые задачи, SQLite), поэтому KMP переиспользует один движок
-и даёт единый адаптивный UI на все платформы.
-
-| Модуль | Что внутри |
-|---|---|
-| `commonMain` | общий UI на Compose, модели, бизнес-логика |
-| `androidMain` | foreground-service релей, Android-специфика, движок |
-| `jvmMain` *(план)* | desktop-релей (Windows/macOS/Linux), tray |
-| `iosMain` *(план)* | Kotlin/Native для Network Extension |
-
-Принцип: один Compose-UI в `commonMain`, адаптивный по ширине окна — отдельной
-вёрстки под телефон и ПК нет.
-
-### Целевые платформы
-
-Windows, macOS, Linux (desktop), Android, iOS. На текущий момент собрана и
-работает **Android-версия**; desktop и iOS — в планах.
-
-> **iOS — особенность платформы.** iOS на уровне ОС запрещает локальный
-> релей-демон со слушающими сокетами (только через Network Extension с
-> платным Apple Dev-аккаунтом). Это ограничение самой iOS, не фреймворка;
-> crypto/relay-логику на Kotlin/Native можно затащить внутрь Network Extension.
-
-## 🔧 Сборка
-
-Требования: JDK 17, Android SDK (compileSdk 34), Gradle 8.7+.
-
-```bash
-# Debug-сборка
-gradle :composeApp:assembleDebug
-
-# Release-сборка (неподписанная)
-gradle :composeApp:assembleRelease
-```
-
-Стек версий: Kotlin 2.0.21 · AGP 8.5.2 · Compose Multiplatform 1.6.11.
-
-APK: `composeApp/build/outputs/apk/`.
 
 ## 🔐 Проверка подписи
 
