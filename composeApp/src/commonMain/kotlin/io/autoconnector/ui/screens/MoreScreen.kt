@@ -30,6 +30,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -150,6 +151,7 @@ private fun SettingsPage(cb: MoreCallbacks) {
     var skipLow by remember { mutableStateOf(s.skipLowBattery) }
     var dpiRelay by remember { mutableStateOf(s.dpiApplyRelay) }
     var dpiProbes by remember { mutableStateOf(s.dpiApplyProbes) }
+    var vpnMode by remember { mutableStateOf(s.proxyModeCode) }
     var hsExpanded by remember { mutableStateOf(false) }
     var help by remember { mutableStateOf<Pair<String, String>?>(null) }
 
@@ -162,6 +164,7 @@ private fun SettingsPage(cb: MoreCallbacks) {
                 handshakeMode = hs,
                 notificationsEnabled = notif,
                 onlyFakeTls = fakeTls,
+                proxyModeCode = vpnMode,
                 scanIntervalMin = scanInt.toIntOrNull() ?: s.scanIntervalMin,
                 checkIntervalMin = checkInt.toIntOrNull() ?: s.checkIntervalMin,
                 checkBatch = batch.toIntOrNull() ?: s.checkBatch,
@@ -226,6 +229,26 @@ private fun SettingsPage(cb: MoreCallbacks) {
         }
         SwitchRow("Релею Telegram", dpiRelay) { dpiRelay = it; save() }
         SwitchRow("Пробам прокси", dpiProbes) { dpiProbes = it; save() }
+
+        Section("При включённом VPN") {
+            help = "При включённом VPN" to
+                "Что делать, когда на устройстве активен VPN:\n" +
+                "• Через MTProto-прокси — Telegram, как обычно, идёт через найденные " +
+                "прокси (поверх VPN).\n" +
+                "• Напрямую — Коннектор НЕ использует прокси и соединяет Telegram напрямую " +
+                "с серверами Telegram: VPN уже даёт доступ, лишний прокси-слой не нужен " +
+                "(быстрее и стабильнее). Без VPN прокси используются как обычно."
+        }
+        ChoiceRow(
+            "Проксировать через MTProto",
+            "даже при VPN трафик идёт через прокси",
+            selected = vpnMode != "vpn_only",
+        ) { vpnMode = "use"; save() }
+        ChoiceRow(
+            "Проксировать напрямую",
+            "при активном VPN — в обход прокси, прямо к Telegram",
+            selected = vpnMode == "vpn_only",
+        ) { vpnMode = "vpn_only"; save() }
 
         // Notifications.
         var showNotifInfo by remember { mutableStateOf(false) }
@@ -393,6 +416,21 @@ private fun SwitchRow(label: String, value: Boolean, onChange: (Boolean) -> Unit
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(label, Modifier.weight(1f), fontSize = 16.sp)
         Switch(value, onChange)
+    }
+}
+
+@Composable
+private fun ChoiceRow(title: String, desc: String, selected: Boolean, onSelect: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onSelect),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(selected = selected, onClick = onSelect)
+        Spacer(Modifier.width(4.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, fontSize = 16.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
+            Text(desc, color = AppColors.onSurfaceMuted, fontSize = 14.sp)
+        }
     }
 }
 
