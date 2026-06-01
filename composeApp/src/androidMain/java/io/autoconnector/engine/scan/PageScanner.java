@@ -79,6 +79,13 @@ public final class PageScanner {
             "https://t.me/s/mtp4tg",
             "https://t.me/s/TURKMEN_VPNLAR",
             "https://t.me/s/proxy_tm_unlimited",
+            "https://t.me/s/TProxyRU",
+            "https://t.me/s/mtproto_poc",
+            "https://t.me/s/ProxyFreeMTProto",
+            "https://t.me/s/mtprotoF",
+            "https://t.me/s/mtproto6",
+            "https://t.me/s/telega_mtproto",
+            "https://t.me/s/mtprotoproxy_telegaram",
             "https://tgstat.com/channel/@TURKMEN_VPNLAR",
             // GitHub raw plain-text lists
             "https://raw.githubusercontent.com/ALIILAPRO/MTProtoProxy/main/mtproto.txt",
