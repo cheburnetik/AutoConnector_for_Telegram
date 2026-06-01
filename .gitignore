@@ -1,0 +1,24 @@
+# Build outputs
+build/
+.gradle/
+.kotlin/
+captures/
+
+# Local config (may contain machine-specific SDK paths)
+local.properties
+
+# Signing material — NEVER commit private keys
+*.keystore
+*.jks
+keystore.properties
+signing.properties
+
+# Packaged apps (distributed via GitHub Releases, not git)
+*.apk
+*.aab
+*.idsig
+
+# IDE / OS
+.idea/
+*.iml
+.DS_Store

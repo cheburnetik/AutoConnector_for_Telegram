@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Compose draws the whole UI; we only need a no-action-bar host theme.
+         Use a platform Material theme so we don't pull in the appcompat XML
+         stack. The window background is the light "card" surface. -->
+    <style name="Theme.AutoConnector" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@android:color/white</item>
+        <item name="android:statusBarColor">#0088CC</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>
