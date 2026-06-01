@@ -91,6 +91,8 @@ public final class PageScanner {
             "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/TELEGRAM_PROXY_SUB/refs/heads/main/telegram_proxy_no2.txt",
             "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/TELEGRAM_PROXY_SUB/refs/heads/main/telegram_proxy_no3.txt",
             "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/TELEGRAM_PROXY_SUB/refs/heads/main/telegram_proxy_no4.txt",
+            // Forum threads (paginated — last pages are walked automatically)
+            "https://4pda.to/forum/index.php?showtopic=1119405&st=9999999",
     };
 
     private static final Pattern TME_CHANNEL = Pattern.compile(
@@ -101,6 +103,15 @@ public final class PageScanner {
     /** Inter-page delay when walking ?before=N so we don't hammer t.me. */
     private static final long TME_SCROLL_DELAY_MS = 1200;
     private static final int MAX_BODY = 8 * 1024 * 1024;
+
+    /** 4pda forum topic (paginated via &st=offset). */
+    private static final Pattern TOPIC_4PDA = Pattern.compile(
+            "(?i)4pda\\.to/forum/index\\.php\\?[^\\s\"']*showtopic=\\d+");
+    /** Any {@code st=<offset>} in the page — used to discover neighbour pages. */
+    private static final Pattern ST_OFFSET = Pattern.compile("(?:&amp;|&|\\?)st=(\\d+)");
+    /** How many of the last forum pages to walk (incl. the last one). */
+    private static final int FORUM_LAST_PAGES = 5;
+    private static final long FORUM_PAGE_DELAY_MS = 1200;
 
     private final ProxyStore store;
     private final Log log;
@@ -155,6 +166,10 @@ public final class PageScanner {
         // older posts too — the bare URL only carries the latest ~20.
         if (TME_CHANNEL.matcher(pageUrl).matches()) {
             body = augmentWithOlderMessages(pageUrl, body);
+        } else if (TOPIC_4PDA.matcher(pageUrl).find()) {
+            // 4pda forum topic: the given URL (st=9999999) lands on the LAST
+            // page; also walk a few previous pages for fresher coverage.
+            body = augmentWith4pdaPages(pageUrl, body);
         }
 
         List<ProxyEntry> list = ProxyParser.parse(body, pageUrl, ProxyType.SOCKS5);
@@ -217,6 +232,64 @@ public final class PageScanner {
             all.append('\n').append(body);
             log.line("↓ дочитал старые посты до #" + minId
                     + " (+" + body.length() + " Б)");
+        }
+        return all.toString();
+    }
+
+    /**
+     * Walks the last few pages of a 4pda forum topic. The incoming URL uses
+     * {@code st=9999999}, so 4pda serves the LAST page; its pagination tells us
+     * the real last offset and the per-page step, and we read the previous
+     * {@link #FORUM_LAST_PAGES}-1 pages too. Degrades to the single last page
+     * if pagination can't be parsed.
+     */
+    private String augmentWith4pdaPages(String pageUrl, String initialBody) {
+        // Collect the st offsets present in the page's pagination.
+        java.util.TreeSet<Integer> offs = new java.util.TreeSet<>();
+        Matcher m = ST_OFFSET.matcher(initialBody);
+        while (m.find()) {
+            try {
+                int v = Integer.parseInt(m.group(1));
+                if (v >= 0 && v < 9_000_000) offs.add(v);
+            } catch (NumberFormatException ignored) {}
+        }
+        if (offs.isEmpty()) return initialBody;
+
+        int lastSt = offs.last();
+        // Step = smallest positive gap between adjacent offsets (posts per page),
+        // falling back to the 4pda default of 20.
+        int step = 20;
+        Integer prev = null;
+        int minGap = Integer.MAX_VALUE;
+        for (int v : offs) {
+            if (prev != null && v - prev > 0) minGap = Math.min(minGap, v - prev);
+            prev = v;
+        }
+        if (minGap != Integer.MAX_VALUE) step = minGap;
+
+        String base = pageUrl.replaceAll("(?i)(&amp;|&)st=\\d+", "");
+        StringBuilder all = new StringBuilder(initialBody);
+        for (int k = 1; k < FORUM_LAST_PAGES; k++) {
+            if (io.autoconnector.engine.core.ScanGate.isAborted()) break;
+            int targetSt = lastSt - step * k;
+            if (targetSt < 0) break;
+            try {
+                Thread.sleep(FORUM_PAGE_DELAY_MS);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+            String url = base + (base.contains("?") ? "&" : "?") + "st=" + targetSt;
+            try {
+                String b = fetch(url);
+                if (b.isEmpty()) break;
+                io.autoconnector.engine.traffic.ScanMetrics.INSTANCE.addBytes(b.length());
+                all.append('\n').append(b);
+                log.line("↓ 4pda: дочитал страницу st=" + targetSt + " (+" + b.length() + " Б)");
+            } catch (Exception e) {
+                log.line("↓ 4pda st=" + targetSt + " прервана: " + errorMessage(e));
+                break;
+            }
         }
         return all.toString();
     }
