@@ -1,3 +1,5 @@
+**Русский** | [English](README.en.md)
+
 # AutoConnector for Telegram (Android)
 
 **AutoConnector for Telegram** —  авто-коннектор: приложение
