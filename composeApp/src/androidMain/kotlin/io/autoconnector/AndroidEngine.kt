@@ -144,6 +144,7 @@ class AndroidEngine(context: Context) : Engine {
             skipLowBattery = p.skipLowBattery(),
             dpiApplyRelay = p.dpiApplyRelay(),
             dpiApplyProbes = p.dpiApplyProbes(),
+            langCode = p.lang(),
         )
     }
 
@@ -171,6 +172,7 @@ class AndroidEngine(context: Context) : Engine {
         p.setSkipLowBattery(s.skipLowBattery)
         p.setDpiApplyRelay(s.dpiApplyRelay)
         p.setDpiApplyProbes(s.dpiApplyProbes)
+        p.setLang(s.langCode)
         loadSettings()
         if (p.appEnabled() || p.scanEnabled()) RelayService.reconfigure(ctx)
         appendLog("⚙ настройки сохранены")

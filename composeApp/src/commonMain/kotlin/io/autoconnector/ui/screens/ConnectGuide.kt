@@ -38,6 +38,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.autoconnector.engine.EngineState
+import io.autoconnector.i18n.LocalStrings
 import io.autoconnector.ui.theme.AppColors
 
 /**
@@ -51,10 +52,12 @@ fun ConnectGuidePage(
     onOpen: (String) -> Unit,
     onBack: () -> Unit,
 ) {
+    val t = LocalStrings.current
     val portA = s.portA
     val portB = s.portB
     val linkA = "tg://socks?server=127.0.0.1&port=$portA"
     val linkB = "tg://socks?server=127.0.0.1&port=$portB"
+    fun sub(text: String) = text.replace("{A}", "$portA").replace("{B}", "$portB")
 
     Surface(Modifier.fillMaxSize(), color = AppColors.background) {
         Column(Modifier.fillMaxSize()) {
@@ -66,7 +69,7 @@ fun ConnectGuidePage(
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 Text(
-                    "Прочитайте внимательно!",
+                    t.readCarefully,
                     color = AppColors.red,
                     fontWeight = FontWeight.ExtraBold,
                     fontSize = 22.sp,
@@ -79,75 +82,35 @@ fun ConnectGuidePage(
                         .border(1.dp, AppColors.red.copy(alpha = 0.35f), RoundedCornerShape(12.dp))
                         .padding(14.dp),
                 ) {
-                    Text(
-                        "Без настройки это приложение не будет работать. Выберите любой " +
-                            "один из 3-х вариантов ниже и аккуратно выполните инструкцию.",
-                        color = AppColors.onSurface,
-                        fontSize = 14.sp,
-                        lineHeight = 20.sp,
-                    )
+                    Text(t.guideIntro, color = AppColors.onSurface, fontSize = 14.sp, lineHeight = 20.sp)
                 }
 
-                // ── Вариант №1 ──────────────────────────────────────────────
-                VariantCard("1", "Вариант №1 — кнопками") {
-                    Body(
-                        "Нажмите кнопку «Прокси $portA» — откроется Telegram, согласитесь с " +
-                            "добавлением прокси. Вернитесь в это окно и нажмите «Прокси $portB» — " +
-                            "второй раз согласитесь с добавлением.\n\n" +
-                            "Отключите в Telegram все иные старые прокси, если были. Должно " +
-                            "остаться ровно 2 прокси — с портами $portA и $portB. При любом " +
-                            "другом наборе AutoConnector работать не будет.",
-                    )
+                VariantCard("1", t.variant1) {
+                    Body(sub(t.variant1Body))
                     Spacer(Modifier.height(10.dp))
-                    ProxyButton("Прокси $portA") { onOpen(linkA) }
+                    ProxyButton(t.proxyBtn(portA)) { onOpen(linkA) }
                     Spacer(Modifier.height(8.dp))
-                    ProxyButton("Прокси $portB") { onOpen(linkB) }
+                    ProxyButton(t.proxyBtn(portB)) { onOpen(linkB) }
                 }
 
-                // ── Вариант №2 ──────────────────────────────────────────────
-                VariantCard("2", "Вариант №2 — ссылками") {
-                    Body(
-                        "Скопируйте текст ниже в «Избранное» (или любой чат) в Telegram — " +
-                            "т.е. отправьте его сами себе. Нажмите первую ссылку в своём " +
-                            "сообщении — добавится первый прокси. Нажмите вторую ссылку — " +
-                            "добавится второй. Затем отключите все старые прокси.",
-                    )
+                VariantCard("2", t.variant2) {
+                    Body(sub(t.variant2Body))
                     Spacer(Modifier.height(10.dp))
                     CopyBox("$linkA\n$linkB", onCopy)
                 }
 
-                // ── Вариант №3 ──────────────────────────────────────────────
-                VariantCard("3", "Вариант №3 — вручную") {
-                    Body(
-                        "Вручную добавьте прокси типа SOCKS5: сервер localhost (127.0.0.1), " +
-                            "порт $portA. Затем второй прокси: localhost, порт $portB. " +
-                            "Любые старые прокси удалите.",
-                    )
+                VariantCard("3", t.variant3) {
+                    Body(sub(t.variant3Body))
                     Spacer(Modifier.height(10.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        CopyChip("Хост", "127.0.0.1", onCopy)
-                        CopyChip("Порт", "$portA", onCopy)
-                        CopyChip("Порт", "$portB", onCopy)
+                        CopyChip(t.host, "127.0.0.1", onCopy)
+                        CopyChip(t.port, "$portA", onCopy)
+                        CopyChip(t.port, "$portB", onCopy)
                     }
                 }
 
-                // ── А дальше что? ───────────────────────────────────────────
-                VariantCard("✓", "А дальше что?", AppColors.green) {
-                    Body(
-                        "Убедитесь, что все другие старые прокси удалены, кроме $portA и $portB. " +
-                            "Нажмите в Telegram «Использовать прокси».\n\n" +
-                            "Подождите, пока приложение найдёт и скачает достаточно прокси " +
-                            "(5–15 минут). Затем Telegram сам подключится к AutoConnector, который " +
-                            "будет каждый раз подключать Telegram к наиболее выгодным прокси: " +
-                            "проверенным, живым и быстрым.\n\n" +
-                            "Если инструкция кажется сложной — увы, пользоваться приложением не " +
-                            "получится: автоматически всё настроить невозможно, а поиск живых " +
-                            "прокси занимает время.\n\n" +
-                            "Если вы давно скачивали приложение и живых прокси не нашлось — " +
-                            "обновите либо приложение, либо список подписок. Прокси это приложение " +
-                            "не сочиняет и не предоставляет свои, а лишь ищет по интернету среди " +
-                            "десятков групп и страниц.",
-                    )
+                VariantCard("✓", t.whatNext, AppColors.green) {
+                    Body(sub(t.whatNextBody))
                 }
 
                 Spacer(Modifier.height(8.dp))
@@ -170,9 +133,9 @@ private fun GuideTopBar(onBack: () -> Unit) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(onClick = onBack) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Назад", tint = Color.White)
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = LocalStrings.current.back, tint = Color.White)
                 }
-                Text("Подключение Telegram", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                Text(LocalStrings.current.connectTelegram, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
             }
         }
     }
@@ -248,7 +211,7 @@ private fun CopyBox(text: String, onCopy: (String) -> Unit) {
         ) {
             Icon(Icons.Filled.ContentCopy, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
             Spacer(Modifier.size(6.dp))
-            Text("Скопировать", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            Text(LocalStrings.current.copy, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
         }
     }
 }

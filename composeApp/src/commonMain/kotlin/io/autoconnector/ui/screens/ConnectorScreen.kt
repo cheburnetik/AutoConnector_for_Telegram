@@ -22,6 +22,8 @@ import androidx.compose.ui.unit.sp
 import io.autoconnector.engine.ConnState
 import io.autoconnector.engine.EngineState
 import io.autoconnector.engine.ProxyInfo
+import io.autoconnector.i18n.LocalStrings
+import io.autoconnector.i18n.Strings
 import io.autoconnector.ui.components.Caption
 import io.autoconnector.ui.components.Cell
 import io.autoconnector.ui.components.PulseCircle
@@ -32,18 +34,20 @@ import io.autoconnector.ui.theme.AppColors
 
 @Composable
 fun ConnectorContent(s: EngineState, onOpenGuide: () -> Unit) {
+    val t = LocalStrings.current
     Column(
         Modifier.fillMaxWidth().padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         // Compact connection indicator: small pulsing circle on the left,
-        // status text (max 2 lines) on the right.
+        // localised status label on the right. The sub-line (durations/bytes)
+        // comes from the engine and stays as produced.
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             PulseCircle(statusColor(s.connState), 46)
             Spacer(Modifier.width(12.dp))
             Column {
                 Text(
-                    s.statusText,
+                    statusLabel(s.connState, t),
                     color = statusColor(s.connState),
                     fontWeight = FontWeight.Bold,
                     fontSize = 17.sp,
@@ -57,9 +61,9 @@ fun ConnectorContent(s: EngineState, onOpenGuide: () -> Unit) {
 
         if (s.setupNeeded && s.proxyEnabled) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Никто не подключился к Коннектору. ", color = AppColors.onSurfaceMuted, fontSize = 14.sp)
+                Text(t.nobodyConnected, color = AppColors.onSurfaceMuted, fontSize = 14.sp)
                 Text(
-                    "Как настроить →",
+                    t.howToSetupArrow,
                     color = AppColors.accent,
                     fontWeight = FontWeight.Bold,
                     fontSize = 14.sp,
@@ -68,53 +72,48 @@ fun ConnectorContent(s: EngineState, onOpenGuide: () -> Unit) {
             }
         }
 
-        // Live metrics table (replaces the old grey cards).
         StatTable(
             rows = listOf(
-                listOf(cell("Подключений", AppColors.onSurfaceMuted), cell("${s.connCount} шт", bold = true), cell(fmtSec(s.connSeconds))),
-                listOf(cell("Сокеты", AppColors.onSurfaceMuted), cell("TG→ ${s.socketsTgToConnector}"), cell("прокси ${s.socketsConnectorToProxy}")),
-                listOf(cell("Скорость", AppColors.onSurfaceMuted), cell(s.speedDown, AppColors.blue, bold = true), cell(s.speedUp, AppColors.green, bold = true)),
-                listOf(cell("Трафик", AppColors.onSurfaceMuted), cell(s.totalDown, AppColors.blue), cell(s.totalUp, AppColors.green)),
-                listOf(cell("Латенси", AppColors.onSurfaceMuted), cell(s.latency, bold = true), cell("")),
+                listOf(cell(t.connections, AppColors.onSurfaceMuted), cell(t.pcs(s.connCount), bold = true), cell(fmtSec(s.connSeconds, t))),
+                listOf(cell(t.sockets, AppColors.onSurfaceMuted), cell(t.tgToConnector(s.socketsTgToConnector)), cell(t.connectorToProxy(s.socketsConnectorToProxy))),
+                listOf(cell(t.speed, AppColors.onSurfaceMuted), cell(s.speedDown, AppColors.blue, bold = true), cell(s.speedUp, AppColors.green, bold = true)),
+                listOf(cell(t.traffic, AppColors.onSurfaceMuted), cell(s.totalDown, AppColors.blue), cell(s.totalUp, AppColors.green)),
+                listOf(cell(t.latency, AppColors.onSurfaceMuted), cell(s.latency, bold = true), cell("")),
             ),
             weights = listOf(1.1f, 1f, 1f),
         )
 
-        // Traffic sparklines 60s | 60m — caption sits right under the graph.
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TrafficSparkline(s.trafficSec, AppColors.green, Modifier.weight(1f).height(44.dp))
                 TrafficSparkline(s.trafficMin, AppColors.green, Modifier.weight(1f).height(44.dp))
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Caption("трафик · 60 секунд", Modifier.weight(1f))
-                Caption("трафик · 60 минут", Modifier.weight(1f))
+                Caption(t.trafficSec, Modifier.weight(1f))
+                Caption(t.trafficMin, Modifier.weight(1f))
             }
         }
 
-        // Latency sparklines.
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TrafficSparkline(s.latencySec, AppColors.gray, Modifier.weight(1f).height(36.dp))
                 TrafficSparkline(s.latencyMin, AppColors.gray, Modifier.weight(1f).height(36.dp))
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Caption("латенси · 60 секунд", Modifier.weight(1f))
-                Caption("латенси · 60 минут", Modifier.weight(1f))
+                Caption(t.latencySec, Modifier.weight(1f))
+                Caption(t.latencyMin, Modifier.weight(1f))
             }
         }
 
-        // Current upstream proxy.
-        Text("Текущий прокси", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-        CurrentProxyTable(s.currentProxy)
+        Text(t.currentProxy, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+        CurrentProxyTable(s.currentProxy, t)
 
-        // Active Telegram sockets.
-        Text("Активные сокеты Telegram: ${s.sessions.size}", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+        Text(t.activeSockets(s.sessions.size), fontWeight = FontWeight.Bold, fontSize = 14.sp)
         if (s.sessions.isEmpty()) {
-            Caption("нет активных соединений")
+            Caption(t.noConnections)
         } else {
             val rows = ArrayList<List<Cell>>()
-            rows.add(listOf(cell("Хост", AppColors.onSurfaceMuted, bold = true), cell("Время", AppColors.onSurfaceMuted, bold = true), cell("↓↑", AppColors.onSurfaceMuted, bold = true)))
+            rows.add(listOf(cell(t.colHost, AppColors.onSurfaceMuted, bold = true), cell(t.colTime, AppColors.onSurfaceMuted, bold = true), cell("↓↑", AppColors.onSurfaceMuted, bold = true)))
             for (c in s.sessions) {
                 rows.add(listOf(
                     cell(c.host, if (c.alive) AppColors.green else AppColors.blue, mono = true),
@@ -129,25 +128,32 @@ fun ConnectorContent(s: EngineState, onOpenGuide: () -> Unit) {
 }
 
 @Composable
-private fun CurrentProxyTable(p: ProxyInfo?) {
+private fun CurrentProxyTable(p: ProxyInfo?, t: Strings) {
     if (p == null) {
-        StatTable(rows = listOf(listOf(cell("нет активного прокси (Telegram не подключён)", AppColors.onSurfaceMuted))))
+        StatTable(rows = listOf(listOf(cell(t.noActiveProxy, AppColors.onSurfaceMuted))))
         return
     }
     val rows = ArrayList<List<Cell>>()
-    rows.add(listOf(cell("Хост", AppColors.onSurfaceMuted), cell("${p.host}:${p.port}", mono = true)))
-    rows.add(listOf(cell("Тип", AppColors.onSurfaceMuted), cell(p.typeLabel, mono = true)))
+    rows.add(listOf(cell(t.host, AppColors.onSurfaceMuted), cell("${p.host}:${p.port}", mono = true)))
+    rows.add(listOf(cell(t.type, AppColors.onSurfaceMuted), cell(p.typeLabel, mono = true)))
     p.tls?.let { rows.add(listOf(cell("FakeTLS / SNI", AppColors.onSurfaceMuted), cell(it, mono = true))) }
-    p.secret?.let { rows.add(listOf(cell("Секрет", AppColors.onSurfaceMuted), cell(it, mono = true))) }
-    rows.add(listOf(cell("Анти-DPI", AppColors.onSurfaceMuted), cell(p.dpi, mono = true)))
+    p.secret?.let { rows.add(listOf(cell(t.secret, AppColors.onSurfaceMuted), cell(it, mono = true))) }
+    rows.add(listOf(cell(t.antiDpi, AppColors.onSurfaceMuted), cell(p.dpi, mono = true)))
     StatTable(rows = rows, weights = listOf(1f, 2f))
 }
 
-private fun fmtSec(sec: Long): String = when {
-    sec <= 0 -> "—"
-    sec < 60 -> "$sec сек"
-    sec < 3600 -> "${sec / 60} мин ${sec % 60} сек"
-    else -> "${sec / 3600} ч ${(sec % 3600) / 60} мин"
+private fun fmtSec(sec: Long, t: Strings): String = when {
+    sec <= 0 -> t.dash
+    sec < 60 -> "$sec ${t.unitSec}"
+    sec < 3600 -> "${sec / 60} ${t.unitMin} ${sec % 60} ${t.unitSec}"
+    else -> "${sec / 3600} ${t.unitHour} ${(sec % 3600) / 60} ${t.unitMin}"
+}
+
+private fun statusLabel(c: ConnState, t: Strings): String = when (c) {
+    ConnState.CONNECTED -> t.statusConnected
+    ConnState.CONNECTING -> t.statusConnecting
+    ConnState.IDLE_SILENT -> t.statusIdle
+    ConnState.OFFLINE -> t.statusOffline
 }
 
 private fun statusColor(c: ConnState): Color = when (c) {

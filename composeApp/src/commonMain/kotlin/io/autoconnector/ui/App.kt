@@ -30,6 +30,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -52,6 +53,8 @@ import androidx.compose.ui.unit.sp
 import io.autoconnector.engine.CatalogItem
 import io.autoconnector.engine.Engine
 import io.autoconnector.engine.EngineState
+import io.autoconnector.i18n.LocalStrings
+import io.autoconnector.i18n.stringsFor
 import io.autoconnector.ui.components.blinkAlpha
 import io.autoconnector.ui.screens.CatalogDetailPage
 import io.autoconnector.ui.screens.ConnectGuidePage
@@ -91,25 +94,20 @@ fun App(engine: Engine) {
         val listState = rememberLazyListState()
         val scope = rememberCoroutineScope()
 
+      CompositionLocalProvider(LocalStrings provides stringsFor(settings.langCode)) {
+        val t = LocalStrings.current
+
         if (notifInfo) {
             androidx.compose.material3.AlertDialog(
                 onDismissRequest = { notifInfo = false },
                 confirmButton = {
-                    androidx.compose.material3.TextButton({ notifInfo = false; engine.requestNotifications() }) { Text("Включить") }
+                    androidx.compose.material3.TextButton({ notifInfo = false; engine.requestNotifications() }) { Text(t.enable) }
                 },
                 dismissButton = {
-                    androidx.compose.material3.TextButton({ notifInfo = false }) { Text("Позже") }
+                    androidx.compose.material3.TextButton({ notifInfo = false }) { Text(t.later) }
                 },
-                title = { Text("Включите уведомления", fontWeight = FontWeight.Bold) },
-                text = {
-                    Text(
-                        "Без уведомления-значка Android считает приложение неактивным и " +
-                            "выгружает его из памяти. Тогда AutoConnector перестаёт искать " +
-                            "прокси и держать соединение в фоне — Telegram теряет связь.\n\n" +
-                            "Нажмите «Включить» и разрешите уведомления для AutoConnector.",
-                        fontSize = 15.sp,
-                    )
-                },
+                title = { Text(t.notifEnableTitle, fontWeight = FontWeight.Bold) },
+                text = { Text(t.notifEnableBody, fontSize = 15.sp) },
             )
         }
 
@@ -140,7 +138,7 @@ fun App(engine: Engine) {
                 onMakeRelay = { engine.pin(detailItem.id, true); detail = null },
                 onBack = { detail = null },
             )
-            return@AppTheme
+            return@CompositionLocalProvider
         }
 
         // Full-screen guide overlays everything else.
@@ -152,7 +150,7 @@ fun App(engine: Engine) {
                 onOpen = engine::openLink,
                 onBack = { showGuide = false },
             )
-            return@AppTheme
+            return@CompositionLocalProvider
         }
 
         // Full-screen "Ещё" sub-pages.
@@ -160,7 +158,7 @@ fun App(engine: Engine) {
         if (mp != null) {
             PlatformBackHandler(true) { morePage = null }
             MoreFullPage(mp, moreCallbacks()) { morePage = null }
-            return@AppTheme
+            return@CompositionLocalProvider
         }
 
         // On any non-main tab, the system back returns to the Connector tab
@@ -195,6 +193,7 @@ fun App(engine: Engine) {
                 }
             }
         }
+      }
     }
 }
 
@@ -224,8 +223,9 @@ private fun SetupLine(s: EngineState, onFix: () -> Unit) {
         Modifier.fillMaxWidth().clickable(onClick = onFix).padding(horizontal = 14.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        val tr = LocalStrings.current
         Text(
-            "Не настроено! Исправить →",
+            tr.notConfigured,
             color = AppColors.red,
             fontWeight = FontWeight.Bold,
             fontSize = 14.sp,
@@ -241,7 +241,7 @@ private fun SetupLine(s: EngineState, onFix: () -> Unit) {
                 .clickable(onClick = onFix)
                 .padding(horizontal = 14.dp, vertical = 6.dp),
         ) {
-            Text("Как настроить", color = AppColors.accent, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            Text(tr.howToSetup, color = AppColors.accent, fontWeight = FontWeight.Bold, fontSize = 14.sp)
         }
     }
 }
@@ -254,8 +254,9 @@ private fun NotifLine(onInfo: () -> Unit, onFix: () -> Unit) {
         Modifier.fillMaxWidth().clickable(onClick = onInfo).padding(horizontal = 14.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        val tr = LocalStrings.current
         Text(
-            "Уведомления выключены! Исправить →",
+            tr.notifOff,
             color = AppColors.red,
             fontWeight = FontWeight.Bold,
             fontSize = 14.sp,
@@ -271,7 +272,7 @@ private fun NotifLine(onInfo: () -> Unit, onFix: () -> Unit) {
                 .clickable(onClick = onFix)
                 .padding(horizontal = 14.dp, vertical = 6.dp),
         ) {
-            Text("Включить", color = AppColors.accent, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            Text(tr.enable, color = AppColors.accent, fontWeight = FontWeight.Bold, fontSize = 14.sp)
         }
     }
 }
@@ -283,8 +284,9 @@ private fun ToggleRow(s: EngineState, engine: Engine) {
         Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, top = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(20.dp),
     ) {
-        BareSwitch("Коннектор ${onOff(s.proxyEnabled)}", s.proxyEnabled, Modifier.weight(1f), alignEnd = false) { engine.setProxyEnabled(it) }
-        BareSwitch("Скан ${onOff(s.scanEnabled)}", s.scanEnabled, Modifier.weight(1f), alignEnd = true) { engine.setScanEnabled(it) }
+        val tr = LocalStrings.current
+        BareSwitch("${tr.connector} ${tr.onOff(s.proxyEnabled)}", s.proxyEnabled, Modifier.weight(1f), alignEnd = false) { engine.setProxyEnabled(it) }
+        BareSwitch("${tr.scan} ${tr.onOff(s.scanEnabled)}", s.scanEnabled, Modifier.weight(1f), alignEnd = true) { engine.setScanEnabled(it) }
     }
 }
 
@@ -320,9 +322,10 @@ private fun BareSwitch(label: String, value: Boolean, modifier: Modifier, alignE
 /** Row 4 — proxy-pool health; turns into a red alarm when the pool runs dry. */
 @Composable
 private fun PoolLine(s: EngineState) {
+    val tr = LocalStrings.current
     if (s.aliveCount < 10) {
         Text(
-            "Мало живых проксей: ${s.aliveCount}! Ищу… Ждите ~15 минут",
+            tr.fewProxies(s.aliveCount),
             color = AppColors.red,
             fontWeight = FontWeight.Bold,
             fontSize = 14.sp,
@@ -330,7 +333,7 @@ private fun PoolLine(s: EngineState) {
         )
     } else {
         Text(
-            "Живых прокси: ${s.aliveCount}  (15 мин: ${s.aliveWithin15}) · всего: ${s.totalCount}",
+            tr.alivePool(s.aliveCount, s.aliveWithin15, s.totalCount),
             color = AppColors.onSurface,
             fontSize = 14.sp,
             modifier = Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, top = 8.dp, bottom = 2.dp),
@@ -376,10 +379,18 @@ private fun TabCell(t: Tabs, active: Boolean, modifier: Modifier, onClick: () ->
             Modifier.fillMaxWidth().height(3.dp)
                 .background(if (active) AppColors.accent else Color.Transparent),
         )
+        val tr = LocalStrings.current
+        val label = when (t) {
+            Tabs.CONNECTOR -> tr.tabConnector
+            Tabs.SCAN -> tr.tabScan
+            Tabs.CATALOG -> tr.tabCatalog
+            Tabs.LOGS -> tr.tabLogs
+            Tabs.MORE -> tr.tabMore
+        }
         Spacer(Modifier.height(2.dp))
-        Icon(t.icon, t.label, tint = tint, modifier = Modifier.size(18.dp))
+        Icon(t.icon, label, tint = tint, modifier = Modifier.size(18.dp))
         Text(
-            t.label,
+            label,
             color = tint,
             fontSize = 14.sp,
             fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,

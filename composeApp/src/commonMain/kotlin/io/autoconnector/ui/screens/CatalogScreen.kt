@@ -55,6 +55,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.autoconnector.engine.CatalogItem
+import io.autoconnector.i18n.LocalStrings
+import io.autoconnector.i18n.Strings
 import io.autoconnector.ui.components.Caption
 import io.autoconnector.ui.components.RatingBars
 import io.autoconnector.ui.components.StatusDot
@@ -70,7 +72,7 @@ private val ICON_TRAFFIC = Icons.Filled.SwapVert    // трафик через �
 /** Catalog tiles (2 rows each), sorted by rating, emitted into the page LazyColumn. */
 fun LazyListScope.catalogItems(items: List<CatalogItem>, onClick: (CatalogItem) -> Unit) {
     if (items.isEmpty()) {
-        item { Caption("Каталог пуст — идёт первичный сбор прокси…", Modifier.padding(16.dp)) }
+        item { Caption(LocalStrings.current.catalogEmpty, Modifier.padding(16.dp)) }
         return
     }
     item { Spacer(Modifier.height(6.dp)) }
@@ -82,6 +84,7 @@ fun LazyListScope.catalogItems(items: List<CatalogItem>, onClick: (CatalogItem) 
 
 @Composable
 private fun CatalogTile(p: CatalogItem, onClick: () -> Unit) {
+    val t = LocalStrings.current
     Column(
         Modifier.fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
@@ -103,8 +106,8 @@ private fun CatalogTile(p: CatalogItem, onClick: () -> Unit) {
                 overflow = TextOverflow.Ellipsis,
             )
             Spacer(Modifier.width(8.dp))
-            if (p.alive) Text("✓ жив", color = AppColors.green, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-            else Text("✗ мёртв", color = AppColors.red, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            if (p.alive) Text(t.aliveShort, color = AppColors.green, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            else Text(t.deadShort, color = AppColors.red, fontWeight = FontWeight.Bold, fontSize = 14.sp)
             Spacer(Modifier.width(8.dp))
             RatingBars(p.rating)
         }
@@ -124,8 +127,8 @@ private fun CatalogTile(p: CatalogItem, onClick: () -> Unit) {
                 }
                 StatusDot(relayColor, 9)
             }
-            IconStat(ICON_CHECKED, fmtMins(p.checkedMinsAgo), Modifier.weight(1f))
-            IconStat(ICON_TG, fmtMins(p.tgConnectMinsAgo), Modifier.weight(1f))
+            IconStat(ICON_CHECKED, fmtMins(p.checkedMinsAgo, t), Modifier.weight(1f))
+            IconStat(ICON_TG, fmtMins(p.tgConnectMinsAgo, t), Modifier.weight(1f))
             IconStat(ICON_CHECKS, "${p.successes}/${p.successes + p.failures}", Modifier.weight(1.1f))
             IconStat(ICON_TRAFFIC, p.bytesRelayedHuman, Modifier.weight(1.1f))
         }
@@ -141,11 +144,11 @@ private fun IconStat(icon: ImageVector, value: String, modifier: Modifier) {
     }
 }
 
-private fun fmtMins(m: Long): String = when {
-    m < 0 -> "—"
-    m < 60 -> "${m}м"
-    m < 1440 -> "${m / 60}ч"
-    else -> "${m / 1440}д"
+private fun fmtMins(m: Long, t: Strings): String = when {
+    m < 0 -> t.dash
+    m < 60 -> "$m${t.agoMin}"
+    m < 1440 -> "${m / 60}${t.agoHour}"
+    else -> "${m / 1440}${t.agoDay}"
 }
 
 /** Full-screen, scrollable per-host detail with icons (same as the tile) + actions. */
@@ -157,13 +160,14 @@ fun CatalogDetailPage(
     onMakeRelay: () -> Unit,
     onBack: () -> Unit,
 ) {
+    val t = LocalStrings.current
     Surface(Modifier.fillMaxSize(), color = AppColors.background) {
         Column(Modifier.fillMaxSize()) {
             // Top bar with back button.
             Box(Modifier.fillMaxWidth().background(Brush.horizontalGradient(listOf(AppColors.accent, AppColors.accentDark)))) {
                 Row(Modifier.fillMaxWidth().height(54.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                     androidx.compose.material3.IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Назад", tint = Color.White)
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, t.back, tint = Color.White)
                     }
                     Text(p.host, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp, fontFamily = FontFamily.Monospace, maxLines = 2)
                 }
@@ -173,22 +177,22 @@ fun CatalogDetailPage(
                 Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()).padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                DetailRow(Icons.Filled.CheckCircle, "Статус", if (p.alive) "жив" else "мёртв", if (p.alive) AppColors.green else AppColors.red)
-                DetailRow(Icons.Filled.Bolt, "Рейтинг", "${p.rating} / 9")
-                DetailRow(Icons.Filled.Dns, "Тип", p.typeLabel)
-                DetailRow(Icons.Filled.Numbers, "Порт", "${p.port}")
-                DetailRow(Icons.Filled.Speed, "RTT (пинг)", if (p.rttMs >= 0) "${p.rttMs} мс" else "—")
-                DetailRow(ICON_CHECKED, "Проверен", if (p.checkedMinsAgo >= 0) "${fmtMins(p.checkedMinsAgo)} назад" else "—")
-                DetailRow(ICON_CHECKS, "Успешно / всего проверок", "${p.successes} / ${p.successes + p.failures}")
-                DetailRow(ICON_TG, "Telegram подключался", if (p.tgConnectMinsAgo >= 0) "${fmtMins(p.tgConnectMinsAgo)} назад" else "—")
-                DetailRow(Icons.Filled.Send, "Сессий Telegram", "${p.tgConnections}")
-                DetailRow(ICON_TRAFFIC, "Трафик через прокси", p.bytesRelayedHuman)
-                DetailRow(Icons.Filled.Schedule, "Суммарно сессий", p.sessionTotalHuman)
-                DetailRow(Icons.Filled.Bolt, "Релей сейчас", if (p.live) "да" else "нет", if (p.live) AppColors.green else AppColors.onSurfaceMuted)
-                p.secret?.let { DetailRow(Icons.Filled.Lock, "Секрет", if (it.length > 26) it.substring(0, 25) + "…" else it, mono = true) }
-                p.tlsDomain?.let { DetailRow(Icons.Filled.Shield, "TLS-домен (SNI)", it, mono = true) }
-                p.sourceNum?.let { DetailRow(Icons.Filled.Storage, "Источник (подписка)", "#$it") }
-                p.lastErrorShort?.let { DetailRow(Icons.Filled.CheckCircle, "Последняя ошибка", it, AppColors.red) }
+                DetailRow(Icons.Filled.CheckCircle, t.statusLabel, if (p.alive) t.live else t.deadW, if (p.alive) AppColors.green else AppColors.red)
+                DetailRow(Icons.Filled.Bolt, t.rating, "${p.rating} / 9")
+                DetailRow(Icons.Filled.Dns, t.type, p.typeLabel)
+                DetailRow(Icons.Filled.Numbers, t.port, "${p.port}")
+                DetailRow(Icons.Filled.Speed, t.rttPing, if (p.rttMs >= 0) "${p.rttMs} ${t.unitMs}" else t.dash)
+                DetailRow(ICON_CHECKED, t.checkedField, if (p.checkedMinsAgo >= 0) t.agoFmt(fmtMins(p.checkedMinsAgo, t)) else t.dash)
+                DetailRow(ICON_CHECKS, t.okOfTotal, "${p.successes} / ${p.successes + p.failures}")
+                DetailRow(ICON_TG, t.tgConnectedField, if (p.tgConnectMinsAgo >= 0) t.agoFmt(fmtMins(p.tgConnectMinsAgo, t)) else t.dash)
+                DetailRow(Icons.Filled.Send, t.tgSessions, "${p.tgConnections}")
+                DetailRow(ICON_TRAFFIC, t.trafficThroughProxy, p.bytesRelayedHuman)
+                DetailRow(Icons.Filled.Schedule, t.sessionsTotal, p.sessionTotalHuman)
+                DetailRow(Icons.Filled.Bolt, t.relayNow, if (p.live) t.yes else t.no, if (p.live) AppColors.green else AppColors.onSurfaceMuted)
+                p.secret?.let { DetailRow(Icons.Filled.Lock, t.secret, if (it.length > 26) it.substring(0, 25) + "…" else it, mono = true) }
+                p.tlsDomain?.let { DetailRow(Icons.Filled.Shield, t.tlsDomain, it, mono = true) }
+                p.sourceNum?.let { DetailRow(Icons.Filled.Storage, t.sourceSub, "#$it") }
+                p.lastErrorShort?.let { DetailRow(Icons.Filled.CheckCircle, t.lastError, it, AppColors.red) }
 
                 Spacer(Modifier.height(16.dp))
 
@@ -197,15 +201,15 @@ fun CatalogDetailPage(
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.buttonColors(containerColor = AppColors.accent, contentColor = Color.White),
                 ) {
-                    Icon(Icons.Filled.ContentCopy, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Скопировать как ссылку")
+                    Icon(Icons.Filled.ContentCopy, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(t.copyAsLink)
                 }
                 Spacer(Modifier.height(8.dp))
                 OutlinedButton(onClick = onOpen, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.AutoMirrored.Filled.OpenInNew, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Открыть хост в Telegram")
+                    Icon(Icons.AutoMirrored.Filled.OpenInNew, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(t.openInTelegram)
                 }
                 Spacer(Modifier.height(8.dp))
                 OutlinedButton(onClick = onMakeRelay, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.Filled.PushPin, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Сделать следующим релеем")
+                    Icon(Icons.Filled.PushPin, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(t.makeNextRelay)
                 }
                 Spacer(Modifier.height(16.dp))
             }
