@@ -427,7 +427,9 @@ class AndroidEngine(context: Context) : Engine {
 
         val aLastA = p.lastTelegramConnectPortAMs() > 0
         val bLastB = p.lastTelegramConnectPortBMs() > 0
-        val setupNeeded = !(aLastA && bLastB)
+        // Setup is considered done once Telegram has connected to AT LEAST one
+        // of the relay ports (no need to wait for both).
+        val setupNeeded = !(aLastA || bLastB)
         val cta = when {
             !aLastA && !bLastB -> "⚠ Релей ещё не настроен в Telegram"
             !aLastA -> "⚠ Порт ${p.relayPortA()} ещё не виден Telegram"

@@ -217,7 +217,7 @@ private fun TitleRow() {
 /** Row 2 — single blinking line shown only while the relay isn't wired into Telegram. */
 @Composable
 private fun SetupLine(s: EngineState, onFix: () -> Unit) {
-    val a = blinkAlpha(periodMs = 2000)
+    val a = blinkAlpha(periodMs = 4200)
     Row(
         Modifier.fillMaxWidth().clickable(onClick = onFix).padding(horizontal = 14.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
