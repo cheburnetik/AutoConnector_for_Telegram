@@ -87,6 +87,7 @@ data class EngineSettings(
     val skipLowBattery: Boolean = false,
     val dpiApplyRelay: Boolean = true,
     val dpiApplyProbes: Boolean = true,
+    val langCode: String = "auto",
 )
 
 /** Build/version info for the About page. */

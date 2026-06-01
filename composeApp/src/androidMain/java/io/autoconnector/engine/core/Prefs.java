@@ -314,4 +314,8 @@ public class Prefs {
     /** Apply the anti-DPI handshake trick to background proxy probes too. */
     public boolean dpiApplyProbes() { return sp.getBoolean("dpi_probes", true); }
     public void setDpiApplyProbes(boolean v) { sp.edit().putBoolean("dpi_probes", v).apply(); }
+
+    /** UI language code: "auto" (follow system) / "ru" / "en". */
+    public String lang() { return sp.getString("ui_lang", "auto"); }
+    public void setLang(String code) { sp.edit().putString("ui_lang", code).apply(); }
 }

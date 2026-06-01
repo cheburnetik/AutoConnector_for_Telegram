@@ -1,7 +1,6 @@
 package io.autoconnector.ui.screens
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,8 +18,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.HelpOutline
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -53,15 +52,22 @@ import io.autoconnector.engine.EngineState
 import io.autoconnector.engine.HandshakeOption
 import io.autoconnector.engine.HandshakeStatRow
 import io.autoconnector.engine.SourceItem
+import io.autoconnector.i18n.LocalStrings
+import io.autoconnector.i18n.Strings
 import io.autoconnector.ui.components.CardBox
 import io.autoconnector.ui.components.Caption
-import io.autoconnector.ui.components.Cell
 import io.autoconnector.ui.components.StatTable
 import io.autoconnector.ui.components.cell
 import io.autoconnector.ui.theme.AppColors
 
-enum class MoreDest(val title: String) {
-    SETTINGS("Настройки"), SOURCES("Подписки"), STATS("Статистика"), EXPORT("Экспорт"), ABOUT("О программе")
+enum class MoreDest { SETTINGS, SOURCES, STATS, EXPORT, ABOUT }
+
+private fun titleFor(dest: MoreDest, t: Strings) = when (dest) {
+    MoreDest.SETTINGS -> t.settings
+    MoreDest.SOURCES -> t.subscriptions
+    MoreDest.STATS -> t.statistics
+    MoreDest.EXPORT -> t.export
+    MoreDest.ABOUT -> t.about
 }
 
 class MoreCallbacks(
@@ -81,26 +87,27 @@ class MoreCallbacks(
     val onOpenUrl: (String) -> Unit,
 )
 
-/** The "Ещё" tab body — just the menu. Entries open full-screen via [onOpen];
- *  [onOpenGuide] opens the first-time port-setup guide. */
+/** The "More" tab body — just the menu. */
 @Composable
 fun MoreScreen(onOpen: (MoreDest) -> Unit, onOpenGuide: () -> Unit) {
+    val t = LocalStrings.current
     Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        MenuEntry("Настройка портов в Telegram", "Как подключить Telegram к Коннектору (порты 55001/55002)", onOpenGuide)
-        MenuEntry("Настройки", "Порты, анти-DPI, скан, сеть, батарея") { onOpen(MoreDest.SETTINGS) }
-        MenuEntry("Подписки", "Источники прокси для скана") { onOpen(MoreDest.SOURCES) }
-        MenuEntry("Статистика", "База прокси + анти-DPI хитрости") { onOpen(MoreDest.STATS) }
-        MenuEntry("Экспорт", "tg:// ссылки живых прокси") { onOpen(MoreDest.EXPORT) }
-        MenuEntry("О программе", "Версия, сборка, скачать, обратная связь") { onOpen(MoreDest.ABOUT) }
+        MenuEntry(t.setupPortsTitle, t.setupPortsSub, onOpenGuide)
+        MenuEntry(t.settings, t.settingsSub) { onOpen(MoreDest.SETTINGS) }
+        MenuEntry(t.subscriptions, t.subscriptionsSub) { onOpen(MoreDest.SOURCES) }
+        MenuEntry(t.statistics, t.statisticsSub) { onOpen(MoreDest.STATS) }
+        MenuEntry(t.export, t.exportSub) { onOpen(MoreDest.EXPORT) }
+        MenuEntry(t.about, t.aboutSub) { onOpen(MoreDest.ABOUT) }
     }
 }
 
 /** Full-screen page (with a back top-bar) for one [MoreDest]. */
 @Composable
 fun MoreFullPage(dest: MoreDest, cb: MoreCallbacks, onBack: () -> Unit) {
+    val t = LocalStrings.current
     androidx.compose.material3.Surface(Modifier.fillMaxSize(), color = AppColors.background) {
         Column(Modifier.fillMaxSize()) {
-            TopBar(dest.title, onBack)
+            TopBar(titleFor(dest, t), onBack)
             when (dest) {
                 MoreDest.SETTINGS -> SettingsPage(cb)
                 MoreDest.SOURCES -> SourcesPage(cb)
@@ -116,7 +123,7 @@ fun MoreFullPage(dest: MoreDest, cb: MoreCallbacks, onBack: () -> Unit) {
 private fun TopBar(title: String, onBack: () -> Unit) {
     Box(Modifier.fillMaxWidth().background(Brush.horizontalGradient(listOf(AppColors.accent, AppColors.accentDark)))) {
         Row(Modifier.fillMaxWidth().height(54.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Назад", tint = Color.White) }
+            IconButton(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, LocalStrings.current.back, tint = Color.White) }
             Text(title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
         }
     }
@@ -136,6 +143,7 @@ private fun MenuEntry(title: String, sub: String, onClick: () -> Unit) {
 
 @Composable
 private fun SettingsPage(cb: MoreCallbacks) {
+    val t = LocalStrings.current
     val s = cb.settings
     var portA by remember { mutableStateOf(s.portA.toString()) }
     var portB by remember { mutableStateOf(s.portB.toString()) }
@@ -159,10 +167,10 @@ private fun SettingsPage(cb: MoreCallbacks) {
     var dpiRelay by remember { mutableStateOf(s.dpiApplyRelay) }
     var dpiProbes by remember { mutableStateOf(s.dpiApplyProbes) }
     var vpnMode by remember { mutableStateOf(s.proxyModeCode) }
+    var lang by remember { mutableStateOf(s.langCode) }
     var hsExpanded by remember { mutableStateOf(false) }
     var help by remember { mutableStateOf<Pair<String, String>?>(null) }
 
-    // Auto-save: build settings from the current field values and persist.
     fun save() {
         cb.onUpdateSettings(
             s.copy(
@@ -188,18 +196,18 @@ private fun SettingsPage(cb: MoreCallbacks) {
                 skipLowBattery = skipLow,
                 dpiApplyRelay = dpiRelay,
                 dpiApplyProbes = dpiProbes,
+                langCode = lang,
             )
         )
     }
-    // Persist whatever the user typed when leaving the page.
     androidx.compose.runtime.DisposableEffect(Unit) { onDispose { save() } }
 
-    help?.let { (t, b) ->
+    help?.let { (ht, hb) ->
         AlertDialog(
             onDismissRequest = { help = null },
-            confirmButton = { TextButton({ help = null }) { Text("Понятно") } },
-            title = { Text(t, fontWeight = FontWeight.Bold) },
-            text = { Text(b, fontSize = 15.sp) },
+            confirmButton = { TextButton({ help = null }) { Text(t.gotIt) } },
+            title = { Text(ht, fontWeight = FontWeight.Bold) },
+            text = { Text(hb, fontSize = 15.sp) },
         )
     }
 
@@ -207,155 +215,86 @@ private fun SettingsPage(cb: MoreCallbacks) {
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Section("Порты релея") {
-            help = "Порты релея" to "Локальные порты, которые слушает Коннектор. Именно их вы " +
-                "указываете в Telegram как SOCKS5-прокси (127.0.0.1 : порт). Два порта нужны " +
-                "для надёжности — Telegram держит соединения к обоим."
-        }
+        // Language.
+        Section(t.language, null)
+        ChoiceRow(t.langAuto, "", selected = lang == "auto") { lang = "auto"; save() }
+        ChoiceRow(t.langRu, "", selected = lang == "ru") { lang = "ru"; save() }
+        ChoiceRow(t.langEn, "", selected = lang == "en") { lang = "en"; save() }
+
+        Section(t.relayPorts) { help = t.relayPorts to t.relayPortsHelp }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            NumField(portA, { portA = it }, "Порт A", Modifier.weight(1f))
-            NumField(portB, { portB = it }, "Порт B", Modifier.weight(1f))
+            NumField(portA, { portA = it }, t.portA, Modifier.weight(1f))
+            NumField(portB, { portB = it }, t.portB, Modifier.weight(1f))
         }
 
-        Section("Анти-DPI хитрость") {
-            help = "Анти-DPI хитрость" to
-                "Способ маскировки соединения, чтобы провайдер/DPI не распознал и не " +
-                "заблокировал его.\n• «Авто-перебор» сам подбирает рабочий трюк.\n" +
-                "• «Без DPI-трюков» — обычное соединение.\n• Остальные — конкретные приёмы " +
-                "(имитация браузеров, дробление пакетов и т.п.)."
-        }
+        Section(t.antiDpiTrick) { help = t.antiDpiTrick to t.antiDpiHelp }
         HandshakePicker(cb.handshakeOptions, hs, hsExpanded, { hsExpanded = it }) { hs = it; save() }
-        SwitchRow("Только FakeTLS (ee)", fakeTls) { fakeTls = it; save() }
+        SwitchRow(t.onlyFakeTls, fakeTls) { fakeTls = it; save() }
 
-        Section("Применять анти-DPI к") {
-            help = "Применять анти-DPI к" to
-                "К чему применять выбранный анти-DPI трюк:\n" +
-                "• Релею Telegram — к живому соединению Telegram через Коннектор.\n" +
-                "• Пробам прокси — к фоновым проверкам прокси (тогда проверка ведёт себя " +
-                "так же, как реальное подключение, и статистика хитростей точнее)."
-        }
-        SwitchRow("Релею Telegram", dpiRelay) { dpiRelay = it; save() }
-        SwitchRow("Пробам прокси", dpiProbes) { dpiProbes = it; save() }
+        Section(t.applyDpiTo) { help = t.applyDpiTo to t.applyDpiHelp }
+        SwitchRow(t.toRelay, dpiRelay) { dpiRelay = it; save() }
+        SwitchRow(t.toProbes, dpiProbes) { dpiProbes = it; save() }
 
-        Section("При включённом VPN") {
-            help = "При включённом VPN" to
-                "Что делать, когда на устройстве активен VPN:\n" +
-                "• Через MTProto-прокси — Telegram, как обычно, идёт через найденные " +
-                "прокси (поверх VPN).\n" +
-                "• Напрямую — Коннектор НЕ использует прокси и соединяет Telegram напрямую " +
-                "с серверами Telegram: VPN уже даёт доступ, лишний прокси-слой не нужен " +
-                "(быстрее и стабильнее). Без VPN прокси используются как обычно."
-        }
-        ChoiceRow(
-            "Проксировать через MTProto",
-            "даже при VPN трафик идёт через прокси",
-            selected = vpnMode != "vpn_only",
-        ) { vpnMode = "use"; save() }
-        ChoiceRow(
-            "Проксировать напрямую",
-            "при активном VPN — в обход прокси, прямо к Telegram",
-            selected = vpnMode == "vpn_only",
-        ) { vpnMode = "vpn_only"; save() }
+        Section(t.vpnSection) { help = t.vpnSection to t.vpnHelp }
+        ChoiceRow(t.viaMtproto, t.viaMtprotoSub, selected = vpnMode != "vpn_only") { vpnMode = "use"; save() }
+        ChoiceRow(t.directly, t.directlySub, selected = vpnMode == "vpn_only") { vpnMode = "vpn_only"; save() }
 
         // Notifications.
         var showNotifInfo by remember { mutableStateOf(false) }
         if (showNotifInfo) {
             AlertDialog(
                 onDismissRequest = { showNotifInfo = false },
-                confirmButton = { TextButton({ showNotifInfo = false }) { Text("Понятно") } },
-                title = { Text("Зачем уведомления?", fontWeight = FontWeight.Bold) },
-                text = {
-                    Text(
-                        "Уведомление с постоянным значком — это foreground-сервис Android. " +
-                            "Без него система выгрузит приложение из памяти, и оно перестанет " +
-                            "искать прокси и держать соединение в фоне. Поэтому уведомления " +
-                            "обязательны для работы AutoConnector.",
-                        fontSize = 15.sp,
-                    )
-                },
+                confirmButton = { TextButton({ showNotifInfo = false }) { Text(t.gotIt) } },
+                title = { Text(t.notifWhyTitle, fontWeight = FontWeight.Bold) },
+                text = { Text(t.notifWhyBody, fontSize = 15.sp) },
             )
         }
-        Section("Уведомления", null)
+        Section(t.notifications, null)
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Row(Modifier.weight(1f).clickable { showNotifInfo = true }, verticalAlignment = Alignment.CenterVertically) {
-                Text("Уведомления", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Text(t.notifications, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 Spacer(Modifier.width(6.dp))
-                Icon(Icons.Filled.Info, "Подробнее", tint = AppColors.accent, modifier = Modifier.size(20.dp))
+                Icon(Icons.Filled.Info, t.details, tint = AppColors.accent, modifier = Modifier.size(20.dp))
             }
             Switch(notif, { notif = it; save() })
         }
         if (!notif) {
-            Text(
-                "Включите уведомления! Без них приложение не сможет работать в фоновом " +
-                    "режиме — Android выгрузит его, поиск прокси и соединение остановятся.",
-                color = AppColors.red,
-                fontWeight = FontWeight.Bold,
-                fontSize = 14.sp,
-            )
+            Text(t.notifPlea, color = AppColors.red, fontWeight = FontWeight.Bold, fontSize = 14.sp)
         }
 
-        Section("Скан и проверка") {
-            help = "Скан и проверка" to
-                "• Скан, мин — как часто скачивать списки прокси из подписок.\n" +
-                "• Проверка, мин — как часто перепроверять прокси из базы на живость.\n" +
-                "• Размер пачки — сколько прокси проверять за один прогон.\n" +
-                "• Параллельно — сколько проверок выполнять одновременно (больше = быстрее, " +
-                "но выше нагрузка на сеть и батарею)."
+        Section(t.scanCheck) { help = t.scanCheck to t.scanCheckHelp }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            NumField(scanInt, { scanInt = it }, t.scanMin, Modifier.weight(1f))
+            NumField(checkInt, { checkInt = it }, t.checkMin, Modifier.weight(1f))
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            NumField(scanInt, { scanInt = it }, "Скан, мин", Modifier.weight(1f))
-            NumField(checkInt, { checkInt = it }, "Проверка, мин", Modifier.weight(1f))
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            NumField(batch, { batch = it }, "Размер пачки", Modifier.weight(1f))
-            NumField(conc, { conc = it }, "Параллельно", Modifier.weight(1f))
+            NumField(batch, { batch = it }, t.batchSize, Modifier.weight(1f))
+            NumField(conc, { conc = it }, t.parallel, Modifier.weight(1f))
         }
 
-        Section("Скорость по сети") {
-            help = "Скорость по сети" to
-                "Множители скорости проверок в зависимости от текущей сети. 1.0 = базовая " +
-                "скорость. Меньше — бережнее к трафику/батарее, больше — агрессивнее.\n" +
-                "• VPN — когда активен внешний VPN.\n• Wi-Fi — в Wi-Fi сети.\n• LTE — в мобильной сети."
-        }
+        Section(t.speedByNet) { help = t.speedByNet to t.speedByNetHelp }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             NumField(spVpn, { spVpn = it }, "VPN", Modifier.weight(1f), decimal = true)
             NumField(spWifi, { spWifi = it }, "Wi-Fi", Modifier.weight(1f), decimal = true)
             NumField(spLte, { spLte = it }, "LTE", Modifier.weight(1f), decimal = true)
         }
 
-        Section("Адаптивная скорость") {
-            help = "Адаптивная скорость" to
-                "Авто-регулировка интенсивности по числу живых прокси:\n" +
-                "• Порог «много» — если живых больше этого числа, проверки замедляются " +
-                "множителем «fast» (база уже хорошая, экономим ресурсы).\n" +
-                "• Порог «мало» — если живых меньше, проверки ускоряются множителем «lazy», " +
-                "чтобы быстрее набрать живых."
+        Section(t.adaptiveSpeed) { help = t.adaptiveSpeed to t.adaptiveHelp }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            NumField(aliveThr, { aliveThr = it }, t.threshMany, Modifier.weight(1f))
+            NumField(fastMul, { fastMul = it }, t.mulFast, Modifier.weight(1f), decimal = true)
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            NumField(aliveThr, { aliveThr = it }, "Порог «много»", Modifier.weight(1f))
-            NumField(fastMul, { fastMul = it }, "Множ. fast", Modifier.weight(1f), decimal = true)
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            NumField(lazyThr, { lazyThr = it }, "Порог «мало»", Modifier.weight(1f))
-            NumField(lazyMul, { lazyMul = it }, "Множ. lazy", Modifier.weight(1f), decimal = true)
+            NumField(lazyThr, { lazyThr = it }, t.threshFew, Modifier.weight(1f))
+            NumField(lazyMul, { lazyMul = it }, t.mulLazy, Modifier.weight(1f), decimal = true)
         }
 
-        Section("Сеть и батарея") {
-            help = "Сеть и батарея" to
-                "• Только по Wi-Fi — не сканировать в мобильной сети (экономия трафика).\n" +
-                "• Только при зарядке — работать, лишь когда телефон на зарядке.\n" +
-                "• Пропускать при низком заряде — приостанавливать скан при низком заряде батареи."
-        }
-        SwitchRow("Только по Wi-Fi", wifiOnly) { wifiOnly = it; save() }
-        SwitchRow("Только при зарядке", charging) { charging = it; save() }
-        SwitchRow("Пропускать при низком заряде", skipLow) { skipLow = it; save() }
+        Section(t.netBattery) { help = t.netBattery to t.netBatteryHelp }
+        SwitchRow(t.onlyWifi, wifiOnly) { wifiOnly = it; save() }
+        SwitchRow(t.onlyCharging, charging) { charging = it; save() }
+        SwitchRow(t.skipLowBattery, skipLow) { skipLow = it; save() }
 
-        Text(
-            "Настройки сохраняются автоматически.",
-            color = AppColors.onSurfaceMuted,
-            fontSize = 14.sp,
-            modifier = Modifier.padding(top = 4.dp),
-        )
+        Text(t.autosaved, color = AppColors.onSurfaceMuted, fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
         Spacer(Modifier.height(16.dp))
     }
 }
@@ -368,16 +307,28 @@ private fun HandshakePicker(
     setExpanded: (Boolean) -> Unit,
     onPick: (Int) -> Unit,
 ) {
+    val t = LocalStrings.current
+    // The two "special" entries are AUTO (first) and NONE (second); localise them.
+    fun label(opt: HandshakeOption, specialIndex: Int): String = when {
+        opt.special && specialIndex == 0 -> t.dpiAutoLabel
+        opt.special -> t.dpiNoneLabel
+        else -> opt.label
+    }
+    var seen = 0
     val current = options.firstOrNull { it.ordinal == selectedOrdinal } ?: options.firstOrNull()
+    val curLabel = current?.let {
+        if (it.special) (if (options.indexOf(it) == 0) t.dpiAutoLabel else t.dpiNoneLabel) else it.label
+    } ?: t.dash
     OutlinedButton({ setExpanded(true) }, Modifier.fillMaxWidth()) {
-        Text(current?.label ?: "—", fontSize = 15.sp, color = if (current?.special == true) AppColors.accent else AppColors.onSurface)
+        Text(curLabel, fontSize = 15.sp, color = if (current?.special == true) AppColors.accent else AppColors.onSurface)
     }
     DropdownMenu(expanded, { setExpanded(false) }) {
         options.forEachIndexed { i, opt ->
+            val si = if (opt.special) seen++ else -1
             DropdownMenuItem(
                 text = {
                     Text(
-                        opt.label,
+                        label(opt, si),
                         fontSize = 15.sp,
                         fontWeight = if (opt.special) FontWeight.Bold else FontWeight.Normal,
                         color = if (opt.special) AppColors.accent else AppColors.onSurface,
@@ -385,7 +336,6 @@ private fun HandshakePicker(
                 },
                 onClick = { onPick(opt.ordinal); setExpanded(false) },
             )
-            // Divider after the two special entries (AUTO / NONE).
             if (opt.special && (i + 1 < options.size) && !options[i + 1].special) {
                 Box(Modifier.fillMaxWidth().height(1.dp).background(AppColors.cardBorder))
             }
@@ -400,7 +350,7 @@ private fun Section(title: String, onHelp: (() -> Unit)? = null) {
         if (onHelp != null) {
             Spacer(Modifier.width(6.dp))
             IconButton(onClick = onHelp, modifier = Modifier.size(26.dp)) {
-                Icon(Icons.Filled.HelpOutline, "Что это?", tint = AppColors.accent, modifier = Modifier.size(20.dp))
+                Icon(Icons.AutoMirrored.Filled.HelpOutline, LocalStrings.current.whatIsThis, tint = AppColors.accent, modifier = Modifier.size(20.dp))
             }
         }
     }
@@ -436,7 +386,7 @@ private fun ChoiceRow(title: String, desc: String, selected: Boolean, onSelect: 
         Spacer(Modifier.width(4.dp))
         Column(Modifier.weight(1f)) {
             Text(title, fontSize = 16.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
-            Text(desc, color = AppColors.onSurfaceMuted, fontSize = 14.sp)
+            if (desc.isNotEmpty()) Text(desc, color = AppColors.onSurfaceMuted, fontSize = 14.sp)
         }
     }
 }
@@ -445,10 +395,11 @@ private fun ChoiceRow(title: String, desc: String, selected: Boolean, onSelect: 
 
 @Composable
 private fun SourcesPage(cb: MoreCallbacks) {
+    val t = LocalStrings.current
     var newUrl by remember { mutableStateOf("") }
     Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(newUrl, { newUrl = it }, Modifier.weight(1f), label = { Text("URL источника", fontSize = 14.sp) }, singleLine = true)
+            OutlinedTextField(newUrl, { newUrl = it }, Modifier.weight(1f), label = { Text(t.sourceUrl, fontSize = 14.sp) }, singleLine = true)
             Spacer(Modifier.width(8.dp))
             Button({ if (newUrl.isNotBlank()) { cb.onAddSource(newUrl.trim()); newUrl = "" } }) { Text("+", fontSize = 16.sp) }
         }
@@ -461,11 +412,11 @@ private fun SourcesPage(cb: MoreCallbacks) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(src.url, fontSize = 14.sp, maxLines = 1, fontFamily = FontFamily.Monospace)
-                            Text("живых ${src.alive}/${src.total}" + (src.lastError?.let { " · $it" } ?: ""), color = AppColors.onSurfaceMuted, fontSize = 14.sp, maxLines = 1)
+                            Text(t.sourceAlive(src.alive, src.total) + (src.lastError?.let { " · $it" } ?: ""), color = AppColors.onSurfaceMuted, fontSize = 14.sp, maxLines = 1)
                         }
                         Switch(src.enabled, { cb.onToggleSource(src.id, it) })
                         IconButton({ cb.onRemoveSource(src.id) }) {
-                            Icon(Icons.Filled.Delete, "Удалить", tint = AppColors.red)
+                            Icon(Icons.Filled.Delete, t.delete, tint = AppColors.red)
                         }
                     }
                 }
@@ -478,28 +429,29 @@ private fun SourcesPage(cb: MoreCallbacks) {
 
 @Composable
 private fun StatsPage(cb: MoreCallbacks) {
+    val t = LocalStrings.current
     val s = cb.state
     val hs = cb.handshakeStats()
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        SubTitle("База прокси")
+        SubTitle(t.proxyBase)
         StatTable(
             rows = listOf(
-                listOf(cell("Всего в базе"), cell("${s.totalCount}", bold = true)),
-                listOf(cell("Живых сейчас"), cell("${s.aliveCount}", AppColors.green, bold = true)),
-                listOf(cell("Мёртвых"), cell("${s.deadCount}", AppColors.onSurface)),
-                listOf(cell("Живых за 15 мин"), cell("${s.aliveWithin15}")),
-                listOf(cell("Проверок за всё время"), cell("${s.checkedAllTime}")),
+                listOf(cell(t.totalInBase), cell("${s.totalCount}", bold = true)),
+                listOf(cell(t.aliveNow), cell("${s.aliveCount}", AppColors.green, bold = true)),
+                listOf(cell(t.deadStat), cell("${s.deadCount}", AppColors.onSurface)),
+                listOf(cell(t.aliveIn15), cell("${s.aliveWithin15}")),
+                listOf(cell(t.checksAllTime), cell("${s.checkedAllTime}")),
             ),
             weights = listOf(1.4f, 1f),
             fontSize = 14,
         )
 
-        SubTitle("Анти-DPI хитрости")
+        SubTitle(t.antiDpiTricks)
         if (hs.isEmpty()) {
-            Caption("ещё нет данных — хитрости накапливаются по мере проверок/подключений")
+            Caption(t.noStatsYet)
         } else {
             for (r in hs) {
                 CardBox(Modifier.fillMaxWidth()) {
@@ -508,11 +460,11 @@ private fun StatsPage(cb: MoreCallbacks) {
                         Spacer(Modifier.height(6.dp))
                         StatTable(
                             rows = listOf(
-                                listOf(cell("Попыток"), cell("${r.attempts}", bold = true), cell("Handshake"), cell("${r.handshakes} (${r.hsRatePct}%)", AppColors.blue, bold = true)),
-                                listOf(cell("TG-коннект"), cell("${r.tgConnected}", AppColors.green, bold = true), cell("Балл"), cell(if (r.score >= 0) fmt2(r.score) else "—", bold = true)),
-                                listOf(cell("Сокеты >10КБ"), cell("${r.over10k}"), cell(">100КБ"), cell("${r.over100k}")),
-                                listOf(cell("Сокеты >1мин"), cell("${r.over1m}"), cell(">5мин"), cell("${r.over5m}")),
-                                listOf(cell("Время работы"), cell(r.activeHuman, bold = true), cell("Трафик"), cell(r.trafficHuman)),
+                                listOf(cell(t.attempts), cell("${r.attempts}", bold = true), cell(t.handshake), cell("${r.handshakes} (${r.hsRatePct}%)", AppColors.blue, bold = true)),
+                                listOf(cell(t.tgConnect), cell("${r.tgConnected}", AppColors.green, bold = true), cell(t.score), cell(if (r.score >= 0) fmt2(r.score) else "—", bold = true)),
+                                listOf(cell(t.over10kb), cell("${r.over10k}"), cell(t.over100kb), cell("${r.over100k}")),
+                                listOf(cell(t.socketsOver1m), cell("${r.over1m}"), cell(t.over5m), cell("${r.over5m}")),
+                                listOf(cell(t.workTime), cell(r.activeHuman, bold = true), cell(t.traffic), cell(r.trafficHuman)),
                             ),
                             weights = listOf(1.3f, 1f, 1f, 1f),
                             fontSize = 14,
@@ -520,14 +472,9 @@ private fun StatsPage(cb: MoreCallbacks) {
                     }
                 }
             }
-            Text(
-                "Handshake — успешных рукопожатий (% от попыток) · Балл — выгодность · " +
-                    "«Время работы» — суммарно по сокетам ≥5КБ и дольше 1 минуты.",
-                color = AppColors.onSurfaceMuted,
-                fontSize = 14.sp,
-            )
+            Text(t.statsLegend, color = AppColors.onSurfaceMuted, fontSize = 14.sp)
             OutlinedButton(onClick = cb.onResetStats, modifier = Modifier.fillMaxWidth()) {
-                Text("Сбросить статистику хитростей", fontSize = 15.sp)
+                Text(t.resetStats, fontSize = 15.sp)
             }
         }
         Spacer(Modifier.height(16.dp))
@@ -535,8 +482,8 @@ private fun StatsPage(cb: MoreCallbacks) {
 }
 
 @Composable
-private fun SubTitle(t: String) {
-    Text(t, color = AppColors.accent, fontWeight = FontWeight.Bold, fontSize = 15.sp, modifier = Modifier.padding(top = 4.dp))
+private fun SubTitle(title: String) {
+    Text(title, color = AppColors.accent, fontWeight = FontWeight.Bold, fontSize = 15.sp, modifier = Modifier.padding(top = 4.dp))
 }
 
 private fun fmt2(v: Double): String {
@@ -548,6 +495,7 @@ private fun fmt2(v: Double): String {
 
 @Composable
 private fun AboutPage(cb: MoreCallbacks) {
+    val t = LocalStrings.current
     val github = "https://github.com/cheburnetik/AutoConnector_for_Telegram"
     val tg = "https://t.me/AutoConnector_for_Telegram"
     Column(
@@ -555,37 +503,33 @@ private fun AboutPage(cb: MoreCallbacks) {
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text("AutoConnector for Telegram", fontWeight = FontWeight.Bold, fontSize = 19.sp, color = AppColors.accent)
-        Text(
-            "Кросс-платформенный авто-коннектор: сам находит, проверяет и поднимает " +
-                "MTProto-прокси, через которые работает Telegram.",
-            fontSize = 15.sp,
-        )
+        Text(t.appTagline, fontSize = 15.sp)
 
         StatTable(
             rows = listOf(
-                listOf(cell("Версия"), cell(cb.appInfo.version, bold = true)),
-                listOf(cell("Дата сборки"), cell(cb.appInfo.buildDate, bold = true)),
+                listOf(cell(t.version), cell(cb.appInfo.version, bold = true)),
+                listOf(cell(t.buildDate), cell(cb.appInfo.buildDate, bold = true)),
             ),
             weights = listOf(1f, 1.6f),
             fontSize = 15,
         )
 
-        SubTitle("Скачать и исходники")
+        SubTitle(t.downloadSources)
         Text(github, color = AppColors.accent, fontSize = 14.sp, fontFamily = FontFamily.Monospace)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Button(onClick = { cb.onOpenUrl(github) }, modifier = Modifier.weight(1f)) {
-                Text("Открыть на GitHub", fontSize = 15.sp)
+                Text(t.openOnGithub, fontSize = 15.sp)
             }
-            OutlinedButton(onClick = { cb.onCopy(github) }) { Text("Копировать") }
+            OutlinedButton(onClick = { cb.onCopy(github) }) { Text(t.copy) }
         }
 
-        SubTitle("Обратная связь и баг-репорты")
+        SubTitle(t.feedbackBugs)
         Text(tg, color = AppColors.accent, fontSize = 14.sp, fontFamily = FontFamily.Monospace)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Button(onClick = { cb.onOpenUrl(tg) }, modifier = Modifier.weight(1f)) {
-                Text("Написать в Telegram", fontSize = 15.sp)
+                Text(t.writeTelegram, fontSize = 15.sp)
             }
-            OutlinedButton(onClick = { cb.onCopy(tg) }) { Text("Копировать") }
+            OutlinedButton(onClick = { cb.onCopy(tg) }) { Text(t.copy) }
         }
         Spacer(Modifier.height(16.dp))
     }
@@ -595,14 +539,15 @@ private fun AboutPage(cb: MoreCallbacks) {
 
 @Composable
 private fun ExportPage(cb: MoreCallbacks) {
+    val t = LocalStrings.current
     val links = remember { cb.exportLinks() }
     Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Живых ссылок: ${links.size}", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        Text(t.aliveLinks(links.size), fontWeight = FontWeight.Bold, fontSize = 16.sp)
         Button(
             onClick = { cb.onCopy(links.joinToString("\n")) },
             modifier = Modifier.fillMaxWidth(),
             enabled = links.isNotEmpty(),
-        ) { Text("Скопировать все", fontSize = 16.sp) }
+        ) { Text(t.copyAll, fontSize = 16.sp) }
         Column(
             Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(4.dp),
