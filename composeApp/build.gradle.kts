@@ -1,6 +1,9 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import java.io.FileInputStream
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Properties
+import java.util.TimeZone
 
 plugins {
     id("com.android.application")
@@ -53,12 +56,22 @@ android {
     // into the APK (Kotlin only analyses .java, it doesn't produce bytecode).
     sourceSets.getByName("main").java.srcDirs("src/androidMain/java")
 
+    buildFeatures {
+        buildConfig = true
+    }
+
+    // Baked at build time so the About page can show when the APK was built.
+    val buildDate = SimpleDateFormat("yyyy-MM-dd HH:mm 'UTC'")
+        .apply { timeZone = TimeZone.getTimeZone("UTC") }
+        .format(Date())
+
     defaultConfig {
         applicationId = "io.autoconnector"
         minSdk = 24
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
+        buildConfigField("String", "BUILD_DATE", "\"$buildDate\"")
     }
 
     compileOptions {

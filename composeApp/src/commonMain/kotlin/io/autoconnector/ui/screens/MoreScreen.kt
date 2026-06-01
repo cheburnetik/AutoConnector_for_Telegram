@@ -47,6 +47,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.autoconnector.engine.AppInfo
 import io.autoconnector.engine.EngineSettings
 import io.autoconnector.engine.EngineState
 import io.autoconnector.engine.HandshakeOption
@@ -60,7 +61,7 @@ import io.autoconnector.ui.components.cell
 import io.autoconnector.ui.theme.AppColors
 
 enum class MoreDest(val title: String) {
-    SETTINGS("Настройки"), SOURCES("Подписки"), STATS("Статистика"), EXPORT("Экспорт")
+    SETTINGS("Настройки"), SOURCES("Подписки"), STATS("Статистика"), EXPORT("Экспорт"), ABOUT("О программе")
 }
 
 class MoreCallbacks(
@@ -76,6 +77,8 @@ class MoreCallbacks(
     val onCopy: (String) -> Unit,
     val handshakeStats: () -> List<HandshakeStatRow>,
     val onResetStats: () -> Unit,
+    val appInfo: AppInfo,
+    val onOpenUrl: (String) -> Unit,
 )
 
 /** The "Ещё" tab body — just the menu. Entries open full-screen via [onOpen];
@@ -88,6 +91,7 @@ fun MoreScreen(onOpen: (MoreDest) -> Unit, onOpenGuide: () -> Unit) {
         MenuEntry("Подписки", "Источники прокси для скана") { onOpen(MoreDest.SOURCES) }
         MenuEntry("Статистика", "База прокси + анти-DPI хитрости") { onOpen(MoreDest.STATS) }
         MenuEntry("Экспорт", "tg:// ссылки живых прокси") { onOpen(MoreDest.EXPORT) }
+        MenuEntry("О программе", "Версия, сборка, скачать, обратная связь") { onOpen(MoreDest.ABOUT) }
     }
 }
 
@@ -102,6 +106,7 @@ fun MoreFullPage(dest: MoreDest, cb: MoreCallbacks, onBack: () -> Unit) {
                 MoreDest.SOURCES -> SourcesPage(cb)
                 MoreDest.STATS -> StatsPage(cb)
                 MoreDest.EXPORT -> ExportPage(cb)
+                MoreDest.ABOUT -> AboutPage(cb)
             }
         }
     }
@@ -537,6 +542,53 @@ private fun SubTitle(t: String) {
 private fun fmt2(v: Double): String {
     val x = (v * 100).toInt() / 100.0
     return x.toString()
+}
+
+// === About ==============================================================
+
+@Composable
+private fun AboutPage(cb: MoreCallbacks) {
+    val github = "https://github.com/cheburnetik/AutoConnector_for_Telegram"
+    val tg = "https://t.me/AutoConnector_for_Telegram"
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text("AutoConnector for Telegram", fontWeight = FontWeight.Bold, fontSize = 19.sp, color = AppColors.accent)
+        Text(
+            "Кросс-платформенный авто-коннектор: сам находит, проверяет и поднимает " +
+                "MTProto-прокси, через которые работает Telegram.",
+            fontSize = 15.sp,
+        )
+
+        StatTable(
+            rows = listOf(
+                listOf(cell("Версия"), cell(cb.appInfo.version, bold = true)),
+                listOf(cell("Дата сборки"), cell(cb.appInfo.buildDate, bold = true)),
+            ),
+            weights = listOf(1f, 1.6f),
+            fontSize = 15,
+        )
+
+        SubTitle("Скачать и исходники")
+        Text(github, color = AppColors.accent, fontSize = 14.sp, fontFamily = FontFamily.Monospace)
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Button(onClick = { cb.onOpenUrl(github) }, modifier = Modifier.weight(1f)) {
+                Text("Открыть на GitHub", fontSize = 15.sp)
+            }
+            OutlinedButton(onClick = { cb.onCopy(github) }) { Text("Копировать") }
+        }
+
+        SubTitle("Обратная связь и баг-репорты")
+        Text(tg, color = AppColors.accent, fontSize = 14.sp, fontFamily = FontFamily.Monospace)
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Button(onClick = { cb.onOpenUrl(tg) }, modifier = Modifier.weight(1f)) {
+                Text("Написать в Telegram", fontSize = 15.sp)
+            }
+            OutlinedButton(onClick = { cb.onCopy(tg) }) { Text("Копировать") }
+        }
+        Spacer(Modifier.height(16.dp))
+    }
 }
 
 // === Export =============================================================
