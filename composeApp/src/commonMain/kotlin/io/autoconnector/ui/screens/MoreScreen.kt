@@ -78,10 +78,12 @@ class MoreCallbacks(
     val onResetStats: () -> Unit,
 )
 
-/** The "Ещё" tab body — just the menu. Entries open full-screen via [onOpen]. */
+/** The "Ещё" tab body — just the menu. Entries open full-screen via [onOpen];
+ *  [onOpenGuide] opens the first-time port-setup guide. */
 @Composable
-fun MoreScreen(onOpen: (MoreDest) -> Unit) {
+fun MoreScreen(onOpen: (MoreDest) -> Unit, onOpenGuide: () -> Unit) {
     Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        MenuEntry("Настройка портов в Telegram", "Как подключить Telegram к Коннектору (порты 55001/55002)", onOpenGuide)
         MenuEntry("Настройки", "Порты, анти-DPI, скан, сеть, батарея") { onOpen(MoreDest.SETTINGS) }
         MenuEntry("Подписки", "Источники прокси для скана") { onOpen(MoreDest.SOURCES) }
         MenuEntry("Статистика", "База прокси + анти-DPI хитрости") { onOpen(MoreDest.STATS) }
