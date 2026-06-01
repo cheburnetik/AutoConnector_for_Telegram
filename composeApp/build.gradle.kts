@@ -19,6 +19,15 @@ kotlin {
         }
     }
 
+    // Desktop (Windows / Linux / macOS) JVM target. The shared Compose UI in
+    // commonMain renders here unchanged — that's how the desktop window stays a
+    // 1:1 copy of the phone screen. The relay engine is reused via :engineDesktop.
+    jvm("desktop") {
+        compilerOptions {
+            jvmTarget.set(JvmTarget.JVM_17)
+        }
+    }
+
     sourceSets {
         val commonMain by getting {
             dependencies {
@@ -29,6 +38,15 @@ kotlin {
                 implementation(compose.ui)
                 implementation(compose.components.uiToolingPreview)
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
+            }
+        }
+        val desktopMain by getting {
+            dependencies {
+                implementation(compose.desktop.currentOs)
+                // The reused relay engine, compiled for a plain JVM (+ android.* shim).
+                implementation(project(":engineDesktop"))
+                // Swing dispatcher for Compose Desktop's event loop.
+                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.8.1")
             }
         }
         val androidMain by getting {
@@ -114,5 +132,32 @@ android {
 
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
+    }
+}
+
+// Collects the full desktop runtime (all dependency jars + the compiled app jar)
+// into build/desktopRuntime so it can be run under a Windows JVM in Wine. The
+// Linux skiko jar is swapped for the Windows one out-of-band (see run script).
+tasks.register<Sync>("collectDesktopRuntime") {
+    dependsOn("desktopJar")
+    from(configurations.named("desktopRuntimeClasspath"))
+    from(tasks.named("desktopJar"))
+    into(layout.buildDirectory.dir("desktopRuntime"))
+}
+
+compose.desktop {
+    application {
+        mainClass = "io.autoconnector.MainKt"
+        jvmArgs += listOf("-Djava.awt.headless=false")
+        nativeDistributions {
+            targetFormats(
+                org.jetbrains.compose.desktop.application.dsl.TargetFormat.Exe,
+                org.jetbrains.compose.desktop.application.dsl.TargetFormat.Msi,
+                org.jetbrains.compose.desktop.application.dsl.TargetFormat.Deb,
+            )
+            packageName = "AutoConnector"
+            packageVersion = "1.0.0"
+            description = "AutoConnector for Telegram"
+        }
     }
 }

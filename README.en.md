@@ -1,6 +1,6 @@
 [Русский](README.md) | **English**
 
-# AutoConnector for Telegram (Android)
+# AutoConnector for Telegram (Android & Windows)
 
 **AutoConnector for Telegram** is an auto-connector: the app finds MTProto
 proxies on the internet, checks that they are alive, and runs a local relay
@@ -46,6 +46,25 @@ section below for how to check the signature and checksum.
 
 The APK is signed with a stable release certificate (APK signature schemes
 v2 + v3), so updates install over the previous version without reinstalling.
+
+## 💻 Download (Windows)
+
+The desktop version is the same engine and the same UI as on the phone (shared
+Kotlin Multiplatform + Compose code). A ready `.exe` is on the releases page:
+
+### **➡️ [Download for Windows (GitHub Releases)](https://github.com/cheburnetik/AutoConnector_for_Telegram/releases/latest)**
+
+- A single `AutoConnector-Setup.exe` — **self-contained** (Java is bundled
+  inside, nothing to install). Windows 10/11 x64.
+- To run: double-click the `.exe`. If SmartScreen shows "Windows protected your
+  PC" — click "More info" → "Run anyway".
+- **Closing the window minimizes the app to the system tray** (icon near the
+  clock); the relay keeps running in the background. Click the icon to restore;
+  right-click → menu "Open" / "Exit".
+- In Telegram Desktop set a SOCKS5 proxy `127.0.0.1` port `55001` (and `55002`),
+  same as on Android.
+
+Data (proxy database, settings) is stored in `%APPDATA%\AutoConnector`.
 
 ## ✨ Features
 

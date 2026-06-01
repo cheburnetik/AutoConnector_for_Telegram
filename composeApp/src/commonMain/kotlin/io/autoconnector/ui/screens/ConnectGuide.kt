@@ -40,6 +40,8 @@ import androidx.compose.ui.unit.sp
 import io.autoconnector.engine.EngineState
 import io.autoconnector.i18n.LocalStrings
 import io.autoconnector.ui.theme.AppColors
+import io.autoconnector.ui.theme.monospaceFontFamily
+import io.autoconnector.ui.theme.sansFontFamily
 
 /**
  * Full-screen, scrollable "how to connect Telegram" guide with copy buttons
@@ -200,7 +202,7 @@ private fun CopyBox(text: String, onCopy: (String) -> Unit) {
             .padding(12.dp),
     ) {
         SelectionContainer {
-            Text(text, color = AppColors.onSurface, fontFamily = FontFamily.Monospace, fontSize = 14.sp, lineHeight = 19.sp)
+            Text(text, color = AppColors.onSurface, fontFamily = monospaceFontFamily(), fontSize = 14.sp, lineHeight = 19.sp)
         }
         Spacer(Modifier.height(10.dp))
         Row(
@@ -229,7 +231,7 @@ private fun CopyChip(label: String, value: String, onCopy: (String) -> Unit) {
     ) {
         Column {
             Text(label, color = AppColors.onSurfaceMuted, fontSize = 14.sp)
-            Text(value, color = AppColors.onSurface, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            Text(value, color = AppColors.onSurface, fontFamily = monospaceFontFamily(), fontWeight = FontWeight.Bold, fontSize = 14.sp)
         }
         Spacer(Modifier.size(6.dp))
         Icon(Icons.Filled.ContentCopy, contentDescription = null, tint = AppColors.accent, modifier = Modifier.size(15.dp))

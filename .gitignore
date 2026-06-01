@@ -17,6 +17,15 @@ signing.properties
 *.apk
 *.aab
 *.idsig
+*.exe
+*.msi
+*.sfx
+
+# Desktop packaging artifacts & local test helpers (not part of the source)
+dist/
+libs-win/
+docs/desktop-shots/
+run-windows-wine.sh
 
 # IDE / OS
 .idea/

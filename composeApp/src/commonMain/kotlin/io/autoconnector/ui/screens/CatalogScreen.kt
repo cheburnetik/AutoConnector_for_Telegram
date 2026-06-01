@@ -61,6 +61,8 @@ import io.autoconnector.ui.components.Caption
 import io.autoconnector.ui.components.RatingBars
 import io.autoconnector.ui.components.StatusDot
 import io.autoconnector.ui.theme.AppColors
+import io.autoconnector.ui.theme.monospaceFontFamily
+import io.autoconnector.ui.theme.sansFontFamily
 
 // Icon meaning is shared between the tile and the detail page so the icons on a
 // tile are self-explanatory once the user opens a host.
@@ -99,7 +101,7 @@ private fun CatalogTile(p: CatalogItem, onClick: () -> Unit) {
                 p.host,
                 Modifier.weight(1f),
                 color = if (p.alive) AppColors.onSurface else AppColors.gray,
-                fontFamily = FontFamily.Monospace,
+                fontFamily = monospaceFontFamily(),
                 fontWeight = FontWeight.Bold,
                 fontSize = 14.sp,
                 maxLines = 1,
@@ -169,7 +171,7 @@ fun CatalogDetailPage(
                     androidx.compose.material3.IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, t.back, tint = Color.White)
                     }
-                    Text(p.host, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp, fontFamily = FontFamily.Monospace, maxLines = 2)
+                    Text(p.host, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp, fontFamily = monospaceFontFamily(), maxLines = 2)
                 }
             }
 
@@ -223,7 +225,7 @@ private fun DetailRow(icon: ImageVector, label: String, value: String, color: Co
         Icon(icon, contentDescription = null, tint = AppColors.accent, modifier = Modifier.size(18.dp))
         Spacer(Modifier.width(10.dp))
         Text(label, Modifier.weight(1f), color = AppColors.onSurfaceMuted, fontSize = 14.sp)
-        Text(value, color = color, fontWeight = FontWeight.Bold, fontSize = 14.sp, fontFamily = if (mono) FontFamily.Monospace else FontFamily.Default, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(value, color = color, fontWeight = FontWeight.Bold, fontSize = 14.sp, fontFamily = if (mono) monospaceFontFamily() else sansFontFamily(), maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
     Box(Modifier.fillMaxWidth().height(1.dp).background(AppColors.cardBorder))
 }

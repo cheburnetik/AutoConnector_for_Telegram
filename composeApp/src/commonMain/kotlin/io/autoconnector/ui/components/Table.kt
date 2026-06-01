@@ -21,6 +21,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material3.Text
 import io.autoconnector.ui.theme.AppColors
+import io.autoconnector.ui.theme.monospaceFontFamily
+import io.autoconnector.ui.theme.sansFontFamily
 
 /** A single table cell. */
 data class Cell(
@@ -67,7 +69,7 @@ fun StatTable(
                                 color = c.color,
                                 fontSize = fontSize.sp,
                                 fontWeight = if (c.bold) FontWeight.Bold else FontWeight.Normal,
-                                fontFamily = if (c.mono) FontFamily.Monospace else FontFamily.Default,
+                                fontFamily = if (c.mono) monospaceFontFamily() else sansFontFamily(),
                                 maxLines = 1,
                             )
                         }
