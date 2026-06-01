@@ -1,4 +1,6 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.io.FileInputStream
+import java.util.Properties
 
 plugins {
     id("com.android.application")
@@ -64,9 +66,36 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    // Release signing. Credentials live in keystore.properties (git-ignored, see
+    // .gitignore) so the private key is never committed. If the file is absent
+    // — e.g. a third party building from source — the release APK is left
+    // unsigned instead of breaking the build. All three signature schemes
+    // (v1 JAR + v2 + v3) are enabled for the widest install compatibility, which
+    // minimises "package invalid / app not installed" warnings on Android.
+    val keystorePropsFile = rootProject.file("keystore.properties")
+    val hasKeystore = keystorePropsFile.exists()
+    val keystoreProps = Properties().apply {
+        if (hasKeystore) FileInputStream(keystorePropsFile).use { load(it) }
+    }
+
+    signingConfigs {
+        if (hasKeystore) {
+            create("release") {
+                storeFile = file(keystoreProps.getProperty("storeFile"))
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
+            }
+        }
+    }
+
     buildTypes {
         getByName("release") {
             isMinifyEnabled = false
+            if (hasKeystore) signingConfig = signingConfigs.getByName("release")
         }
     }
 
