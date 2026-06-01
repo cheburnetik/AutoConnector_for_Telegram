@@ -12,6 +12,8 @@ import androidx.compose.ui.unit.sp
 import io.autoconnector.engine.LogLevel
 import io.autoconnector.engine.LogLine
 import io.autoconnector.ui.theme.AppColors
+import io.autoconnector.ui.theme.monospaceFontFamily
+import io.autoconnector.ui.theme.sansFontFamily
 
 /** Log lines emitted into the page's single LazyColumn. */
 fun LazyListScope.logsItems(logs: List<LogLine>) {
@@ -19,7 +21,7 @@ fun LazyListScope.logsItems(logs: List<LogLine>) {
         Text(
             line.text,
             color = colorFor(line.level),
-            fontFamily = FontFamily.Monospace,
+            fontFamily = monospaceFontFamily(),
             fontSize = 14.sp,
             lineHeight = 18.sp,
             modifier = Modifier.padding(horizontal = 12.dp),

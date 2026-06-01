@@ -59,6 +59,8 @@ import io.autoconnector.ui.components.Caption
 import io.autoconnector.ui.components.StatTable
 import io.autoconnector.ui.components.cell
 import io.autoconnector.ui.theme.AppColors
+import io.autoconnector.ui.theme.monospaceFontFamily
+import io.autoconnector.ui.theme.sansFontFamily
 
 enum class MoreDest { SETTINGS, SOURCES, STATS, EXPORT, ABOUT }
 
@@ -411,7 +413,7 @@ private fun SourcesPage(cb: MoreCallbacks) {
                 CardBox(Modifier.fillMaxWidth()) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
-                            Text(src.url, fontSize = 14.sp, maxLines = 1, fontFamily = FontFamily.Monospace)
+                            Text(src.url, fontSize = 14.sp, maxLines = 1, fontFamily = monospaceFontFamily())
                             Text(t.sourceAlive(src.alive, src.total) + (src.lastError?.let { " · $it" } ?: ""), color = AppColors.onSurfaceMuted, fontSize = 14.sp, maxLines = 1)
                         }
                         Switch(src.enabled, { cb.onToggleSource(src.id, it) })
@@ -515,7 +517,7 @@ private fun AboutPage(cb: MoreCallbacks) {
         )
 
         SubTitle(t.downloadSources)
-        Text(github, color = AppColors.accent, fontSize = 14.sp, fontFamily = FontFamily.Monospace)
+        Text(github, color = AppColors.accent, fontSize = 14.sp, fontFamily = monospaceFontFamily())
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Button(onClick = { cb.onOpenUrl(github) }, modifier = Modifier.weight(1f)) {
                 Text(t.openOnGithub, fontSize = 15.sp)
@@ -524,7 +526,7 @@ private fun AboutPage(cb: MoreCallbacks) {
         }
 
         SubTitle(t.feedbackBugs)
-        Text(tg, color = AppColors.accent, fontSize = 14.sp, fontFamily = FontFamily.Monospace)
+        Text(tg, color = AppColors.accent, fontSize = 14.sp, fontFamily = monospaceFontFamily())
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Button(onClick = { cb.onOpenUrl(tg) }, modifier = Modifier.weight(1f)) {
                 Text(t.writeTelegram, fontSize = 15.sp)
@@ -553,7 +555,7 @@ private fun ExportPage(cb: MoreCallbacks) {
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             for (l in links) {
-                Text(l, fontFamily = FontFamily.Monospace, fontSize = 14.sp, maxLines = 1)
+                Text(l, fontFamily = monospaceFontFamily(), fontSize = 14.sp, maxLines = 1)
             }
             Spacer(Modifier.height(8.dp))
         }
