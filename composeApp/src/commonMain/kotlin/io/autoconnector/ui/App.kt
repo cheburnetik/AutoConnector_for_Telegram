@@ -189,7 +189,7 @@ fun App(engine: Engine) {
                     Tabs.SCAN -> item { ScanContent(state) }
                     Tabs.CATALOG -> catalogItems(catalog, onClick = { detail = it })
                     Tabs.LOGS -> logsItems(logs)
-                    Tabs.MORE -> item { MoreScreen(onOpen = { morePage = it }) }
+                    Tabs.MORE -> item { MoreScreen(onOpen = { morePage = it }, onOpenGuide = { showGuide = true }) }
                 }
             }
         }
