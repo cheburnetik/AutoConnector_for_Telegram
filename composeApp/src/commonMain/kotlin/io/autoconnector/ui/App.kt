@@ -126,6 +126,8 @@ fun App(engine: Engine) {
             onCopy = engine::copyToClipboard,
             handshakeStats = engine::handshakeStats,
             onResetStats = engine::resetStats,
+            appInfo = engine.appInfo(),
+            onOpenUrl = engine::openLink,
         )
 
         val detailItem = detail

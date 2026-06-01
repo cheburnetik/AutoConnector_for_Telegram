@@ -7,6 +7,7 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
 import androidx.core.app.NotificationManagerCompat
+import io.autoconnector.engine.AppInfo
 import io.autoconnector.engine.CatalogItem
 import io.autoconnector.engine.ConnState
 import io.autoconnector.engine.Engine
@@ -222,6 +223,11 @@ class AndroidEngine(context: Context) : Engine {
         HandshakeStats.resetAll()
         appendLog("⚙ статистика хитростей сброшена")
     }
+
+    override fun appInfo(): AppInfo = AppInfo(
+        version = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+        buildDate = BuildConfig.BUILD_DATE,
+    )
 
     // === catalog actions =================================================
 

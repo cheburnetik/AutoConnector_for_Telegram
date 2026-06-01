@@ -89,6 +89,9 @@ data class EngineSettings(
     val dpiApplyProbes: Boolean = true,
 )
 
+/** Build/version info for the About page. */
+data class AppInfo(val version: String, val buildDate: String)
+
 /** A selectable anti-DPI handshake mode. [ordinal] is the persisted value. */
 data class HandshakeOption(val ordinal: Int, val label: String, val special: Boolean)
 
@@ -216,6 +219,9 @@ interface Engine {
     /** Per-anti-DPI-trick statistics for the Stats table. */
     fun handshakeStats(): List<HandshakeStatRow>
     fun resetStats()
+
+    /** App version + build date for the About page. */
+    fun appInfo(): AppInfo
 
     fun pin(id: Long, pinned: Boolean)
     fun tgLink(id: Long): String?
