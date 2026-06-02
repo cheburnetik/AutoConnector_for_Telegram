@@ -103,6 +103,18 @@ public final class RelayConnection implements Runnable {
                 return;
             }
 
+            // No live proxies yet (cold pool / still bootstrapping) → forward
+            // Telegram straight to the DC instead of dropping the connection.
+            // Dropping it makes Telegram declare the proxy "misconfigured" and
+            // DISABLE it; a direct pass-through keeps the proxy enabled, and as
+            // soon as live proxies appear the next connections route through them.
+            if (store.countAlive() == 0) {
+                RelayLog.emit("⚠ живых прокси пока нет — Telegram идёт напрямую к DC "
+                        + "(чтобы Telegram не отключил прокси); идёт набор пула…");
+                handleBypassRaw(tg, tgIn, tgOut, dst, prefs.dpiApplyDirect());
+                return;
+            }
+
             // 2. Strip Telegram's obfuscated2 (no secret over SOCKS5).
             Obfuscated2 local = new Obfuscated2();
             local.accept(tgIn, null);
@@ -421,10 +433,26 @@ public final class RelayConnection implements Runnable {
             if (!containsId(candidates, p.id)) candidates.add(p);
             if (candidates.size() >= wantTop + wantRandom + 1) break;
         }
-        // 3. Fallback — per-mode pool empty (e.g. fresh install on this
-        //    network), fall back to global top so Telegram has SOMETHING
-        //    to try while we learn this mode.
+        // 3. Per-mode pool thin (fresh install, desktop, or a just-changed /
+        //    mis-detected network)? Pull GLOBAL alive proxies — these are
+        //    alive-filtered, so we NEVER hand Telegram a dead host while live
+        //    ones exist somewhere. Handing over a dead upstream is exactly what
+        //    made Telegram see a "broken" proxy and disable it.
         if (candidates.size() < 5) {
+            for (ProxyEntry p : store.topAlive(wantTop * multi)) {
+                if (onlyFakeTls && !p.isFakeTls()) continue;
+                if (!containsId(candidates, p.id)) candidates.add(p);
+                if (candidates.size() >= wantTop + 1) break;
+            }
+            for (ProxyEntry p : store.randomAlive(wantRandom * multi)) {
+                if (onlyFakeTls && !p.isFakeTls()) continue;
+                if (!containsId(candidates, p.id)) candidates.add(p);
+                if (candidates.size() >= wantTop + wantRandom + 1) break;
+            }
+        }
+        // 4. Truly nothing alive matched — last resort, try best-by-score
+        //    (may be unverified) so there's at least something to attempt.
+        if (candidates.isEmpty()) {
             java.util.List<ProxyEntry> fallback = usePerMode
                     ? store.topForMode(net, 20 * multi)
                     : store.top(20 * multi);
