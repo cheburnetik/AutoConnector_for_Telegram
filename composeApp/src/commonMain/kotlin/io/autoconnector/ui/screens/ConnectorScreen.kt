@@ -1,5 +1,7 @@
 package io.autoconnector.ui.screens
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -11,10 +13,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -57,6 +61,10 @@ fun ConnectorContent(s: EngineState, onOpenGuide: () -> Unit) {
                     Text(s.statusSub, color = AppColors.onSurfaceMuted, fontSize = 14.sp, maxLines = 1)
                 }
             }
+        }
+
+        if (s.directMode) {
+            DirectModeBanner(s, t)
         }
 
         if (s.setupNeeded && s.proxyEnabled) {
@@ -124,6 +132,40 @@ fun ConnectorContent(s: EngineState, onOpenGuide: () -> Unit) {
             StatTable(rows = rows, weights = listOf(2.2f, 1f, 1f), fontSize = 14)
         }
         Spacer(Modifier.height(8.dp))
+    }
+}
+
+/**
+ * Highlighted note shown on the Connector tab whenever the relay is in direct
+ * ("bypass") mode — proxies skipped because a VPN is on, or turned off outright.
+ * Also states whether anti-DPI first-packet fragmentation is applied.
+ */
+@Composable
+private fun DirectModeBanner(s: EngineState, t: Strings) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(AppColors.card)
+            .border(1.dp, AppColors.amber, RoundedCornerShape(10.dp))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("🔌", fontSize = 15.sp)
+            Spacer(Modifier.width(6.dp))
+            Text(t.directModeTitle, color = AppColors.amber, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+        }
+        Text(
+            if (s.directViaVpn) t.directModeViaVpn else t.directModeOff,
+            color = AppColors.onSurface,
+            fontSize = 14.sp,
+        )
+        Text(
+            if (s.directAntiDpi) t.directDpiOn else t.directDpiOff,
+            color = AppColors.onSurfaceMuted,
+            fontSize = 13.sp,
+        )
     }
 }
 

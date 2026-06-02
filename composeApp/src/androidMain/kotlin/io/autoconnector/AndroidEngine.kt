@@ -144,6 +144,7 @@ class AndroidEngine(context: Context) : Engine {
             skipLowBattery = p.skipLowBattery(),
             dpiApplyRelay = p.dpiApplyRelay(),
             dpiApplyProbes = p.dpiApplyProbes(),
+            dpiApplyDirect = p.dpiApplyDirect(),
             langCode = p.lang(),
         )
     }
@@ -172,6 +173,7 @@ class AndroidEngine(context: Context) : Engine {
         p.setSkipLowBattery(s.skipLowBattery)
         p.setDpiApplyRelay(s.dpiApplyRelay)
         p.setDpiApplyProbes(s.dpiApplyProbes)
+        p.setDpiApplyDirect(s.dpiApplyDirect)
         p.setLang(s.langCode)
         loadSettings()
         if (p.appEnabled() || p.scanEnabled()) RelayService.reconfigure(ctx)
@@ -456,6 +458,10 @@ class AndroidEngine(context: Context) : Engine {
             statusText = statusText,
             statusSub = statusSub,
             modeBadge = modeBadge(p),
+            directMode = p.shouldBypassProxies(),
+            directViaVpn = p.proxyMode() == Prefs.ProxyMode.DISABLED_ON_VPN
+                    && NetworkMonitor.currentMode() == NetworkMode.VPN,
+            directAntiDpi = p.dpiApplyDirect(),
             aliveCount = alive,
             aliveWithin15 = alive15,
             totalCount = total,
@@ -565,7 +571,8 @@ class AndroidEngine(context: Context) : Engine {
 
     private fun modeBadge(p: Prefs): String {
         val net = NetworkMonitor.currentMode()
-        if (p.shouldBypassProxies()) return "Сеть: ${net.label} · прямой выход"
+        if (p.shouldBypassProxies())
+            return "Сеть: ${net.label} · прямой выход" + (if (p.dpiApplyDirect()) " · анти-DPI" else "")
         val user = HandshakeMode.fromOrdinal(p.handshakeMode())
         val dpi = if (user == HandshakeMode.AUTO_RANDOM) {
             val last = HandshakeStats.lastUsed()
@@ -649,10 +656,12 @@ class AndroidEngine(context: Context) : Engine {
 
     private fun autoRefreshOnce() {
         try {
+            // Idempotent (CONFLICT_IGNORE on the unique url) — runs every start so
+            // newly-shipped default subscriptions reach existing installs too.
+            store.ensureDefaultSources()
             val known = store.count()
             if (known < 50) {
                 appendLog("— ПЕРВЫЙ ЗАПУСК: интенсивный bootstrap ($known прокси) —")
-                store.ensureDefaultSources()
                 bootstrapIntensive()
             } else {
                 appendLog("— автозапуск: скан и проверка —")
