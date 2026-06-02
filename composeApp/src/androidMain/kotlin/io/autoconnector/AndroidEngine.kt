@@ -15,6 +15,7 @@ import io.autoconnector.engine.EngineSettings
 import io.autoconnector.engine.EngineState
 import io.autoconnector.engine.HandshakeOption
 import io.autoconnector.engine.HandshakeStatRow
+import io.autoconnector.engine.LogCat
 import io.autoconnector.engine.LogLevel
 import io.autoconnector.engine.LogLine
 import io.autoconnector.engine.ProxyInfo
@@ -82,7 +83,7 @@ class AndroidEngine(context: Context) : Engine {
     override fun start() {
         HandshakeStats.init(ctx)
         NetworkMonitor.init(ctx)
-        RelayLog.register { line -> appendLog(line) }
+        RelayLog.register { session, line -> appendLog(line, LogCat.TELEGRAM, session) }
         loadSettings()
         prevUp = RelayStats.bytesUp.get()
         prevDown = RelayStats.bytesDown.get()
@@ -106,7 +107,7 @@ class AndroidEngine(context: Context) : Engine {
 
     override fun setScanEnabled(on: Boolean) {
         Prefs(ctx).setScanEnabled(on)
-        appendLog(if (on) "✓ фоновое сканирование включено" else "⏸ фоновое сканирование отключено")
+        appendLog(if (on) "✓ фоновое сканирование включено" else "⏸ фоновое сканирование отключено", LogCat.SCAN)
         syncService()
         pushImmediate()
     }
@@ -281,7 +282,7 @@ class AndroidEngine(context: Context) : Engine {
     override fun addSource(url: String) {
         store.upsertSource(url)
         refreshSources()
-        appendLog("✓ источник добавлен: $url")
+        appendLog("✓ источник добавлен: $url", LogCat.SUBS)
     }
 
     override fun removeSource(id: Long) {
@@ -666,19 +667,19 @@ class AndroidEngine(context: Context) : Engine {
             store.ensureDefaultSources()
             val known = store.count()
             if (known < 50) {
-                appendLog("— ПЕРВЫЙ ЗАПУСК: интенсивный bootstrap ($known прокси) —")
+                appendLog("— ПЕРВЫЙ ЗАПУСК: интенсивный bootstrap ($known прокси) —", LogCat.SCAN)
                 bootstrapIntensive()
             } else {
-                appendLog("— автозапуск: скан и проверка —")
+                appendLog("— автозапуск: скан и проверка —", LogCat.SCAN)
                 scanAndCheck()
             }
         } catch (t: Throwable) {
-            appendLog("⚠ bootstrap: ${t.message}")
+            appendLog("⚠ bootstrap: ${t.message}", LogCat.SCAN)
         }
     }
 
     private fun scanAndCheck() {
-        val scanner = PageScanner(store) { line -> appendLog(line) }
+        val scanner = PageScanner(store) { line -> appendLog(line, LogCat.SUBS) }
         for (url in store.enabledSourceUrls()) {
             val r = scanner.scanPage(url)
             val id = store.upsertSource(url)
@@ -688,14 +689,14 @@ class AndroidEngine(context: Context) : Engine {
             }
         }
         val p = Prefs(ctx)
-        val runner = CheckRunner(store, { line -> appendLog(line) }, p.checkConcurrency())
+        val runner = CheckRunner(store, { line -> appendLog(line, LogCat.SCAN) }, p.checkConcurrency())
         runner.setProbeMode(if (p.dpiApplyProbes()) HandshakeMode.fromOrdinal(p.handshakeMode()) else HandshakeMode.NORMAL)
         runner.runBatch(p.checkBatch())
-        appendLog("— проверка готова —")
+        appendLog("— проверка готова —", LogCat.SCAN)
     }
 
     private fun bootstrapIntensive() {
-        val scanner = PageScanner(store) { line -> appendLog(line) }
+        val scanner = PageScanner(store) { line -> appendLog(line, LogCat.SUBS) }
         for (url in store.enabledSourceUrls()) {
             try {
                 val r = scanner.scanPage(url)
@@ -705,23 +706,23 @@ class AndroidEngine(context: Context) : Engine {
                     store.setSourceScanResult(id, r.found, r.bytes, r.error)
                 }
             } catch (t: Throwable) {
-                appendLog("⚠ $url — ${t.message}")
+                appendLog("⚠ $url — ${t.message}", LogCat.SUBS)
             }
         }
         val afterScan = store.count()
-        appendLog("— bootstrap: собрано $afterScan прокси, массовая проверка —")
+        appendLog("— bootstrap: собрано $afterScan прокси, массовая проверка —", LogCat.SCAN)
         val conc = maxOf(16, minOf(32, afterScan / 10))
-        val runner = CheckRunner(store, { line -> appendLog(line) }, conc)
+        val runner = CheckRunner(store, { line -> appendLog(line, LogCat.SCAN) }, conc)
         val pp = Prefs(ctx)
         runner.setProbeMode(if (pp.dpiApplyProbes()) HandshakeMode.fromOrdinal(pp.handshakeMode()) else HandshakeMode.NORMAL)
         runner.runBatch(minOf(afterScan, 600))
-        appendLog("— bootstrap готов: живых ${store.countAlive()} / ${store.count()} —")
+        appendLog("— bootstrap готов: живых ${store.countAlive()} / ${store.count()} —", LogCat.SCAN)
     }
 
     // === log =============================================================
 
-    private fun appendLog(line: String) {
-        val entry = LogLine(line, classify(line))
+    private fun appendLog(line: String, cat: LogCat = LogCat.OTHER, session: String? = null) {
+        val entry = LogLine(line, classify(line), cat, session)
         val cur = _logs.value
         val next = ArrayList<LogLine>(minOf(cur.size + 1, 200))
         next.add(entry)
