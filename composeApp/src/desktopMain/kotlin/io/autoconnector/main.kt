@@ -40,8 +40,13 @@ private fun initialWindowSize(): DpSize {
 
 fun main() = application {
     val engine = remember { DesktopEngine(appDataDir()).also { it.start() } }
-    // Closing the window hides it to the tray instead of quitting; the tray menu
-    // restores it or exits for good.
+    // On platforms with a system tray (Windows, KDE, …) closing the window
+    // minimises to the tray and the relay keeps running. On tray-less desktops
+    // (many GNOME/Wayland setups, minimal WMs) hiding the window would leave an
+    // invisible, unrecoverable process — so there we just exit on close.
+    val traySupported = remember {
+        try { java.awt.SystemTray.isSupported() } catch (_: Throwable) { false }
+    }
     var windowVisible by remember { mutableStateOf(true) }
     val trayState = rememberTrayState()
     val state = rememberWindowState(size = initialWindowSize())
@@ -51,19 +56,22 @@ fun main() = application {
     val openLabel = if (ru) "Открыть" else "Open"
     val exitLabel = if (ru) "Выход" else "Exit"
 
-    Tray(
-        icon = icon,
-        state = trayState,
-        tooltip = "AutoConnector for Telegram",
-        onAction = { windowVisible = true }, // left-click the tray icon → restore
-        menu = {
-            Item(openLabel, onClick = { windowVisible = true })
-            Item(exitLabel, onClick = ::exitApplication)
-        },
-    )
+    if (traySupported) {
+        Tray(
+            icon = icon,
+            state = trayState,
+            tooltip = "AutoConnector for Telegram",
+            onAction = { windowVisible = true }, // left-click the tray icon → restore
+            menu = {
+                Item(openLabel, onClick = { windowVisible = true })
+                Item(exitLabel, onClick = ::exitApplication)
+            },
+        )
+    }
 
     Window(
-        onCloseRequest = { windowVisible = false }, // close button → minimise to tray
+        // With a tray: close → minimise to tray. Without: close → quit.
+        onCloseRequest = { if (traySupported) windowVisible = false else exitApplication() },
         visible = windowVisible,
         state = state,
         icon = icon,
