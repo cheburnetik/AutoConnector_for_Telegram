@@ -57,6 +57,11 @@ private const val MATURE_BYTES = 4096L
 // Once this many bytes have flowed through the relay this session, the tunnel
 // is treated as working even during quiet periods.
 private const val CONNECTED_MIN_BYTES = 1024L
+// Per-tab log buffer caps. Telegram gets the most (it bursts dozens of session
+// lines per connect); subscriptions the least (few sources).
+private const val LOG_CAP_TELE = 500
+private const val LOG_CAP_SCAN = 300
+private const val LOG_CAP_SUBS = 150
 
 /** Android implementation of [Engine], backed by the existing Java relay engine. */
 class AndroidEngine(context: Context) : Engine {
@@ -721,13 +726,26 @@ class AndroidEngine(context: Context) : Engine {
 
     // === log =============================================================
 
+    // Separate, independently-capped buffers per Logs tab — a flood of Telegram
+    // session lines must not evict subscription/scan history (and vice-versa).
+    private val teleLog = ArrayDeque<LogLine>()   // TELEGRAM + general (newest-first)
+    private val subsLog = ArrayDeque<LogLine>()
+    private val scanLog = ArrayDeque<LogLine>()
+
+    @Synchronized
     private fun appendLog(line: String, cat: LogCat = LogCat.OTHER, session: String? = null) {
         val entry = LogLine(line, classify(line), cat, session)
-        val cur = _logs.value
-        val next = ArrayList<LogLine>(minOf(cur.size + 1, 200))
-        next.add(entry)
-        for (l in cur) { if (next.size >= 200) break; next.add(l) }
-        _logs.value = next
+        val (dq, cap) = when (cat) {
+            LogCat.SUBS -> subsLog to LOG_CAP_SUBS
+            LogCat.SCAN -> scanLog to LOG_CAP_SCAN
+            else -> teleLog to LOG_CAP_TELE   // TELEGRAM + OTHER
+        }
+        dq.addFirst(entry)
+        while (dq.size > cap) dq.removeLast()
+        // The UI filters by category, so order across buffers doesn't matter.
+        _logs.value = ArrayList<LogLine>(teleLog.size + subsLog.size + scanLog.size).apply {
+            addAll(teleLog); addAll(subsLog); addAll(scanLog)
+        }
     }
 
     private fun classify(line: String): LogLevel {

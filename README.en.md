@@ -28,7 +28,7 @@ All builds are on the releases page: **[GitHub Releases (latest)](https://github
 | OS | File | Run |
 |----|------|-----|
 | **Android** | `AutoConnector_for_Telegram.apk` | install the APK (outside Google Play — allow install from source) |
-| **Windows** 10/11 x64 | `AutoConnector.for.Telegram.exe` | double-click (SmartScreen → "More info" → "Run anyway") |
+| **Windows** 10/11 x64 | `AutoConnector-for-Telegram-windows-x64.zip` | extract → run `AutoConnector.bat` |
 | **Linux** x64 | `AutoConnector-for-Telegram-linux-x64.tar.gz` | extract → `./AutoConnector-for-Telegram/AutoConnector.sh` |
 | **macOS** 11+ (Apple Silicon/Intel) | `AutoConnector-for-Telegram-macos.tar.gz` | extract → `./AutoConnector.command` (if blocked — `xattr -dr com.apple.quarantine AutoConnector-for-Telegram`) |
 

@@ -23,7 +23,7 @@ for Telegram постоянно подбирает самые быстрые и 
 | ОС | Файл | Запуск |
 |----|------|--------|
 | **Android** | `AutoConnector_for_Telegram.apk` | установить APK (вне Google Play — разрешите установку из источника) |
-| **Windows** 10/11 x64 | `AutoConnector.for.Telegram.exe` | двойной клик (SmartScreen → «Подробнее» → «Выполнить») |
+| **Windows** 10/11 x64 | `AutoConnector-for-Telegram-windows-x64.zip` | распаковать → запустить `AutoConnector.bat` |
 | **Linux** x64 | `AutoConnector-for-Telegram-linux-x64.tar.gz` | распаковать → `./AutoConnector-for-Telegram/AutoConnector.sh` |
 | **macOS** 11+ (Apple Silicon/Intel) | `AutoConnector-for-Telegram-macos.tar.gz` | распаковать → `./AutoConnector.command` (если блокирует — `xattr -dr com.apple.quarantine AutoConnector-for-Telegram`) |
 
