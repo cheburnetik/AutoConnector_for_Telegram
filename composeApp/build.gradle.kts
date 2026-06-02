@@ -87,8 +87,8 @@ android {
         applicationId = "io.autoconnector"
         minSdk = 24
         targetSdk = 34
-        versionCode = 4
-        versionName = "1.03"
+        versionCode = 5
+        versionName = "1.04"
         buildConfigField("String", "BUILD_DATE", "\"$buildDate\"")
     }
 
