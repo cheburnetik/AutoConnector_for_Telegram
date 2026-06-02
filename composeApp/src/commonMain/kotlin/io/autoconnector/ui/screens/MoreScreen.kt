@@ -168,6 +168,7 @@ private fun SettingsPage(cb: MoreCallbacks) {
     var skipLow by remember { mutableStateOf(s.skipLowBattery) }
     var dpiRelay by remember { mutableStateOf(s.dpiApplyRelay) }
     var dpiProbes by remember { mutableStateOf(s.dpiApplyProbes) }
+    var dpiDirect by remember { mutableStateOf(s.dpiApplyDirect) }
     var vpnMode by remember { mutableStateOf(s.proxyModeCode) }
     var lang by remember { mutableStateOf(s.langCode) }
     var hsExpanded by remember { mutableStateOf(false) }
@@ -198,6 +199,7 @@ private fun SettingsPage(cb: MoreCallbacks) {
                 skipLowBattery = skipLow,
                 dpiApplyRelay = dpiRelay,
                 dpiApplyProbes = dpiProbes,
+                dpiApplyDirect = dpiDirect,
                 langCode = lang,
             )
         )
@@ -236,6 +238,7 @@ private fun SettingsPage(cb: MoreCallbacks) {
         Section(t.applyDpiTo) { help = t.applyDpiTo to t.applyDpiHelp }
         SwitchRow(t.toRelay, dpiRelay) { dpiRelay = it; save() }
         SwitchRow(t.toProbes, dpiProbes) { dpiProbes = it; save() }
+        SwitchRow(t.toDirect, dpiDirect) { dpiDirect = it; save() }
 
         Section(t.vpnSection) { help = t.vpnSection to t.vpnHelp }
         ChoiceRow(t.viaMtproto, t.viaMtprotoSub, selected = vpnMode != "vpn_only") { vpnMode = "use"; save() }

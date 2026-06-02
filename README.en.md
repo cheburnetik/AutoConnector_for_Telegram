@@ -54,7 +54,7 @@ Kotlin Multiplatform + Compose code). A ready `.exe` is on the releases page:
 
 ### **➡️ [Download for Windows (GitHub Releases)](https://github.com/cheburnetik/AutoConnector_for_Telegram/releases/latest)**
 
-- A single `AutoConnector-Setup.exe` — **self-contained** (Java is bundled
+- A single `AutoConnector for Telegram.exe` — **self-contained** (Java is bundled
   inside, nothing to install). Windows 10/11 x64.
 - To run: double-click the `.exe`. If SmartScreen shows "Windows protected your
   PC" — click "More info" → "Run anyway".

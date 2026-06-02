@@ -87,6 +87,7 @@ data class EngineSettings(
     val skipLowBattery: Boolean = false,
     val dpiApplyRelay: Boolean = true,
     val dpiApplyProbes: Boolean = true,
+    val dpiApplyDirect: Boolean = false,
     val langCode: String = "auto",
 )
 
@@ -130,6 +131,14 @@ data class EngineState(
     val statusText: String = "Telegram не подключён",
     val statusSub: String = "",
     val modeBadge: String = "",
+
+    // Direct ("bypass") mode: the relay forwards Telegram straight to the DC,
+    // not through any MTProto proxy. [directViaVpn] tells the two cases apart:
+    // true = proxies are skipped because a VPN is active; false = proxies were
+    // turned off outright. [directAntiDpi] = first-segment fragmentation is on.
+    val directMode: Boolean = false,
+    val directViaVpn: Boolean = false,
+    val directAntiDpi: Boolean = false,
 
     val aliveCount: Int = 0,
     val aliveWithin15: Int = 0,

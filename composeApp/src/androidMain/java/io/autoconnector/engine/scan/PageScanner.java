@@ -72,6 +72,7 @@ public final class PageScanner {
             "https://daintycloud.com/proxy-telegram-free-mtproto-proxy-list-real-time-updates/",
             "https://mtpro.xyz/mtproto-ru",
             // Telegram channel previews
+            "https://t.me/s/chatwtfproxy",
             "https://t.me/s/ProXyMTproto",
             "https://t.me/s/TelMTProto",
             "https://t.me/s/MTProtoProxies",

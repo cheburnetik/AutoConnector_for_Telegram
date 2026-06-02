@@ -29,6 +29,10 @@ interface Strings {
     val statusConnected: String; val statusConnecting: String
     val statusOffline: String; val statusIdle: String
     val nobodyConnected: String; val howToSetupArrow: String
+    // Direct ("bypass") mode banner.
+    val directModeTitle: String
+    val directModeViaVpn: String; val directModeOff: String
+    val directDpiOn: String; val directDpiOff: String
     val connections: String; val sockets: String; val speed: String
     val traffic: String; val latency: String
     fun pcs(n: Int): String
@@ -88,7 +92,7 @@ interface Strings {
     val antiDpiTrick: String; val antiDpiHelp: String
     val onlyFakeTls: String
     val applyDpiTo: String; val applyDpiHelp: String
-    val toRelay: String; val toProbes: String
+    val toRelay: String; val toProbes: String; val toDirect: String
     val vpnSection: String; val vpnHelp: String
     val viaMtproto: String; val viaMtprotoSub: String
     val directly: String; val directlySub: String

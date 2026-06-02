@@ -49,7 +49,7 @@ APK подписан стабильным release-сертификатом (сх
 
 ### **➡️ [Скачать для Windows (GitHub Releases)](https://github.com/cheburnetik/AutoConnector_for_Telegram/releases/latest)**
 
-- Один файл `AutoConnector-Setup.exe` — **самодостаточный** (Java уже внутри,
+- Один файл `AutoConnector for Telegram.exe` — **самодостаточный** (Java уже внутри,
   ставить ничего не нужно). Windows 10/11 x64.
 - Запуск: двойной клик по `.exe`. Если SmartScreen покажет «Windows защитила
   ваш компьютер» — «Подробнее» → «Выполнить в любом случае».

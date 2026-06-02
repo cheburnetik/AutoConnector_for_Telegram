@@ -29,6 +29,13 @@ object En : Strings {
     override val statusConnected = "Telegram connected"; override val statusConnecting = "Connecting…"
     override val statusOffline = "Telegram not connected"; override val statusIdle = "Telegram idle"
     override val nobodyConnected = "Nobody connected to the Connector. "; override val howToSetupArrow = "How to set up →"
+    override val directModeTitle = "Direct mode (no proxy)"
+    override val directModeViaVpn = "VPN is active — Telegram goes straight to Telegram's servers, " +
+        "bypassing proxies. The VPN already provides access, so the extra proxy layer is off."
+    override val directModeOff = "Proxies are off — Telegram connects directly to Telegram's servers, " +
+        "without an MTProto proxy."
+    override val directDpiOn = "Anti-DPI: the first packet is split into segments."
+    override val directDpiOff = "Anti-DPI is not applied to the direct connection."
     override val connections = "Connections"; override val sockets = "Sockets"; override val speed = "Speed"
     override val traffic = "Traffic"; override val latency = "Latency"
     override fun pcs(n: Int) = "$n pcs"
@@ -112,8 +119,12 @@ object En : Strings {
     override val applyDpiTo = "Apply anti-DPI to"
     override val applyDpiHelp = "What to apply the chosen anti-DPI trick to:\n• Telegram relay — to the " +
         "live Telegram connection through the Connector.\n• Proxy probes — to background proxy checks " +
-        "(then a check behaves just like a real connection, and trick stats are more accurate)."
+        "(then a check behaves just like a real connection, and trick stats are more accurate).\n" +
+        "• When connecting directly — when proxies are off (or skipped while a VPN is on) and Telegram " +
+        "goes straight to its servers: there is no proxy here, so the trick reduces to splitting the " +
+        "first TCP packet (the handshake) into several small segments so DPI can't match it in one read."
     override val toRelay = "Telegram relay"; override val toProbes = "Proxy probes"
+    override val toDirect = "When connecting directly"
     override val vpnSection = "When VPN is on"
     override val vpnHelp = "What to do when a VPN is active on the device:\n• Via MTProto proxy — " +
         "Telegram goes through the found proxies as usual (on top of the VPN).\n• Directly — the " +

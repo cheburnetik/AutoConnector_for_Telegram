@@ -315,6 +315,16 @@ public class Prefs {
     public boolean dpiApplyProbes() { return sp.getBoolean("dpi_probes", true); }
     public void setDpiApplyProbes(boolean v) { sp.edit().putBoolean("dpi_probes", v).apply(); }
 
+    /**
+     * Apply a TCP-level anti-DPI trick to the DIRECT connection used in bypass
+     * mode (proxies disabled, or skipped while VPN is on). There is no FakeTLS
+     * upstream to mimic here, so the trick degrades to splitting the very first
+     * outbound segment (Telegram's obfuscated2 handshake) across several small
+     * TCP packets — enough to defeat single-segment signature matching. Off by
+     * default: a direct connection usually doesn't need it. */
+    public boolean dpiApplyDirect() { return sp.getBoolean("dpi_direct", false); }
+    public void setDpiApplyDirect(boolean v) { sp.edit().putBoolean("dpi_direct", v).apply(); }
+
     /** UI language code: "auto" (follow system) / "ru" / "en". */
     public String lang() { return sp.getString("ui_lang", "auto"); }
     public void setLang(String code) { sp.edit().putString("ui_lang", code).apply(); }

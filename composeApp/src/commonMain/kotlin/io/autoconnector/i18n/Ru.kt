@@ -27,6 +27,13 @@ object Ru : Strings {
     override val statusConnected = "Telegram подключён"; override val statusConnecting = "Идёт коннект…"
     override val statusOffline = "Telegram не подключён"; override val statusIdle = "Telegram молчит"
     override val nobodyConnected = "Никто не подключился к Коннектору. "; override val howToSetupArrow = "Как настроить →"
+    override val directModeTitle = "Прямой режим (без прокси)"
+    override val directModeViaVpn = "VPN активен — Telegram идёт напрямую к серверам Telegram, минуя прокси. " +
+        "VPN уже даёт доступ, лишний прокси-слой выключен."
+    override val directModeOff = "Прокси отключены — Telegram соединяется напрямую с серверами Telegram, " +
+        "без MTProto-прокси."
+    override val directDpiOn = "Анти-DPI: первый пакет дробится на сегменты."
+    override val directDpiOff = "Анти-DPI к прямому соединению не применяется."
     override val connections = "Подключений"; override val sockets = "Сокеты"; override val speed = "Скорость"
     override val traffic = "Трафик"; override val latency = "Латенси"
     override fun pcs(n: Int) = "$n шт"
@@ -110,8 +117,12 @@ object Ru : Strings {
     override val applyDpiTo = "Применять анти-DPI к"
     override val applyDpiHelp = "К чему применять выбранный анти-DPI трюк:\n• Релею Telegram — к живому " +
         "соединению Telegram через Коннектор.\n• Пробам прокси — к фоновым проверкам прокси (тогда " +
-        "проверка ведёт себя так же, как реальное подключение, и статистика хитростей точнее)."
+        "проверка ведёт себя так же, как реальное подключение, и статистика хитростей точнее).\n" +
+        "• При проксировании напрямую — когда прокси отключены (или пропускаются при VPN) и Telegram " +
+        "идёт прямо к серверам: прокси тут нет, поэтому трюк сводится к дроблению первого TCP-пакета " +
+        "(рукопожатия) на несколько мелких сегментов, чтобы DPI не распознал его в одном куске."
     override val toRelay = "Релею Telegram"; override val toProbes = "Пробам прокси"
+    override val toDirect = "При проксировании напрямую"
     override val vpnSection = "При включённом VPN"
     override val vpnHelp = "Что делать, когда на устройстве активен VPN:\n• Через MTProto-прокси — " +
         "Telegram, как обычно, идёт через найденные прокси (поверх VPN).\n• Напрямую — Коннектор НЕ " +

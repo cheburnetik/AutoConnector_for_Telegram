@@ -99,7 +99,7 @@ public final class RelayConnection implements Runnable {
             // doing so would consume Telegram's key material that the
             // server expects to see verbatim. Plain SOCKS5 byte forwarder.
             if (prefs.shouldBypassProxies()) {
-                handleBypassRaw(tg, tgIn, tgOut, dst);
+                handleBypassRaw(tg, tgIn, tgOut, dst, prefs.dpiApplyDirect());
                 return;
             }
 
@@ -252,7 +252,7 @@ public final class RelayConnection implements Runnable {
      * valid response and sat in "Подключение..." forever.
      */
     private void handleBypassRaw(Socket tg, InputStream tgIn, OutputStream tgOut,
-                                 Socks5Server.Target dst) {
+                                 Socks5Server.Target dst, boolean antiDpi) {
         Socket direct = null;
         long liveId = -1;
         boolean acceptingDecremented = false;
@@ -273,7 +273,8 @@ public final class RelayConnection implements Runnable {
 
             int dcId = DcAddresses.dcIdForIp(host);
             RelayLog.emit("→ " + host + ":" + port + " (порт " + localPort
-                    + ", прямой выход, DC" + dcId + ")");
+                    + ", прямой выход, DC" + dcId
+                    + (antiDpi ? ", анти-DPI: фрагментация" : "") + ")");
 
             RelayStats.LiveConn lc = new RelayStats.LiveConn(
                     localPort, host + ":" + port,
@@ -289,11 +290,14 @@ public final class RelayConnection implements Runnable {
             final OutputStream upOut = direct.getOutputStream();
             final RelayStats.LiveConn flc = lc;
             Thread down = new Thread(() ->
-                    directPipe(upIn, tgOut, RelayStats.bytesDown, flc.bytesDown),
+                    directPipe(upIn, tgOut, RelayStats.bytesDown, flc.bytesDown, false),
                     "bypass-down-" + localPort);
             down.setDaemon(true);
             down.start();
-            directPipe(tgIn, upOut, RelayStats.bytesUp, lc.bytesUp);
+            // Up-direction (Telegram → DC): when anti-DPI-to-direct is on, the
+            // first outbound burst (the obfuscated2 handshake) is split into
+            // several small TCP segments so a DPI box can't match it in one read.
+            directPipe(tgIn, upOut, RelayStats.bytesUp, lc.bytesUp, antiDpi);
             down.join(PIPE_IDLE_TIMEOUT_MS + 5_000L);
             if (down.isAlive()) {
                 down.interrupt();
@@ -311,16 +315,27 @@ public final class RelayConnection implements Runnable {
         }
     }
 
-    /** Raw byte pump for bypass mode — no obfuscation re-cipher, just copy. */
+    /**
+     * Raw byte pump for bypass mode — no obfuscation re-cipher, just copy.
+     * When {@code fragmentFirst} is set, the very first burst is written split
+     * into a few small TCP segments (anti-DPI for the direct DC connection).
+     */
     private void directPipe(InputStream src, OutputStream dst,
                             java.util.concurrent.atomic.AtomicLong global,
-                            java.util.concurrent.atomic.AtomicLong perConn) {
+                            java.util.concurrent.atomic.AtomicLong perConn,
+                            boolean fragmentFirst) {
         byte[] buf = new byte[PIPE_BUF];
+        boolean first = fragmentFirst;
         try {
             int n;
             while ((n = src.read(buf)) > 0) {
-                dst.write(buf, 0, n);
-                dst.flush();
+                if (first) {
+                    writeFragmented(dst, buf, n);
+                    first = false;
+                } else {
+                    dst.write(buf, 0, n);
+                    dst.flush();
+                }
                 global.addAndGet(n);
                 perConn.addAndGet(n);
                 TrafficMeter.add(TrafficMeter.Cat.RELAY, n);
@@ -331,6 +346,35 @@ public final class RelayConnection implements Runnable {
         } finally {
             closeBoth();
         }
+    }
+
+    private static final java.util.Random DPI_RND = new java.util.Random();
+
+    /**
+     * Splits {@code [0,len)} of {@code buf} into 3–5 small TCP segments with a
+     * few ms between them. The destination socket is TCP_NODELAY-agnostic here:
+     * each {@code flush()} pushes its own segment, so a DPI box that fingerprints
+     * the obfuscated2 handshake in a single read sees only a fragment. Falls back
+     * to a plain write for tiny payloads where splitting would be pointless.
+     */
+    private static void writeFragmented(OutputStream dst, byte[] buf, int len)
+            throws IOException {
+        if (len <= 8) {
+            dst.write(buf, 0, len);
+            dst.flush();
+            return;
+        }
+        int chunks = 3 + DPI_RND.nextInt(3);          // 3..5
+        int per = Math.max(1, len / chunks);
+        int idx = 0;
+        for (int i = 0; i < chunks - 1 && idx + per < len; i++) {
+            dst.write(buf, idx, per);
+            dst.flush();
+            try { Thread.sleep(4 + DPI_RND.nextInt(12)); } catch (InterruptedException ignored) {}
+            idx += per;
+        }
+        dst.write(buf, idx, len - idx);
+        dst.flush();
     }
 
     /**
