@@ -11,6 +11,9 @@ public final class NetworkCapabilities {
     public static final int TRANSPORT_WIFI = 1;
     public static final int TRANSPORT_VPN = 4;
 
+    /** Mirrors the real Android constant; the desktop poller ignores requests. */
+    public static final int NET_CAPABILITY_NOT_VPN = 15;
+
     private final int transport;
 
     public NetworkCapabilities(int transport) {

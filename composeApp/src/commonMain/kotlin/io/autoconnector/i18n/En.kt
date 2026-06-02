@@ -29,13 +29,9 @@ object En : Strings {
     override val statusConnected = "Telegram connected"; override val statusConnecting = "Connecting…"
     override val statusOffline = "Telegram not connected"; override val statusIdle = "Telegram idle"
     override val nobodyConnected = "Nobody connected to the Connector. "; override val howToSetupArrow = "How to set up →"
-    override val directModeTitle = "Direct mode (no proxy)"
-    override val directModeViaVpn = "VPN is active — Telegram goes straight to Telegram's servers, " +
-        "bypassing proxies. The VPN already provides access, so the extra proxy layer is off."
-    override val directModeOff = "Proxies are off — Telegram connects directly to Telegram's servers, " +
-        "without an MTProto proxy."
-    override val directDpiOn = "Anti-DPI: the first packet is split into segments."
-    override val directDpiOff = "Anti-DPI is not applied to the direct connection."
+    override val directModeViaVpn = "Direct mode: VPN active — no proxy"
+    override val directModeOff = "Direct mode: proxies off"
+    override val directDpiSuffix = " · anti-DPI"
     override val connections = "Connections"; override val sockets = "Sockets"; override val speed = "Speed"
     override val traffic = "Traffic"; override val latency = "Latency"
     override fun pcs(n: Int) = "$n pcs"

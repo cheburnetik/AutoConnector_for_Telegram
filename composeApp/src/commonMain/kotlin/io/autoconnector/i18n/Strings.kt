@@ -29,10 +29,8 @@ interface Strings {
     val statusConnected: String; val statusConnecting: String
     val statusOffline: String; val statusIdle: String
     val nobodyConnected: String; val howToSetupArrow: String
-    // Direct ("bypass") mode banner.
-    val directModeTitle: String
-    val directModeViaVpn: String; val directModeOff: String
-    val directDpiOn: String; val directDpiOff: String
+    // Direct ("bypass") mode — single-line note on the Connector tab.
+    val directModeViaVpn: String; val directModeOff: String; val directDpiSuffix: String
     val connections: String; val sockets: String; val speed: String
     val traffic: String; val latency: String
     fun pcs(n: Int): String
