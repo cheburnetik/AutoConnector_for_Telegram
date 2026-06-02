@@ -406,7 +406,7 @@ public final class RelayService extends Service {
         NotificationCompat.Builder b = new NotificationCompat.Builder(this, channelId)
                 .setContentTitle("AutoConnector for Telegram — релей активен")
                 .setContentText(text)
-                .setSmallIcon(R.drawable.ic_launcher)
+                .setSmallIcon(R.drawable.ic_stat)
                 .setOngoing(true)
                 .setContentIntent(tap)
                 .setPriority(quiet ? NotificationCompat.PRIORITY_MIN
