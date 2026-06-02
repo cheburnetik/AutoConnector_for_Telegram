@@ -88,6 +88,7 @@ fun App(engine: Engine) {
         val settings by engine.settings.collectAsState()
         var tab by remember { mutableStateOf(Tabs.CONNECTOR) }
         var logTab by remember { mutableStateOf(io.autoconnector.ui.screens.LogTab.TELEGRAM) }
+        var logErrorsOnly by remember { mutableStateOf(false) }
         val expandedSessions = remember { androidx.compose.runtime.mutableStateListOf<String>() }
         var showGuide by remember { mutableStateOf(false) }
         var detail by remember { mutableStateOf<CatalogItem?>(null) }
@@ -198,6 +199,8 @@ fun App(engine: Engine) {
                         onToggleSession = { k ->
                             if (k in expandedSessions) expandedSessions.remove(k) else expandedSessions.add(k)
                         },
+                        errorsOnly = logErrorsOnly,
+                        onErrorsOnly = { logErrorsOnly = it },
                     )
                     Tabs.MORE -> item { MoreScreen(onOpen = { morePage = it }, onOpenGuide = { showGuide = true }) }
                 }

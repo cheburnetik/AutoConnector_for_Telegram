@@ -14,6 +14,7 @@ interface Strings {
     // Logs sub-tabs
     val logTabTelegram: String; val logTabSubs: String; val logTabScan: String
     val logGeneral: String; val logEmpty: String
+    val logSessions: String; val logErrorsOnly: String; val logNoErrors: String
     fun logSession(id: String, port: String): String
     val back: String; val copy: String; val gotIt: String; val later: String
     val details: String; val whatIsThis: String; val delete: String
