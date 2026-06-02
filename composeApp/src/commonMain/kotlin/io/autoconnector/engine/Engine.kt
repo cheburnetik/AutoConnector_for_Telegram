@@ -56,10 +56,14 @@ data class CatalogItem(
 
 data class SourceItem(
     val id: Long,
+    val seq: Int,                  // 1-based position in the list
     val url: String,
     val enabled: Boolean,
     val alive: Int,
+    val dead: Int,
     val total: Int,
+    val bytesHuman: String,        // bytes of the last download ("—" if none/failed)
+    val lastRefreshMinsAgo: Long,  // -1 = never downloaded
     val lastError: String?,
 )
 

@@ -156,6 +156,10 @@ object En : Strings {
 
     override val sourceUrl = "Source URL"
     override fun sourceAlive(alive: Int, total: Int) = "live $alive/$total"
+    override val open = "Open"; override val active = "Active"; override val inactive = "Inactive"
+    override val lastDownloaded = "Downloaded"; override val notDownloaded = "not downloaded yet"
+    override fun sourceCounts(alive: Int, dead: Int, total: Int) =
+        "live $alive · dead $dead · total $total"
 
     override val proxyBase = "Proxy database"
     override val totalInBase = "Total in database"; override val aliveNow = "Live now"; override val deadStat = "Dead"

@@ -153,6 +153,10 @@ object Ru : Strings {
 
     override val sourceUrl = "URL источника"
     override fun sourceAlive(alive: Int, total: Int) = "живых $alive/$total"
+    override val open = "Открыть"; override val active = "Активна"; override val inactive = "Не активна"
+    override val lastDownloaded = "Скачано"; override val notDownloaded = "ещё не скачивалась"
+    override fun sourceCounts(alive: Int, dead: Int, total: Int) =
+        "живых $alive · мёртвых $dead · всего $total"
 
     override val proxyBase = "База прокси"
     override val totalInBase = "Всего в базе"; override val aliveNow = "Живых сейчас"; override val deadStat = "Мёртвых"

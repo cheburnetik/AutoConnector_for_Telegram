@@ -410,24 +410,68 @@ private fun SourcesPage(cb: MoreCallbacks) {
         }
         Column(
             Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             for (src in cb.sources) {
                 CardBox(Modifier.fillMaxWidth()) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(src.url, fontSize = 14.sp, maxLines = 1, fontFamily = monospaceFontFamily())
-                            Text(t.sourceAlive(src.alive, src.total) + (src.lastError?.let { " · $it" } ?: ""), color = AppColors.onSurfaceMuted, fontSize = 14.sp, maxLines = 1)
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        // Header: sequential number + active/inactive toggle.
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text("№${src.seq}", fontWeight = FontWeight.Bold, color = AppColors.accent, fontSize = 15.sp)
+                            Spacer(Modifier.weight(1f))
+                            Text(
+                                if (src.enabled) t.active else t.inactive,
+                                color = if (src.enabled) AppColors.green else AppColors.onSurfaceMuted,
+                                fontSize = 13.sp,
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Switch(src.enabled, { cb.onToggleSource(src.id, it) })
                         }
-                        Switch(src.enabled, { cb.onToggleSource(src.id, it) })
-                        IconButton({ cb.onRemoveSource(src.id) }) {
-                            Icon(Icons.Filled.Delete, t.delete, tint = AppColors.red)
+                        // Full URL, multi-line, in a read-only text field (selectable/copyable).
+                        OutlinedTextField(
+                            value = src.url,
+                            onValueChange = {},
+                            readOnly = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            textStyle = androidx.compose.ui.text.TextStyle(
+                                fontFamily = monospaceFontFamily(), fontSize = 13.sp,
+                            ),
+                        )
+                        // Actions.
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = { cb.onOpenUrl(src.url) }, modifier = Modifier.weight(1f)) {
+                                Text(t.open, fontSize = 14.sp)
+                            }
+                            OutlinedButton(onClick = { cb.onCopy(src.url) }, modifier = Modifier.weight(1f)) {
+                                Text(t.copy, fontSize = 14.sp)
+                            }
+                            OutlinedButton(onClick = { cb.onRemoveSource(src.id) }, modifier = Modifier.weight(1f)) {
+                                Text(t.delete, fontSize = 14.sp, color = AppColors.red)
+                            }
+                        }
+                        // Per-source stats.
+                        Text(
+                            "${t.lastDownloaded}: " +
+                                (if (src.lastRefreshMinsAgo >= 0) t.agoFmt(fmtAgo(src.lastRefreshMinsAgo, t)) else t.notDownloaded) +
+                                " · ${src.bytesHuman}",
+                            color = AppColors.onSurfaceMuted, fontSize = 13.sp,
+                        )
+                        Text(t.sourceCounts(src.alive, src.dead, src.total), color = AppColors.onSurfaceMuted, fontSize = 13.sp)
+                        src.lastError?.let {
+                            Text(it, color = AppColors.red, fontSize = 13.sp)
                         }
                     }
                 }
             }
         }
     }
+}
+
+/** minutes-ago → short "Nм/Nч/Nд" (paired with [Strings.agoFmt]). */
+private fun fmtAgo(m: Long, t: Strings): String = when {
+    m < 60 -> "$m${t.agoMin}"
+    m < 1440 -> "${m / 60}${t.agoHour}"
+    else -> "${m / 1440}${t.agoDay}"
 }
 
 // === Stats ==============================================================

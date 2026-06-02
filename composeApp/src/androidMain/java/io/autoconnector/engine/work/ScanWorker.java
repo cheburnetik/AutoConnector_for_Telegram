@@ -36,7 +36,7 @@ public final class ScanWorker extends Worker {
                 if (s.lastRefreshAt > 0 && now - s.lastRefreshAt < backoff) continue;
                 PageScanner.ScanResult r = scanner.scanPage(s.url);
                 store.markSourceRefreshed(s.id);
-                store.setSourceScanResult(s.id, r.found, r.error);
+                store.setSourceScanResult(s.id, r.found, r.bytes, r.error);
             }
             return Result.success();
         } catch (Exception e) {
