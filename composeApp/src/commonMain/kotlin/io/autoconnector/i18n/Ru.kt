@@ -27,13 +27,9 @@ object Ru : Strings {
     override val statusConnected = "Telegram подключён"; override val statusConnecting = "Идёт коннект…"
     override val statusOffline = "Telegram не подключён"; override val statusIdle = "Telegram молчит"
     override val nobodyConnected = "Никто не подключился к Коннектору. "; override val howToSetupArrow = "Как настроить →"
-    override val directModeTitle = "Прямой режим (без прокси)"
-    override val directModeViaVpn = "VPN активен — Telegram идёт напрямую к серверам Telegram, минуя прокси. " +
-        "VPN уже даёт доступ, лишний прокси-слой выключен."
-    override val directModeOff = "Прокси отключены — Telegram соединяется напрямую с серверами Telegram, " +
-        "без MTProto-прокси."
-    override val directDpiOn = "Анти-DPI: первый пакет дробится на сегменты."
-    override val directDpiOff = "Анти-DPI к прямому соединению не применяется."
+    override val directModeViaVpn = "Прямой режим: VPN активен — без прокси"
+    override val directModeOff = "Прямой режим: прокси отключены"
+    override val directDpiSuffix = " · анти-DPI"
     override val connections = "Подключений"; override val sockets = "Сокеты"; override val speed = "Скорость"
     override val traffic = "Трафик"; override val latency = "Латенси"
     override fun pcs(n: Int) = "$n шт"

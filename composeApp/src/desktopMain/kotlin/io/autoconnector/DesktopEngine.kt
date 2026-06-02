@@ -265,7 +265,7 @@ class DesktopEngine(dataDir: File) : Engine {
     }
 
     override fun appInfo(): AppInfo = AppInfo(
-        version = "1.01 (2) · desktop",
+        version = "1.02 (3) · desktop",
         buildDate = BUILD_DATE,
     )
 

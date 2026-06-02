@@ -71,7 +71,15 @@ public final class NetworkMonitor {
             public void onCapabilitiesChanged(Network n, NetworkCapabilities c) { recompute(cm); }
         };
         try {
-            NetworkRequest req = new NetworkRequest.Builder().build();
+            // A default NetworkRequest implies NET_CAPABILITY_NOT_VPN, so the
+            // callback NEVER sees the VPN network — onAvailable fires (the
+            // underlying Wi-Fi re-evaluates when VPN comes up) but onLost does
+            // NOT fire when the VPN drops, leaving us stuck in VPN mode. Removing
+            // NOT_VPN makes the callback match VPN networks too, so both the
+            // VPN-up onAvailable and the VPN-down onLost trigger a recompute.
+            NetworkRequest req = new NetworkRequest.Builder()
+                    .removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+                    .build();
             cm.registerNetworkCallback(req, cb);
         } catch (Exception ignored) {
             // very old devices — fall back to a one-shot read.
