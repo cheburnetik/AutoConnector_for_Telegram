@@ -43,11 +43,20 @@ public final class RelayConnection implements Runnable {
     private static final int FAILOVER_CANDIDATES = 12;
     private static final int PIPE_BUF = 16384;
 
+    /** Monotonic id so every Telegram connection has a stable "session" the
+     *  Logs UI can group by (one expandable block per port+session). */
+    private static final java.util.concurrent.atomic.AtomicLong SESSION_SEQ =
+            new java.util.concurrent.atomic.AtomicLong();
+
     private final Socket tg;
     private final int localPort;
     private final ProxyStore store;
     private final RelayManager manager;
     private final RelayServer.Listener listener;
+    private final long sessionId = SESSION_SEQ.incrementAndGet();
+
+    /** Session tag carried on every log line of this connection: "<port>#<id>". */
+    private String sess() { return localPort + "#" + sessionId; }
 
     private volatile Socket upSocket;
     private volatile ProxyEntry upstreamProxy;
@@ -66,6 +75,10 @@ public final class RelayConnection implements Runnable {
 
     @Override
     public void run() {
+        // Tag every log line of this connection with its session (auto-applied
+        // by RelayLog.emit on this thread); cleared in finally since the relay
+        // thread pool reuses threads.
+        RelayLog.setSession(sess());
         RelayStats.active.incrementAndGet();
         RelayStats.accepting.incrementAndGet();
         RelayStats.totalConns.incrementAndGet();
@@ -245,6 +258,7 @@ public final class RelayConnection implements Runnable {
             if (!acceptingDecremented) RelayStats.accepting.decrementAndGet();
             RelayStats.active.decrementAndGet();
             listener.event(null);
+            RelayLog.clearSession();
         }
     }
 

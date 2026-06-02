@@ -3,6 +3,9 @@ package io.autoconnector.i18n
 object Ru : Strings {
     override val tabConnector = "Коннектор"; override val tabScan = "Скан"
     override val tabCatalog = "Каталог"; override val tabLogs = "Логи"; override val tabMore = "Ещё"
+    override val logTabTelegram = "Telegram"; override val logTabSubs = "Подписки"; override val logTabScan = "Скан"
+    override val logGeneral = "Общее"; override val logEmpty = "пока пусто"
+    override fun logSession(id: String, port: String) = "Сессия $id · порт $port"
     override val back = "Назад"; override val copy = "Копировать"; override val gotIt = "Понятно"
     override val later = "Позже"; override val details = "Подробнее"; override val whatIsThis = "Что это?"
     override val delete = "Удалить"

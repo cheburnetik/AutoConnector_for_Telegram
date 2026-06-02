@@ -11,6 +11,10 @@ interface Strings {
     // tabs / common
     val tabConnector: String; val tabScan: String; val tabCatalog: String
     val tabLogs: String; val tabMore: String
+    // Logs sub-tabs
+    val logTabTelegram: String; val logTabSubs: String; val logTabScan: String
+    val logGeneral: String; val logEmpty: String
+    fun logSession(id: String, port: String): String
     val back: String; val copy: String; val gotIt: String; val later: String
     val details: String; val whatIsThis: String; val delete: String
     fun onOff(on: Boolean) = if (on) "ON" else "OFF"

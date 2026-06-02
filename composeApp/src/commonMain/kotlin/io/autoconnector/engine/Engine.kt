@@ -7,7 +7,20 @@ enum class ConnState { OFFLINE, CONNECTING, CONNECTED, IDLE_SILENT }
 
 enum class LogLevel { OK, FAIL, INFO, WARN, MUTED, ROUTE }
 
-data class LogLine(val text: String, val level: LogLevel)
+/** Which Logs sub-tab a line belongs to. */
+enum class LogCat { TELEGRAM, SUBS, SCAN, OTHER }
+
+/**
+ * One log line. [cat] routes it to a Logs sub-tab; [session] (only for
+ * [LogCat.TELEGRAM]) groups it under one Telegram connection — encoded as
+ * "<port>#<id>", or null for general relay lines.
+ */
+data class LogLine(
+    val text: String,
+    val level: LogLevel,
+    val cat: LogCat = LogCat.OTHER,
+    val session: String? = null,
+)
 
 data class Session(
     val host: String,
