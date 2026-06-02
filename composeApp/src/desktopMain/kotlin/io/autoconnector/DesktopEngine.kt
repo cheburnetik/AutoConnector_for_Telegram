@@ -53,6 +53,9 @@ private const val IDLE_THRESHOLD_MS = 30_000L
 private const val MATURE_BYTES = 4096L
 private const val CONNECTED_MIN_BYTES = 1024L
 private const val MAINS_CHECK_INTERVAL_MS = 2 * 60_000L
+private const val LOG_CAP_TELE = 500
+private const val LOG_CAP_SCAN = 300
+private const val LOG_CAP_SUBS = 150
 
 /**
  * Desktop implementation of [Engine]. It reuses the very same Java relay engine
@@ -266,7 +269,7 @@ class DesktopEngine(dataDir: File) : Engine {
     }
 
     override fun appInfo(): AppInfo = AppInfo(
-        version = "1.07 (8) · desktop",
+        version = "1.08 (9) · desktop",
         buildDate = BUILD_DATE,
     )
 
@@ -791,13 +794,25 @@ class DesktopEngine(dataDir: File) : Engine {
 
     // === log =============================================================
 
+    // Separate, independently-capped buffers per Logs tab — a flood of Telegram
+    // session lines must not evict subscription/scan history (and vice-versa).
+    private val teleLog = ArrayDeque<LogLine>()   // TELEGRAM + general (newest-first)
+    private val subsLog = ArrayDeque<LogLine>()
+    private val scanLog = ArrayDeque<LogLine>()
+
+    @Synchronized
     private fun appendLog(line: String, cat: LogCat = LogCat.OTHER, session: String? = null) {
         val entry = LogLine(line, classify(line), cat, session)
-        val cur = _logs.value
-        val next = ArrayList<LogLine>(minOf(cur.size + 1, 200))
-        next.add(entry)
-        for (l in cur) { if (next.size >= 200) break; next.add(l) }
-        _logs.value = next
+        val (dq, cap) = when (cat) {
+            LogCat.SUBS -> subsLog to LOG_CAP_SUBS
+            LogCat.SCAN -> scanLog to LOG_CAP_SCAN
+            else -> teleLog to LOG_CAP_TELE   // TELEGRAM + OTHER
+        }
+        dq.addFirst(entry)
+        while (dq.size > cap) dq.removeLast()
+        _logs.value = ArrayList<LogLine>(teleLog.size + subsLog.size + scanLog.size).apply {
+            addAll(teleLog); addAll(subsLog); addAll(scanLog)
+        }
     }
 
     private fun classify(line: String): LogLevel {
