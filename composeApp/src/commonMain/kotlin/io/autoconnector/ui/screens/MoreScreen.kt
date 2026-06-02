@@ -19,12 +19,15 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.HelpOutline
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
@@ -410,59 +413,56 @@ private fun SourcesPage(cb: MoreCallbacks) {
         }
         Column(
             Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             for (src in cb.sources) {
-                CardBox(Modifier.fillMaxWidth()) {
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        // Header: sequential number + active/inactive toggle.
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Text("№${src.seq}", fontWeight = FontWeight.Bold, color = AppColors.accent, fontSize = 15.sp)
-                            Spacer(Modifier.weight(1f))
-                            Text(
-                                if (src.enabled) t.active else t.inactive,
-                                color = if (src.enabled) AppColors.green else AppColors.onSurfaceMuted,
-                                fontSize = 13.sp,
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Switch(src.enabled, { cb.onToggleSource(src.id, it) })
-                        }
-                        // Full URL, multi-line, in a read-only text field (selectable/copyable).
-                        OutlinedTextField(
-                            value = src.url,
-                            onValueChange = {},
-                            readOnly = true,
-                            modifier = Modifier.fillMaxWidth(),
-                            textStyle = androidx.compose.ui.text.TextStyle(
-                                fontFamily = monospaceFontFamily(), fontSize = 13.sp,
-                            ),
-                        )
-                        // Actions.
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(onClick = { cb.onOpenUrl(src.url) }, modifier = Modifier.weight(1f)) {
-                                Text(t.open, fontSize = 14.sp)
-                            }
-                            OutlinedButton(onClick = { cb.onCopy(src.url) }, modifier = Modifier.weight(1f)) {
-                                Text(t.copy, fontSize = 14.sp)
-                            }
-                            OutlinedButton(onClick = { cb.onRemoveSource(src.id) }, modifier = Modifier.weight(1f)) {
-                                Text(t.delete, fontSize = 14.sp, color = AppColors.red)
-                            }
-                        }
-                        // Per-source stats.
-                        Text(
-                            "${t.lastDownloaded}: " +
-                                (if (src.lastRefreshMinsAgo >= 0) t.agoFmt(fmtAgo(src.lastRefreshMinsAgo, t)) else t.notDownloaded) +
-                                " · ${src.bytesHuman}",
-                            color = AppColors.onSurfaceMuted, fontSize = 13.sp,
-                        )
-                        Text(t.sourceCounts(src.alive, src.dead, src.total), color = AppColors.onSurfaceMuted, fontSize = 13.sp)
-                        src.lastError?.let {
-                            Text(it, color = AppColors.red, fontSize = 13.sp)
-                        }
-                    }
-                }
+                SourceTile(src, cb, t)
+                HorizontalDivider(color = AppColors.cardBorder)
             }
+        }
+    }
+}
+
+/** One subscription row: no card background, separated by dividers. */
+@Composable
+private fun SourceTile(src: SourceItem, cb: MoreCallbacks, t: Strings) {
+    Column(
+        Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        // 1) Full URL, multi-line, in a read-only field (selectable/copyable).
+        OutlinedTextField(
+            value = src.url,
+            onValueChange = {},
+            readOnly = true,
+            modifier = Modifier.fillMaxWidth(),
+            textStyle = androidx.compose.ui.text.TextStyle(
+                fontFamily = monospaceFontFamily(), fontSize = 13.sp,
+            ),
+        )
+        // 2) Big green alive count + "живых, N мёртвых, N всего"; №seq on the right.
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("${src.alive}", color = AppColors.green, fontWeight = FontWeight.Bold, fontSize = 22.sp)
+            Text(t.sourceCounts(src.dead, src.total), color = AppColors.onSurfaceMuted, fontSize = 14.sp)
+            Spacer(Modifier.weight(1f))
+            Text("№${src.seq}", color = AppColors.onSurfaceMuted, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+        }
+        // 3) When downloaded, and either the size or the error.
+        val whenTxt = if (src.lastRefreshMinsAgo >= 0) t.agoFmt(fmtAgo(src.lastRefreshMinsAgo, t)) else t.notDownloaded
+        Row(Modifier.fillMaxWidth()) {
+            Text("$whenTxt · ", color = AppColors.onSurfaceMuted, fontSize = 13.sp)
+            if (src.lastError != null) {
+                Text(src.lastError, color = AppColors.red, fontSize = 13.sp)
+            } else {
+                Text(src.bytesHuman, color = AppColors.onSurfaceMuted, fontSize = 13.sp)
+            }
+        }
+        // 4) Gray icon actions + enabled toggle.
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            IconButton({ cb.onOpenUrl(src.url) }) { Icon(Icons.Filled.OpenInNew, t.open, tint = AppColors.gray) }
+            IconButton({ cb.onCopy(src.url) }) { Icon(Icons.Filled.ContentCopy, t.copy, tint = AppColors.gray) }
+            IconButton({ cb.onRemoveSource(src.id) }) { Icon(Icons.Filled.Delete, t.delete, tint = AppColors.gray) }
+            Spacer(Modifier.weight(1f))
+            Switch(src.enabled, { cb.onToggleSource(src.id, it) })
         }
     }
 }

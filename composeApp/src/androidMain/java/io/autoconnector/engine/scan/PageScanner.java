@@ -320,7 +320,63 @@ public final class PageScanner {
 
     // --- fetch -------------------------------------------------------------
 
-    private static String fetch(String urlStr) throws Exception {
+    /**
+     * Public fetch-proxies (anonymizers) tried, in order, when a DIRECT download
+     * fails — so the scanner still pulls subscriptions when t.me / GitHub are
+     * blocked or DNS-poisoned by the ISP. Each one fetches the target URL
+     * server-side and returns its raw content. {@code encode=true} sends the
+     * target as a URL-encoded query value (needed when it contains {@code &});
+     * {@code encode=false} appends it verbatim to the path. */
+    private static final class Fetcher {
+        final String label;
+        final String prefix;
+        final boolean encode;
+        Fetcher(String label, String prefix, boolean encode) {
+            this.label = label;
+            this.prefix = prefix;
+            this.encode = encode;
+        }
+        String wrap(String target) throws Exception {
+            return prefix + (encode
+                    ? java.net.URLEncoder.encode(target, "UTF-8") : target);
+        }
+    }
+
+    private static final Fetcher[] FETCH_PROXIES = {
+        // Server-side fetch of any URL; verified to return both t.me channel
+        // HTML and GitHub-raw text with proxy links/secrets intact.
+        new Fetcher("codetabs",   "https://api.codetabs.com/v1/proxy/?quest=", true),
+        new Fetcher("allorigins", "https://api.allorigins.win/raw?url=",       true),
+        // Reader proxy — great for raw/text pages (GitHub lists, plain pages).
+        new Fetcher("jina",       "https://r.jina.ai/",                        false),
+    };
+
+    /**
+     * Downloads {@code urlStr} directly, and — only if that fails — retries
+     * through the {@link #FETCH_PROXIES} anonymizer chain. A blocked t.me /
+     * GitHub therefore still yields the subscription content via a proxy.
+     */
+    private String fetch(String urlStr) throws Exception {
+        try {
+            return fetchDirect(urlStr);
+        } catch (Exception direct) {
+            for (Fetcher fp : FETCH_PROXIES) {
+                try {
+                    String body = fetchDirect(fp.wrap(urlStr));
+                    if (body != null && !body.isEmpty()) {
+                        log.line("↻ напрямую заблокировано — через анонимайзер "
+                                + fp.label + ": " + shortUrl(urlStr));
+                        return body;
+                    }
+                } catch (Exception ignored) {
+                    // this anonymizer failed too — try the next one
+                }
+            }
+            throw direct;  // direct + every anonymizer failed
+        }
+    }
+
+    private static String fetchDirect(String urlStr) throws Exception {
         HttpURLConnection c = (HttpURLConnection) new URL(urlStr).openConnection();
         c.setConnectTimeout(15000);
         c.setReadTimeout(20000);

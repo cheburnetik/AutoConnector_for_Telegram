@@ -141,11 +141,20 @@ object En : Strings {
         "speed. Lower — gentler on traffic/battery, higher — more aggressive.\n• VPN — when an external " +
         "VPN is active.\n• Wi-Fi — on a Wi-Fi network.\n• LTE — on a mobile network."
     override val adaptiveSpeed = "Adaptive speed"
-    override val adaptiveHelp = "Auto-tunes intensity by the number of live proxies:\n• \"Many\" threshold " +
-        "— if there are more live than this, checks slow down by the \"fast\" multiplier (the base is " +
-        "already good, save resources).\n• \"Few\" threshold — if fewer, checks speed up by the \"lazy\" " +
-        "multiplier to gather live ones faster."
-    override val threshMany = "\"Many\" threshold"; override val threshFew = "\"Few\" threshold"; override val mulFast = "fast mult."; override val mulLazy = "lazy mult."
+    override val adaptiveHelp = "Liveness checks run at a base interval (from \"Scan & check\", also " +
+        "multiplied by the network multiplier). \"Adaptive speed\" speeds them up or slows them down " +
+        "automatically based on how many proxies are currently live.\n\n" +
+        "• FEW live (below the \"Few\" threshold) → interval × \"Speed-up\". A multiplier below 1 = more " +
+        "often: 0.5 — twice as often, 0.25 — 4×. Refills the pool faster.\n" +
+        "• MANY live (above the \"Many\" threshold) → interval × \"Slow-down\". Above 1 = rarer: 2 — " +
+        "half as often, 4 — a quarter. Saves battery and traffic.\n" +
+        "• Between the thresholds — base speed (×1).\n\n" +
+        "Examples:\n" +
+        "— Gather proxies faster: \"Speed-up\" 0.25 and/or \"Few\" threshold 40.\n" +
+        "— Save battery when you have enough: \"Slow-down\" 8 and/or \"Many\" threshold 30.\n" +
+        "— Disable adaptation: set both multipliers to 1.\n\n" +
+        "Defaults: Few 20, Speed-up 0.5, Many 50, Slow-down 4."
+    override val threshMany = "\"Few\" threshold"; override val threshFew = "\"Many\" threshold"; override val mulFast = "Speed-up ×"; override val mulLazy = "Slow-down ×"
     override val netBattery = "Network & battery"
     override val netBatteryHelp = "• Wi-Fi only — don't scan on mobile networks (saves data).\n• Charging " +
         "only — work only while the phone is charging.\n• Skip on low battery — pause scanning when the " +
@@ -158,8 +167,8 @@ object En : Strings {
     override fun sourceAlive(alive: Int, total: Int) = "live $alive/$total"
     override val open = "Open"; override val active = "Active"; override val inactive = "Inactive"
     override val lastDownloaded = "Downloaded"; override val notDownloaded = "not downloaded yet"
-    override fun sourceCounts(alive: Int, dead: Int, total: Int) =
-        "live $alive · dead $dead · total $total"
+    override fun sourceCounts(dead: Int, total: Int) =
+        " live, $dead dead, $total total"
 
     override val proxyBase = "Proxy database"
     override val totalInBase = "Total in database"; override val aliveNow = "Live now"; override val deadStat = "Dead"

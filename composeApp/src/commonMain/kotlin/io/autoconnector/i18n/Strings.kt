@@ -110,7 +110,7 @@ interface Strings {
     fun sourceAlive(alive: Int, total: Int): String
     val open: String; val active: String; val inactive: String
     val lastDownloaded: String; val notDownloaded: String
-    fun sourceCounts(alive: Int, dead: Int, total: Int): String
+    fun sourceCounts(dead: Int, total: Int): String
 
     // stats
     val proxyBase: String
