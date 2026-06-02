@@ -45,7 +45,7 @@ for Telegram постоянно подбирает самые быстрые и 
 
 <table>
 <tr>
-<td align="center"><img src="docs/screenshots/connector.png" width="200"><br><sub>Коннектор — Telegram подключён</sub></td>
+<td align="center"><img src="docs/screenshots/connector.png" width="200"><br><sub>Коннектор</sub></td>
 <td align="center"><img src="docs/screenshots/scan.png" width="200"><br><sub>Скан и статистика</sub></td>
 <td align="center"><img src="docs/screenshots/catalog.png" width="200"><br><sub>Каталог прокси</sub></td>
 <td align="center"><img src="docs/screenshots/logs.png" width="200"><br><sub>Логи релея</sub></td>
