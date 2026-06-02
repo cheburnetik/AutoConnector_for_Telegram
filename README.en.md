@@ -21,50 +21,17 @@ don't need to update the Telegram client. Proxy reachability is checked from
 - on first launch, wait ~15 minutes while it downloads and tests MTProto
   proxies and while the Telegram client itself switches over
 
-## 📥 Download (Android)
+## 📥 Download
 
-A ready, signed APK is on the GitHub releases page:
+All builds are on the releases page: **[GitHub Releases (latest)](https://github.com/cheburnetik/AutoConnector_for_Telegram/releases/latest)**
 
-### **➡️ [Download the latest APK (GitHub Releases)](https://github.com/cheburnetik/AutoConnector_for_Telegram/releases/latest)**
+| OS | File | Run |
+|----|------|-----|
+| **Android** | `AutoConnector_for_Telegram.apk` | install the APK (outside Google Play — allow install from source) |
+| **Windows** 10/11 x64 | `AutoConnector.for.Telegram.exe` | double-click (SmartScreen → "More info" → "Run anyway") |
+| **Linux** x64 | `AutoConnector-for-Telegram-linux-x64.tar.gz` | extract → `./AutoConnector-for-Telegram/AutoConnector.sh` |
 
-The APK is digitally signed. See the [Signature verification](#-signature-verification)
-section below for how to check the signature and checksum.
-
-> The app is distributed as an APK directly (outside Google Play). AutoConnector
-> for Telegram does not provide or invent proxies itself — it only searches for
-> publicly available proxies across many open sources.
-
-### Installing
-
-1. Download the APK from the link above.
-2. Android may ask you to allow installation from this source — allow it for the
-   browser/file manager you install from.
-3. Google Play Protect may show "Unknown app". This is a **normal** warning for
-   **any** app outside Google Play, not a sign of a virus — tap "More details" →
-   "Install anyway". To make sure the APK is authentic and not tampered with,
-   verify the signature and checksum (section below).
-
-The APK is signed with a stable release certificate (APK signature schemes
-v2 + v3), so updates install over the previous version without reinstalling.
-
-## 💻 Download (Windows)
-
-The desktop version is the same engine and the same UI as on the phone (shared
-Kotlin Multiplatform + Compose code). A ready `.exe` is on the releases page:
-
-### **➡️ [Download for Windows (GitHub Releases)](https://github.com/cheburnetik/AutoConnector_for_Telegram/releases/latest)**
-
-- A single `AutoConnector for Telegram.exe` — **self-contained** (Java is bundled
-  inside, nothing to install). Windows 10/11 x64.
-- To run: double-click the `.exe`. If SmartScreen shows "Windows protected your
-  PC" — click "More info" → "Run anyway".
-- **Closing the window minimizes the app to the system tray** (icon near the
-  clock); the relay keeps running in the background. Click the icon to restore;
-  right-click → menu "Open" / "Exit".
-- In Telegram Desktop set a SOCKS5 proxy `127.0.0.1` port `55001` (and `55002`),
-  same as on Android.
-
-Data (proxy database, settings) is stored in `%APPDATA%\AutoConnector`.
+Windows and Linux are self-contained (Java bundled, nothing to install); closing the window minimizes to the tray. After launch, set a SOCKS5 proxy `127.0.0.1:55001` (and `55002`) in Telegram. The APK is signed (v2+v3) — [signature verification](#-signature-verification).
 
 ## ✨ Features
 
