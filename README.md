@@ -1,6 +1,6 @@
-**Русский** | [English](README.en.md)
+**Russian** | >>>> [ENGLISH HERE](README.en.md) <<<<
 
-# AutoConnector for Telegram (Android & Windows)
+# AutoConnector for Telegram
 
 **AutoConnector for Telegram** —  авто-коннектор: приложение
 само находит в интернете MTProto-прокси, проверяет их на живость и поднимает
@@ -26,7 +26,6 @@ for Telegram постоянно подбирает самые быстрые и 
 | **Windows** 10/11 x64 | `AutoConnector.for.Telegram.exe` | двойной клик (SmartScreen → «Подробнее» → «Выполнить») |
 | **Linux** x64 | `AutoConnector-for-Telegram-linux-x64.tar.gz` | распаковать → `./AutoConnector-for-Telegram/AutoConnector.sh` |
 
-Windows и Linux — самодостаточные (Java внутри, ставить ничего не нужно); закрытие окна сворачивает в трей. После запуска в Telegram пропишите SOCKS5 `127.0.0.1:55001` (и `55002`). APK подписан (v2+v3) — [проверка подписи](#-проверка-подписи).
 
 ## ✨ Возможности
 
