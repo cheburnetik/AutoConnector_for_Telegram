@@ -28,7 +28,7 @@ import java.util.List;
 public class ProxyStore extends SQLiteOpenHelper {
 
     private static final String DB_NAME = "autoconnector.db";
-    private static final int DB_VERSION = 9;
+    private static final int DB_VERSION = 10;
     private static final String T = "proxies";
     private static final String S = "sources";
     private static final String SP = "source_proxies";
@@ -56,6 +56,8 @@ public class ProxyStore extends SQLiteOpenHelper {
         public String lastError;
         /** How many proxies were parsed out of the most recent successful scan. */
         public int lastFoundCount;
+        /** Bytes downloaded on the most recent scan attempt (0 if it failed). */
+        public long lastBytes;
         /** Streak of failed refreshes — drives the background-scan backoff. */
         public int consecutiveFailures;
     }
@@ -109,6 +111,7 @@ public class ProxyStore extends SQLiteOpenHelper {
                 + "order_index INTEGER NOT NULL DEFAULT 0,"
                 + "last_error TEXT,"
                 + "last_found_count INTEGER NOT NULL DEFAULT 0,"
+                + "last_bytes INTEGER NOT NULL DEFAULT 0,"
                 + "consecutive_failures INTEGER NOT NULL DEFAULT 0)");
 
         db.execSQL("CREATE TABLE " + SP + " ("
@@ -178,6 +181,10 @@ public class ProxyStore extends SQLiteOpenHelper {
         }
         if (oldV < 9) {
             createModeStatsTable(db);
+        }
+        if (oldV < 10) {
+            db.execSQL("ALTER TABLE " + S
+                    + " ADD COLUMN last_bytes INTEGER NOT NULL DEFAULT 0");
         }
     }
 
@@ -518,6 +525,7 @@ public class ProxyStore extends SQLiteOpenHelper {
                 s.lastCheckAt = c.getLong(c.getColumnIndexOrThrow("last_check_at"));
                 s.lastError = c.getString(c.getColumnIndexOrThrow("last_error"));
                 s.lastFoundCount = c.getInt(c.getColumnIndexOrThrow("last_found_count"));
+                s.lastBytes = c.getLong(c.getColumnIndexOrThrow("last_bytes"));
                 s.consecutiveFailures =
                         c.getInt(c.getColumnIndexOrThrow("consecutive_failures"));
                 populateCounts(db, s);
@@ -544,6 +552,7 @@ public class ProxyStore extends SQLiteOpenHelper {
             s.lastCheckAt = c.getLong(c.getColumnIndexOrThrow("last_check_at"));
             s.lastError = c.getString(c.getColumnIndexOrThrow("last_error"));
             s.lastFoundCount = c.getInt(c.getColumnIndexOrThrow("last_found_count"));
+            s.lastBytes = c.getLong(c.getColumnIndexOrThrow("last_bytes"));
             populateCounts(db, s);
             return s;
         } finally {
@@ -612,18 +621,18 @@ public class ProxyStore extends SQLiteOpenHelper {
      * Persists the per-source outcome of the last scan attempt, plus the
      * consecutive-failures counter that drives background backoff.
      */
-    public void setSourceScanResult(long id, int foundCount, String error) {
+    public void setSourceScanResult(long id, int foundCount, long bytes, String error) {
         boolean ok = error == null && foundCount > 0;
         if (ok) {
             getWritableDatabase().execSQL(
-                    "UPDATE " + S + " SET last_found_count=?, last_error=NULL,"
+                    "UPDATE " + S + " SET last_found_count=?, last_bytes=?, last_error=NULL,"
                             + " consecutive_failures=0 WHERE id=?",
-                    new Object[]{foundCount, id});
+                    new Object[]{foundCount, bytes, id});
         } else {
             getWritableDatabase().execSQL(
-                    "UPDATE " + S + " SET last_found_count=?, last_error=?,"
+                    "UPDATE " + S + " SET last_found_count=?, last_bytes=?, last_error=?,"
                             + " consecutive_failures=consecutive_failures+1 WHERE id=?",
-                    new Object[]{foundCount, error, id});
+                    new Object[]{foundCount, bytes, error, id});
         }
     }
 

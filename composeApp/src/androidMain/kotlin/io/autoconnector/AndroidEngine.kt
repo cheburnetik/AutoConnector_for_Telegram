@@ -626,13 +626,18 @@ class AndroidEngine(context: Context) : Engine {
     }
 
     private fun refreshSources() {
-        _sources.value = store.listSources().map { s ->
+        val now = System.currentTimeMillis()
+        _sources.value = store.listSources().mapIndexed { i, s ->
             SourceItem(
                 id = s.id,
+                seq = i + 1,
                 url = s.url,
                 enabled = s.enabled,
                 alive = s.aliveCount,
+                dead = s.deadCount,
                 total = s.totalCount,
+                bytesHuman = if (s.lastBytes > 0) TrafficMeter.human(s.lastBytes) else "—",
+                lastRefreshMinsAgo = if (s.lastRefreshAt > 0) (now - s.lastRefreshAt) / 60000 else -1,
                 lastError = s.lastError?.takeIf { it.isNotBlank() },
             )
         }
@@ -679,7 +684,7 @@ class AndroidEngine(context: Context) : Engine {
             val id = store.upsertSource(url)
             if (id > 0) {
                 store.markSourceRefreshed(id)
-                store.setSourceScanResult(id, r.found, r.error)
+                store.setSourceScanResult(id, r.found, r.bytes, r.error)
             }
         }
         val p = Prefs(ctx)
@@ -697,7 +702,7 @@ class AndroidEngine(context: Context) : Engine {
                 val id = store.upsertSource(url)
                 if (id > 0) {
                     store.markSourceRefreshed(id)
-                    store.setSourceScanResult(id, r.found, r.error)
+                    store.setSourceScanResult(id, r.found, r.bytes, r.error)
                 }
             } catch (t: Throwable) {
                 appendLog("⚠ $url — ${t.message}")

@@ -41,6 +41,8 @@ public final class PageScanner {
         public int found;
         /** New rows actually inserted (after de-duplication). */
         public int added;
+        /** Bytes downloaded from the page (0 if the download itself failed). */
+        public long bytes;
         /** Final mirror URL that succeeded, or {@code null} if all failed. */
         public String usedUrl;
         /**
@@ -168,6 +170,7 @@ public final class PageScanner {
             return r;
         }
         // Count the downloaded payload as scan traffic.
+        r.bytes = body.length();
         io.autoconnector.engine.traffic.ScanMetrics.INSTANCE.addBytes(body.length());
 
         // For Telegram channel previews, scroll up a few times so we collect
