@@ -94,6 +94,10 @@ public final class RelayConnection implements Runnable {
                 ? HandshakeMode.fromOrdinal(prefs.handshakeMode())
                 : HandshakeMode.NORMAL;
         boolean onlyFakeTls = prefs.onlyFakeTls();
+        // Experimental upstream engine (OFF → reference path, bit-identical).
+        WireShaper.Mode expEngine = WireShaper.Mode.fromCode(prefs.expEngineMode());
+        // Experimental connect strategy (OFF → serial 8s, reference).
+        RelayConnectMode connMode = RelayConnectMode.fromCode(prefs.relayConnectMode());
         try {
             tg.setSoTimeout(HANDSHAKE_TIMEOUT_MS);
             InputStream tgIn = tg.getInputStream();
@@ -112,6 +116,11 @@ public final class RelayConnection implements Runnable {
             // doing so would consume Telegram's key material that the
             // server expects to see verbatim. Plain SOCKS5 byte forwarder.
             if (prefs.shouldBypassProxies()) {
+                // handleBypassRaw owns the single accept-counter decrement for
+                // this connection; flag it so run()'s finally doesn't decrement
+                // a SECOND time (that double-decrement drove accepting negative —
+                // the "TG→ -59" the user saw).
+                acceptingDecremented = true;
                 handleBypassRaw(tg, tgIn, tgOut, dst, prefs.dpiApplyDirect());
                 return;
             }
@@ -124,6 +133,7 @@ public final class RelayConnection implements Runnable {
             if (store.countAlive() == 0) {
                 RelayLog.emit("⚠ живых прокси пока нет — Telegram идёт напрямую к DC "
                         + "(чтобы Telegram не отключил прокси); идёт набор пула…");
+                acceptingDecremented = true;  // see note above — avoid double-decrement
                 handleBypassRaw(tg, tgIn, tgOut, dst, prefs.dpiApplyDirect());
                 return;
             }
@@ -136,7 +146,7 @@ public final class RelayConnection implements Runnable {
             if (dcId < 1 || dcId > 5) dcId = DcAddresses.dcIdForIp(dst.host);
 
             // 3. Acquire an upstream, with connect-time failover.
-            up = acquireUpstream(tag, dcId, dst, handshakeMode, onlyFakeTls);
+            up = acquireUpstream(tag, dcId, dst, handshakeMode, onlyFakeTls, expEngine, connMode);
             if (up == null) {
                 listener.event("порт " + localPort + ": нет рабочего апстрима (DC" + dcId + ")");
                 return;
@@ -202,18 +212,31 @@ public final class RelayConnection implements Runnable {
             listener.event("порт " + localPort + " → "
                     + upstreamProxy.host + ":" + upstreamProxy.port + " (DC" + dcId + ")");
 
+            // Diagnostic net-log (metadata only; no-op unless the user enabled it).
+            NetLog.open(sess(),
+                    "net=" + io.autoconnector.engine.core.NetworkMonitor.currentMode()
+                    + " eng=" + expEngine.key
+                    + " dpi=" + up.handshakeMode.name()
+                    + " up=" + upstreamProxy.host + ":" + upstreamProxy.port
+                    + " type=" + (upstreamProxy.type == ProxyType.MTPROTO
+                            ? (upstreamProxy.isFakeTls() ? "ee" : "MT") : "S5")
+                    + (sni != null ? " sni=" + sni : "")
+                    + " dc=" + dcId
+                    + " dst=" + dst.host + ":" + dst.port);
+
             // 4. Re-ciphering pipes in both directions.
             final UpstreamConnector.Channel fup = up;
             final Obfuscated2 flocal = local;
             final RelayStats.LiveConn lc = liveConn;
+            final String session = sess();
             Thread down = new Thread(() ->
                     pipe(fup.in, fup.obf.dec, flocal.enc, tgOut,
-                            RelayStats.bytesDown, lc.bytesDown, false),
+                            RelayStats.bytesDown, lc.bytesDown, false, session),
                     "relay-down-" + localPort);
             down.setDaemon(true);
             down.start();
             pipe(tgIn, local.dec, fup.obf.enc, fup.out,
-                    RelayStats.bytesUp, liveConn.bytesUp, true);
+                    RelayStats.bytesUp, liveConn.bytesUp, true, session);
             // Bounded join — pipe's SoTimeout (180s) should bring it home,
             // but if anything weird happens we don't sit on the relay pool slot.
             down.join(PIPE_IDLE_TIMEOUT_MS + 5_000L);
@@ -254,6 +277,9 @@ public final class RelayConnection implements Runnable {
                 RelayLog.emit("⨂ " + upstreamProxy.host + ":" + upstreamProxy.port
                         + " — сессия закрыта, длилась "
                         + io.autoconnector.engine.core.Durations.human(dur / 1000));
+                long upB = (liveConnRef != null) ? liveConnRef.bytesUp.get() : 0;
+                long downB = (liveConnRef != null) ? liveConnRef.bytesDown.get() : 0;
+                NetLog.close(sess(), "durMs=" + dur + " up=" + upB + " down=" + downB);
             }
             if (!acceptingDecremented) RelayStats.accepting.decrementAndGet();
             RelayStats.active.decrementAndGet();
@@ -301,6 +327,10 @@ public final class RelayConnection implements Runnable {
             RelayLog.emit("→ " + host + ":" + port + " (порт " + localPort
                     + ", прямой выход, DC" + dcId
                     + (antiDpi ? ", анти-DPI: фрагментация" : "") + ")");
+            NetLog.open(sess(),
+                    "net=" + io.autoconnector.engine.core.NetworkMonitor.currentMode()
+                    + " eng=direct" + (antiDpi ? "+frag" : "")
+                    + " dc=" + dcId + " dst=" + host + ":" + port);
 
             RelayStats.LiveConn lc = new RelayStats.LiveConn(
                     localPort, host + ":" + port,
@@ -315,15 +345,16 @@ public final class RelayConnection implements Runnable {
             final InputStream upIn = direct.getInputStream();
             final OutputStream upOut = direct.getOutputStream();
             final RelayStats.LiveConn flc = lc;
+            final String session = sess();
             Thread down = new Thread(() ->
-                    directPipe(upIn, tgOut, RelayStats.bytesDown, flc.bytesDown, false),
+                    directPipe(upIn, tgOut, RelayStats.bytesDown, flc.bytesDown, false, session, false),
                     "bypass-down-" + localPort);
             down.setDaemon(true);
             down.start();
             // Up-direction (Telegram → DC): when anti-DPI-to-direct is on, the
             // first outbound burst (the obfuscated2 handshake) is split into
             // several small TCP segments so a DPI box can't match it in one read.
-            directPipe(tgIn, upOut, RelayStats.bytesUp, lc.bytesUp, antiDpi);
+            directPipe(tgIn, upOut, RelayStats.bytesUp, lc.bytesUp, antiDpi, session, true);
             down.join(PIPE_IDLE_TIMEOUT_MS + 5_000L);
             if (down.isAlive()) {
                 down.interrupt();
@@ -336,6 +367,10 @@ public final class RelayConnection implements Runnable {
         } finally {
             if (liveId >= 0) RelayStats.unregister(liveId);
             if (!acceptingDecremented) RelayStats.accepting.decrementAndGet();
+            RelayStats.LiveConn fin = liveConnRefForLatency;
+            if (fin != null) {
+                NetLog.close(sess(), "up=" + fin.bytesUp.get() + " down=" + fin.bytesDown.get());
+            }
             try { if (direct != null) direct.close(); } catch (Exception ignored) {}
             closeQuietly(tg);
         }
@@ -349,7 +384,7 @@ public final class RelayConnection implements Runnable {
     private void directPipe(InputStream src, OutputStream dst,
                             java.util.concurrent.atomic.AtomicLong global,
                             java.util.concurrent.atomic.AtomicLong perConn,
-                            boolean fragmentFirst) {
+                            boolean fragmentFirst, String session, boolean upDirection) {
         byte[] buf = new byte[PIPE_BUF];
         boolean first = fragmentFirst;
         try {
@@ -362,6 +397,7 @@ public final class RelayConnection implements Runnable {
                     dst.write(buf, 0, n);
                     dst.flush();
                 }
+                if (upDirection) NetLog.up(session, n); else NetLog.down(session, n);
                 global.addAndGet(n);
                 perConn.addAndGet(n);
                 TrafficMeter.add(TrafficMeter.Cat.RELAY, n);
@@ -414,7 +450,9 @@ public final class RelayConnection implements Runnable {
     private UpstreamConnector.Channel acquireUpstream(int tag, int dcId,
                                                       Socks5Server.Target dst,
                                                       HandshakeMode mode,
-                                                      boolean onlyFakeTls) {
+                                                      boolean onlyFakeTls,
+                                                      WireShaper.Mode exp,
+                                                      RelayConnectMode connMode) {
         List<ProxyEntry> candidates = new ArrayList<>();
         ProxyEntry sticky = manager.stickyUpstream(localPort);
         if (sticky != null && (!onlyFakeTls || sticky.isFakeTls())) {
@@ -478,13 +516,44 @@ public final class RelayConnection implements Runnable {
             }
         }
 
-        int fails = 0;
+        // Pick the connect strategy. OFF is the reference serial trial; the
+        // others are experimental and aim to cut "very long to find a link".
+        UpstreamConnector.Channel ch;
+        switch (connMode) {
+            case PARALLEL_RACE:
+                ch = tryRace(candidates, tag, dcId, dst, mode, exp,
+                        RelayConnectMode.RACE_WIDTH, UPSTREAM_TIMEOUT_MS);
+                break;
+            case FAST_TIMEOUT:
+                ch = trySerial(candidates, tag, dcId, dst, mode, exp,
+                        RelayConnectMode.FAST_TIMEOUT_MS);
+                break;
+            case STICKY_FIRST:
+                ch = tryStickyFirst(candidates, tag, dcId, dst, mode, exp);
+                break;
+            case OFF:
+            default:
+                ch = trySerial(candidates, tag, dcId, dst, mode, exp, UPSTREAM_TIMEOUT_MS);
+                break;
+        }
+        // Cascade — nobody took the connection though we had candidates. Wake
+        // up the wider check in the background so the next retry has fresh data.
+        if (ch == null && !candidates.isEmpty()) {
+            RelayLog.emit("⚠ кандидаты не дали апстрим — запускаю расширенную проверку в фоне");
+            triggerWiderCheck();
+        }
+        return ch;
+    }
+
+    /** Reference strategy: try candidates one by one with the given timeout. */
+    private UpstreamConnector.Channel trySerial(List<ProxyEntry> candidates, int tag, int dcId,
+                                                Socks5Server.Target dst, HandshakeMode mode,
+                                                WireShaper.Mode exp, int timeoutMs) {
         for (ProxyEntry p : candidates) {
             try {
                 return UpstreamConnector.connect(
-                        p, tag, dcId, dst.host, dst.port, UPSTREAM_TIMEOUT_MS, mode);
+                        p, tag, dcId, dst.host, dst.port, timeoutMs, mode, exp);
             } catch (Exception e) {
-                fails++;
                 manager.markUpstreamBad(localPort, p);
                 try { store.logRelayAttempt(p.id, false); } catch (Exception ignored) {}
                 String why = e.getMessage() != null
@@ -492,12 +561,81 @@ public final class RelayConnection implements Runnable {
                 RelayLog.emit("✗ " + p.host + ":" + p.port + " — " + why);
             }
         }
-        // Cascade — no upstream took the connection. Wake up the wider check
-        // in the background so the next Telegram attempt has fresh data.
-        if (fails > 0) {
-            RelayLog.emit("⚠ все " + fails + " кандидатов провалились — "
-                    + "запускаю расширенную проверку в фоне");
-            triggerWiderCheck();
+        return null;
+    }
+
+    /**
+     * Experimental: dial the first {@code width} candidates concurrently and
+     * keep the FIRST one whose handshake completes; the rest self-close when
+     * they finish (the winner is already set). Mimics the instant connect you
+     * get pasting one good proxy straight into Telegram, because the fastest
+     * healthy upstream wins instead of waiting out dead ones in series. Falls
+     * back to a serial trial of the remaining candidates if all racers fail.
+     */
+    private UpstreamConnector.Channel tryRace(List<ProxyEntry> candidates, int tag, int dcId,
+                                              Socks5Server.Target dst, HandshakeMode mode,
+                                              WireShaper.Mode exp, int width, int timeoutMs) {
+        if (candidates.isEmpty()) return null;
+        int n = Math.min(width, candidates.size());
+        final java.util.concurrent.atomic.AtomicReference<UpstreamConnector.Channel> winner =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        final java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(1);
+        final java.util.concurrent.atomic.AtomicInteger remaining =
+                new java.util.concurrent.atomic.AtomicInteger(n);
+        for (int i = 0; i < n; i++) {
+            final ProxyEntry p = candidates.get(i);
+            Thread t = new Thread(() -> {
+                try {
+                    UpstreamConnector.Channel c = UpstreamConnector.connect(
+                            p, tag, dcId, dst.host, dst.port, timeoutMs, mode, exp);
+                    if (winner.compareAndSet(null, c)) {
+                        done.countDown();                 // first finisher wins
+                    } else {
+                        closeQuietly(c.socket);           // lost the race — discard
+                    }
+                } catch (Exception e) {
+                    manager.markUpstreamBad(localPort, p);
+                    try { store.logRelayAttempt(p.id, false); } catch (Exception ignored) {}
+                    String why = e.getMessage() != null
+                            ? e.getMessage() : e.getClass().getSimpleName();
+                    RelayLog.emit("✗ " + p.host + ":" + p.port + " — " + why);
+                } finally {
+                    if (remaining.decrementAndGet() == 0) done.countDown();  // all failed
+                }
+            }, "race-" + localPort + "-" + i);
+            t.setDaemon(true);
+            t.start();
+        }
+        try {
+            done.await(timeoutMs + 2000L, java.util.concurrent.TimeUnit.MILLISECONDS);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+        }
+        UpstreamConnector.Channel ch = winner.get();
+        if (ch != null) return ch;
+        // All racers failed — try the remaining candidates serially (rare).
+        if (candidates.size() > n) {
+            return trySerial(candidates.subList(n, candidates.size()), tag, dcId, dst, mode, exp, timeoutMs);
+        }
+        return null;
+    }
+
+    /**
+     * Experimental: try the proven sticky/best candidates first with a short
+     * timeout (the relay keeps these warm + health-checked), and only fall
+     * back to the full list if they don't take the connection.
+     */
+    private UpstreamConnector.Channel tryStickyFirst(List<ProxyEntry> candidates, int tag, int dcId,
+                                                     Socks5Server.Target dst, HandshakeMode mode,
+                                                     WireShaper.Mode exp) {
+        int head = Math.min(2, candidates.size());
+        UpstreamConnector.Channel ch = trySerial(
+                candidates.subList(0, head), tag, dcId, dst, mode, exp,
+                RelayConnectMode.FAST_TIMEOUT_MS);
+        if (ch != null) return ch;
+        if (candidates.size() > head) {
+            return trySerial(candidates.subList(head, candidates.size()),
+                    tag, dcId, dst, mode, exp, UPSTREAM_TIMEOUT_MS);
         }
         return null;
     }
@@ -546,7 +684,7 @@ public final class RelayConnection implements Runnable {
                       OutputStream dst,
                       java.util.concurrent.atomic.AtomicLong globalCounter,
                       java.util.concurrent.atomic.AtomicLong connCounter,
-                      boolean upDirection) {
+                      boolean upDirection, String session) {
         byte[] buf = new byte[PIPE_BUF];
         long accumForProxy = 0;
         long lastFlush = System.currentTimeMillis();
@@ -556,6 +694,7 @@ public final class RelayConnection implements Runnable {
                 byte[] plain = dec.process(buf, 0, n);
                 dst.write(enc.process(plain));
                 dst.flush();
+                if (upDirection) NetLog.up(session, n); else NetLog.down(session, n);
                 long now = System.currentTimeMillis();
                 globalCounter.addAndGet(n);
                 connCounter.addAndGet(n);

@@ -117,6 +117,10 @@ fun App(engine: Engine) {
         fun moreCallbacks() = MoreCallbacks(
             settings = settings,
             handshakeOptions = engine.handshakeOptions(),
+            expEngineOptions = engine.expEngineOptions(),
+            connectEngineOptions = engine.connectEngineOptions(),
+            netLogPath = engine.netLogPath(),
+            onOpenNetLogFolder = engine::openNetLogFolder,
             onUpdateSettings = engine::updateSettings,
             sources = sources,
             onAddSource = engine::addSource,

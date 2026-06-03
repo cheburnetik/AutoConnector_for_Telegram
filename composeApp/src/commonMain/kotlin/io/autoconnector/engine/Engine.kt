@@ -106,7 +106,16 @@ data class EngineSettings(
     val dpiApplyProbes: Boolean = true,
     val dpiApplyDirect: Boolean = false,
     val langCode: String = "auto",
+    // Experimental: alternative upstream proxying engine. Default 4 =
+    // WireShaper.Mode.COALESCE_DELAY (coalescing/batching) — the shipped default.
+    val expEngineMode: Int = 4,
+    val netLogEnabled: Boolean = false,
+    // Experimental: upstream-acquisition strategy (0 = OFF = serial reference).
+    val relayConnectMode: Int = 0,
 )
+
+/** A selectable experimental upstream engine for the settings picker. */
+data class ExpEngineOption(val code: Int, val label: String, val description: String)
 
 /** Build/version info for the About page. */
 data class AppInfo(val version: String, val buildDate: String)
@@ -242,6 +251,18 @@ interface Engine {
 
     /** Anti-DPI options for the settings picker — AUTO/NONE first, then tricks. */
     fun handshakeOptions(): List<HandshakeOption>
+
+    /** Experimental upstream-engine options for the settings picker (OFF first). */
+    fun expEngineOptions(): List<ExpEngineOption>
+
+    /** Experimental connect-strategy options for the settings picker (OFF first). */
+    fun connectEngineOptions(): List<ExpEngineOption>
+
+    /** Absolute path of the diagnostic network-exchange log file (or null). */
+    fun netLogPath(): String?
+
+    /** Reveal/open the folder holding the network-exchange log, if possible. */
+    fun openNetLogFolder()
 
     /** Per-anti-DPI-trick statistics for the Stats table. */
     fun handshakeStats(): List<HandshakeStatRow>

@@ -166,6 +166,18 @@ object En : Strings {
     override val onlyWifi = "Wi-Fi only"; override val onlyCharging = "Charging only"; override val skipLowBattery = "Skip on low battery"
     override val autosaved = "Settings are saved automatically."
     override val dpiAutoLabel = "Auto-rotate DPI tricks"; override val dpiNoneLabel = "No DPI tricks (plain)"
+    override val experimental = "Experimental"
+    override val experimentalHelp = "Alternative proxying engines to the MTProto upstream plus a diagnostic log. " +
+        "The reference (working) path is unchanged when set to «Off». Only HOW the encrypted stream is written to " +
+        "the upstream TCP socket changes (segment sizes, timing, TLS-record boundaries) — the stream itself stays byte-for-byte identical. " +
+        "Applies to the live proxy relay only (not probes, not the direct path)."
+    override val expEngineTitle = "Proxying engine (socket obfuscation)"
+    override val expConnectTitle = "Connect engine (upstream selection)"
+    override val expEngineWarn = "⚠ Experimental mode. If connectivity gets worse, switch back to «Off (reference path)»."
+    override val netLog = "Enable network-exchange log"
+    override val netLogSub = "Writes WHO-TO-WHOM-WHEN and packet sizes to a file (NO payload data) — " +
+        "to compare the exchange pattern with vs. without a VPN."
+    override val openLogFolder = "Open log folder"; override val copyPath = "Copy path"
 
     override val sourceUrl = "Source URL"
     override fun sourceAlive(alive: Int, total: Int) = "live $alive/$total"

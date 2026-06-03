@@ -328,4 +328,53 @@ public class Prefs {
     /** UI language code: "auto" (follow system) / "ru" / "en". */
     public String lang() { return sp.getString("ui_lang", "auto"); }
     public void setLang(String code) { sp.edit().putString("ui_lang", code).apply(); }
+
+    // --- experimental upstream engine -------------------------------------
+
+    /**
+     * Experimental upstream proxying engine code (see
+     * {@link io.autoconnector.engine.relay.WireShaper.Mode}). 0 = OFF =
+     * reference path (default). Non-zero modes reshape how the obfuscated2
+     * stream is written to the upstream TCP socket (segment sizes, flush
+     * cadence, TLS-record boundaries) without touching a single stream byte.
+     */
+    // Default = 4 (WireShaper.Mode.COALESCE_DELAY): coalescing/batching is the
+    // shipped default proxying engine.
+    public int expEngineMode() { return sp.getInt("exp_engine_mode", 4); }
+    public void setExpEngineMode(int code) {
+        sp.edit().putInt("exp_engine_mode", Math.max(0, code)).apply();
+    }
+
+    /** Diagnostic network-exchange log (metadata only — no payload bytes). */
+    public boolean netLogEnabled() { return sp.getBoolean("net_log_enabled", false); }
+    public void setNetLogEnabled(boolean v) {
+        sp.edit().putBoolean("net_log_enabled", v).apply();
+    }
+
+    /**
+     * Experimental upstream-acquisition strategy (see
+     * {@link io.autoconnector.engine.relay.RelayConnectMode}). 0 = OFF =
+     * reference serial trial. Non-zero modes change how fast the relay finds a
+     * working upstream proxy for a fresh Telegram connection.
+     */
+    public int relayConnectMode() { return sp.getInt("relay_connect_mode", 0); }
+    public void setRelayConnectMode(int code) {
+        sp.edit().putInt("relay_connect_mode", Math.max(0, code)).apply();
+    }
+
+    /**
+     * One-time migration of shipped defaults. A plain {@code getInt(key, 4)}
+     * default only helps brand-new installs — existing users already have
+     * {@code exp_engine_mode} written (the settings screen auto-saves), so they
+     * would never pick up a changed default. This bumps a {@code defaults_v}
+     * marker and, on first run of a build that raised it, forces the new
+     * default once; afterwards the user's own choice is respected.
+     */
+    public void applyShippedDefaultsOnce() {
+        int v = sp.getInt("defaults_v", 0);
+        if (v < 1) {
+            // v1: coalescing/batching becomes the default proxying engine.
+            sp.edit().putInt("exp_engine_mode", 4).putInt("defaults_v", 1).apply();
+        }
+    }
 }

@@ -10,7 +10,8 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.Map;
-import java.util.concurrent.locks.ReentrantLock;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 import io.autoconnector.platform.SnapshotCursor;
 
@@ -20,13 +21,23 @@ import io.autoconnector.platform.SnapshotCursor;
  * surface {@code ProxyStore} uses: {@code execSQL}, {@code rawQuery},
  * {@code insertWithOnConflict}, {@code update} and transactions.
  *
- * <p><b>Concurrency.</b> Android's SQLiteDatabase serialises access internally;
- * a single JDBC {@link Connection} is not thread-safe, so every operation is
- * guarded by a {@link ReentrantLock}. {@code beginTransaction} acquires the lock
- * and {@code endTransaction} releases it, so a bulk insert is atomic against
- * other engine threads while nested calls on the same thread re-enter freely.
- * Reads are snapshotted (see {@link SnapshotCursor}) so no live ResultSet is
- * ever held across the lock.
+ * <p><b>Concurrency — why this matters on desktop.</b> Android's native
+ * {@code SQLiteDatabase} lets many threads read at once (WAL). The relay leans
+ * hard on that: every fresh Telegram connection runs several proxy-pool queries
+ * while picking an upstream, and the background scanner/checker query in
+ * parallel. The first desktop port used a <em>single</em> JDBC connection behind
+ * one global lock, so all of that serialised onto one thread — which is exactly
+ * why connecting through the relay felt "very slow to find a link" on desktop
+ * while the identical engine is snappy on Android.
+ *
+ * <p>This version mirrors Android instead: a small pool of JDBC connections, each
+ * opened in <b>WAL</b> mode with a {@code busy_timeout}, so reads run truly
+ * concurrently and a writer never blocks readers. There is no Java-level global
+ * lock. A transaction pins one connection to the current thread (via a
+ * {@link ThreadLocal}) for its whole lifetime, and every nested call on that
+ * thread reuses it, so a bulk insert stays atomic without freezing other threads.
+ * {@code txnSuccess} is per-thread too (the old single boolean could be clobbered
+ * by a concurrent transaction).
  */
 public final class SQLiteDatabase {
 
@@ -37,37 +48,87 @@ public final class SQLiteDatabase {
     /** Marker interface kept only so {@code SQLiteOpenHelper}'s ctor signature matches. */
     public interface CursorFactory { }
 
-    private final Connection conn;
-    private final ReentrantLock lock = new ReentrantLock();
-    private boolean txnSuccess = false;
+    /** Max idle connections kept warm; extras are opened on demand and closed on return. */
+    private static final int MAX_IDLE = 16;
 
-    private SQLiteDatabase(Connection conn) {
-        this.conn = conn;
+    private final String url;
+    private final Queue<Connection> idle = new ConcurrentLinkedQueue<>();
+    /** Connection pinned to a thread for the duration of its open transaction. */
+    private final ThreadLocal<Connection> txnConn = new ThreadLocal<>();
+    private final ThreadLocal<Boolean> txnSuccess = new ThreadLocal<>();
+
+    private SQLiteDatabase(String url) {
+        this.url = url;
     }
 
     static SQLiteDatabase open(File file) {
         try {
             //noinspection ResultOfMethodCallIgnored
             Class.forName("org.sqlite.JDBC");
-            Connection c = DriverManager.getConnection("jdbc:sqlite:" + file.getAbsolutePath());
-            c.setAutoCommit(true);
-            return new SQLiteDatabase(c);
+            File parent = file.getParentFile();
+            if (parent != null) parent.mkdirs();
+            SQLiteDatabase db = new SQLiteDatabase("jdbc:sqlite:" + file.getAbsolutePath());
+            // Open one connection eagerly so the file + WAL header are created
+            // before anyone queries, then hand it to the pool.
+            db.recycle(db.newConnection());
+            return db;
         } catch (Exception e) {
             throw new RuntimeException("cannot open sqlite db " + file, e);
+        }
+    }
+
+    private Connection newConnection() throws Exception {
+        Connection c = DriverManager.getConnection(url);
+        c.setAutoCommit(true);
+        try (Statement st = c.createStatement()) {
+            // WAL = concurrent readers + a single writer, no reader/writer lock-out.
+            st.execute("PRAGMA journal_mode=WAL");
+            st.execute("PRAGMA busy_timeout=5000");
+            st.execute("PRAGMA synchronous=NORMAL");
+        }
+        return c;
+    }
+
+    /** A connection for a one-shot op: the thread's txn connection if one is open,
+     *  otherwise a pooled/fresh one (caller must {@link #recycle} it). */
+    private Connection borrow() {
+        Connection c = txnConn.get();
+        if (c != null) return c;
+        return acquire();
+    }
+
+    /** A pooled or freshly-opened connection, independent of any transaction. */
+    private Connection acquire() {
+        Connection c = idle.poll();
+        if (c != null) return c;
+        try {
+            return newConnection();
+        } catch (Exception e) {
+            throw new RuntimeException("cannot open sqlite connection", e);
+        }
+    }
+
+    private void recycle(Connection c) {
+        if (c == null) return;
+        if (txnConn.get() == c) return;       // still owned by an open transaction
+        if (idle.size() >= MAX_IDLE) {
+            try { c.close(); } catch (Exception ignored) {}
+        } else {
+            idle.offer(c);
         }
     }
 
     // --- schema version (PRAGMA user_version), used by SQLiteOpenHelper --------
 
     int getUserVersion() {
-        lock.lock();
-        try (Statement st = conn.createStatement();
+        Connection c = borrow();
+        try (Statement st = c.createStatement();
              ResultSet rs = st.executeQuery("PRAGMA user_version")) {
             return rs.next() ? rs.getInt(1) : 0;
         } catch (Exception e) {
             throw new RuntimeException(e);
         } finally {
-            lock.unlock();
+            recycle(c);
         }
     }
 
@@ -78,43 +139,46 @@ public final class SQLiteDatabase {
     // --- writes ---------------------------------------------------------------
 
     public void execSQL(String sql) {
-        lock.lock();
-        try (Statement st = conn.createStatement()) {
+        Connection c = borrow();
+        try (Statement st = c.createStatement()) {
             st.execute(sql);
         } catch (Exception e) {
             throw new RuntimeException("execSQL failed: " + sql, e);
         } finally {
-            lock.unlock();
+            recycle(c);
         }
     }
 
     public void execSQL(String sql, Object[] bindArgs) {
-        lock.lock();
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+        Connection c = borrow();
+        try (PreparedStatement ps = c.prepareStatement(sql)) {
             bind(ps, bindArgs, 1);
             ps.executeUpdate();
         } catch (Exception e) {
             throw new RuntimeException("execSQL failed: " + sql, e);
         } finally {
-            lock.unlock();
+            recycle(c);
         }
     }
 
     public Cursor rawQuery(String sql, String[] selectionArgs) {
-        lock.lock();
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+        Connection c = borrow();
+        try (PreparedStatement ps = c.prepareStatement(sql)) {
             if (selectionArgs != null) {
                 for (int i = 0; i < selectionArgs.length; i++) {
                     ps.setString(i + 1, selectionArgs[i]);
                 }
             }
             try (ResultSet rs = ps.executeQuery()) {
+                // SnapshotCursor materialises the rows eagerly, so the connection
+                // is free to return to the pool immediately — no live ResultSet
+                // is ever held across threads.
                 return new SnapshotCursor(rs);
             }
         } catch (Exception e) {
             throw new RuntimeException("rawQuery failed: " + sql, e);
         } finally {
-            lock.unlock();
+            recycle(c);
         }
     }
 
@@ -126,7 +190,7 @@ public final class SQLiteDatabase {
      */
     public long insertWithOnConflict(String table, String nullColumnHack,
                                      ContentValues values, int conflictAlgorithm) {
-        lock.lock();
+        Connection c = borrow();
         try {
             StringBuilder cols = new StringBuilder();
             StringBuilder qs = new StringBuilder();
@@ -140,25 +204,26 @@ public final class SQLiteDatabase {
             }
             String sql = "INSERT " + conflictClause(conflictAlgorithm) + "INTO " + table
                     + " (" + cols + ") VALUES (" + qs + ")";
-            try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            try (PreparedStatement ps = c.prepareStatement(sql)) {
                 bind(ps, vals, 1);
                 int changed = ps.executeUpdate();
                 if (changed == 0) return -1L; // OR IGNORE skipped an existing row
             }
-            try (Statement st = conn.createStatement();
+            // Same connection → correct last rowid even with the pool.
+            try (Statement st = c.createStatement();
                  ResultSet rs = st.executeQuery("SELECT last_insert_rowid()")) {
                 return rs.next() ? rs.getLong(1) : -1L;
             }
         } catch (Exception e) {
             throw new RuntimeException("insert failed into " + table, e);
         } finally {
-            lock.unlock();
+            recycle(c);
         }
     }
 
     /** {@code UPDATE table SET col=? … WHERE <where>} with values then whereArgs bound. */
     public int update(String table, ContentValues values, String whereClause, String[] whereArgs) {
-        lock.lock();
+        Connection c = borrow();
         try {
             StringBuilder set = new StringBuilder();
             Object[] vals = new Object[values.size()];
@@ -170,7 +235,7 @@ public final class SQLiteDatabase {
             }
             String sql = "UPDATE " + table + " SET " + set
                     + (whereClause != null && !whereClause.isEmpty() ? " WHERE " + whereClause : "");
-            try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            try (PreparedStatement ps = c.prepareStatement(sql)) {
                 int idx = bind(ps, vals, 1);
                 if (whereArgs != null) {
                     for (String a : whereArgs) ps.setString(idx++, a);
@@ -180,36 +245,41 @@ public final class SQLiteDatabase {
         } catch (Exception e) {
             throw new RuntimeException("update failed on " + table, e);
         } finally {
-            lock.unlock();
+            recycle(c);
         }
     }
 
     // --- transactions ---------------------------------------------------------
 
     public void beginTransaction() {
-        lock.lock(); // held until endTransaction()
+        Connection c = acquire();             // a dedicated connection for this txn
         try {
-            conn.setAutoCommit(false);
-            txnSuccess = false;
+            c.setAutoCommit(false);
+            txnConn.set(c);
+            txnSuccess.set(Boolean.FALSE);
         } catch (Exception e) {
-            lock.unlock();
+            recycle(c);
             throw new RuntimeException(e);
         }
     }
 
     public void setTransactionSuccessful() {
-        txnSuccess = true;
+        txnSuccess.set(Boolean.TRUE);
     }
 
     public void endTransaction() {
+        Connection c = txnConn.get();
+        if (c == null) return;
+        boolean ok = Boolean.TRUE.equals(txnSuccess.get());
         try {
-            if (txnSuccess) conn.commit(); else conn.rollback();
-            conn.setAutoCommit(true);
+            if (ok) c.commit(); else c.rollback();
+            c.setAutoCommit(true);
         } catch (Exception e) {
             throw new RuntimeException(e);
         } finally {
-            txnSuccess = false;
-            lock.unlock();
+            txnConn.remove();
+            txnSuccess.remove();
+            recycle(c);                       // now unpinned → returns to the pool
         }
     }
 
