@@ -109,6 +109,12 @@ interface Strings {
     val onlyWifi: String; val onlyCharging: String; val skipLowBattery: String
     val autosaved: String
     val dpiAutoLabel: String; val dpiNoneLabel: String
+    // experimental section
+    val experimental: String; val experimentalHelp: String
+    val expEngineTitle: String; val expEngineWarn: String
+    val expConnectTitle: String
+    val netLog: String; val netLogSub: String
+    val openLogFolder: String; val copyPath: String
 
     // sources
     val sourceUrl: String

@@ -55,9 +55,21 @@ public final class UpstreamConnector {
                 HandshakeMode.NORMAL);
     }
 
+    /** Reference overload (no experimental wire-shaping). */
     public static Channel connect(ProxyEntry p, int transportTag, int dcId,
                                   String destHost, int destPort, int timeoutMs,
                                   HandshakeMode userMode) throws Exception {
+        return connect(p, transportTag, dcId, destHost, destPort, timeoutMs,
+                userMode, WireShaper.Mode.OFF);
+    }
+
+    /**
+     * @param exp experimental upstream engine. {@link WireShaper.Mode#OFF}
+     *            keeps the reference path bit-identical.
+     */
+    public static Channel connect(ProxyEntry p, int transportTag, int dcId,
+                                  String destHost, int destPort, int timeoutMs,
+                                  HandshakeMode userMode, WireShaper.Mode exp) throws Exception {
         HandshakeMode effective = (userMode == HandshakeMode.AUTO_RANDOM)
                 ? HandshakeMode.randomTrick() : userMode;
         HandshakeStats.noteUsed(effective);
@@ -65,9 +77,9 @@ public final class UpstreamConnector {
 
         Channel ch;
         if (p.type == io.autoconnector.engine.model.ProxyType.SOCKS5) {
-            ch = connectSocks5(p, transportTag, dcId, destHost, destPort, timeoutMs);
+            ch = connectSocks5(p, transportTag, dcId, destHost, destPort, timeoutMs, exp);
         } else {
-            ch = connectMtproto(p, transportTag, dcId, timeoutMs, effective);
+            ch = connectMtproto(p, transportTag, dcId, timeoutMs, effective, exp);
         }
         ch.proxy = p;
         ch.handshakeMode = effective;
@@ -77,7 +89,8 @@ public final class UpstreamConnector {
 
     /** SOCKS5 upstream: tunnel to the exact DC endpoint, obfuscated2 (no secret). */
     private static Channel connectSocks5(ProxyEntry p, int tag, int dcId,
-                                         String destHost, int destPort, int timeoutMs)
+                                         String destHost, int destPort, int timeoutMs,
+                                         WireShaper.Mode exp)
             throws Exception {
         String host = destHost;
         int port = destPort;
@@ -87,9 +100,14 @@ public final class UpstreamConnector {
         }
         Socket s = Socks5.connect(p.host, p.port, host, port, timeoutMs);
         try {
+            WireShaper.applySocketOptions(s, exp);
+            // No FakeTLS layer here, so the experimental shaping applies to the
+            // bare obfuscated2 stream (raw segments). OFF → s.getOutputStream().
+            OutputStream out = WireShaper.wrapApp(
+                    WireShaper.wrapRaw(s.getOutputStream(), exp), exp, false);
             Obfuscated2 obf = new Obfuscated2();
-            obf.perform(s.getOutputStream(), null, tag, dcId);
-            return new Channel(s, s.getInputStream(), s.getOutputStream(), obf);
+            obf.perform(out, null, tag, dcId);
+            return new Channel(s, s.getInputStream(), out, obf);
         } catch (Exception e) {
             closeQuietly(s);
             throw e;
@@ -98,27 +116,37 @@ public final class UpstreamConnector {
 
     /** MTProto upstream: obfuscated2 with the proxy secret, FakeTLS-wrapped if needed. */
     private static Channel connectMtproto(ProxyEntry p, int tag, int dcId,
-                                          int timeoutMs, HandshakeMode mode)
+                                          int timeoutMs, HandshakeMode mode,
+                                          WireShaper.Mode exp)
             throws Exception {
         byte[] secret = HealthChecker.secretBytes(p.secret);
         Socket s = new Socket();
         try {
             s.connect(new InetSocketAddress(p.host, p.port), timeoutMs);
             s.setSoTimeout(timeoutMs);
+            WireShaper.applySocketOptions(s, exp);
 
+            // "Innermost" wrap: for OFF / TLS_RECHUNK this returns the raw
+            // output unchanged; for the segment-level modes it fragments the
+            // whole TCP stream including the FakeTLS handshake.
+            OutputStream rawOut = WireShaper.wrapRaw(s.getOutputStream(), exp);
+
+            boolean fakeTls = p.isFakeTls();
             InputStream in;
             OutputStream out;
-            if (p.isFakeTls()) {
+            if (fakeTls) {
                 FakeTlsClient tls = FakeTlsClient.handshake(
-                        s.getInputStream(), s.getOutputStream(),
+                        s.getInputStream(), rawOut,
                         secret, FakeTlsClient.domainFromSecret(p.secret), mode);
                 in = tls.in;
-                out = tls.out;
+                // TLS_RECHUNK splits app-data into many small records; other
+                // modes leave the record stream as-is (OFF → tls.out verbatim).
+                out = WireShaper.wrapApp(tls.out, exp, true);
             } else {
                 // No FakeTLS layer to vary; still honor TCP-side tricks.
                 applyTcpTricks(s, mode);
                 in = s.getInputStream();
-                out = s.getOutputStream();
+                out = WireShaper.wrapApp(rawOut, exp, false);
             }
 
             Obfuscated2 obf = new Obfuscated2();

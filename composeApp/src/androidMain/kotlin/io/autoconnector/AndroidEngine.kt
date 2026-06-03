@@ -13,6 +13,7 @@ import io.autoconnector.engine.ConnState
 import io.autoconnector.engine.Engine
 import io.autoconnector.engine.EngineSettings
 import io.autoconnector.engine.EngineState
+import io.autoconnector.engine.ExpEngineOption
 import io.autoconnector.engine.HandshakeOption
 import io.autoconnector.engine.HandshakeStatRow
 import io.autoconnector.engine.LogCat
@@ -32,9 +33,12 @@ import io.autoconnector.engine.model.ProxyType
 import io.autoconnector.engine.net.FakeTlsClient
 import io.autoconnector.engine.net.HandshakeMode
 import io.autoconnector.engine.net.HandshakeStats
+import io.autoconnector.engine.relay.NetLog
+import io.autoconnector.engine.relay.RelayConnectMode
 import io.autoconnector.engine.relay.RelayLog
 import io.autoconnector.engine.relay.RelayManager
 import io.autoconnector.engine.relay.RelayService
+import io.autoconnector.engine.relay.WireShaper
 import io.autoconnector.engine.relay.RelayStats
 import io.autoconnector.engine.scan.PageScanner
 import io.autoconnector.engine.traffic.CheckRateBuffer
@@ -88,8 +92,13 @@ class AndroidEngine(context: Context) : Engine {
     override fun start() {
         HandshakeStats.init(ctx)
         NetworkMonitor.init(ctx)
+        // Net-log goes to the app's external files dir so the user can pull it
+        // with a file manager (falls back to private files dir).
+        NetLog.init(ctx.getExternalFilesDir(null) ?: ctx.filesDir)
+        Prefs(ctx).applyShippedDefaultsOnce()
         RelayLog.register { session, line -> appendLog(line, LogCat.TELEGRAM, session) }
         loadSettings()
+        NetLog.setEnabled(Prefs(ctx).netLogEnabled())
         prevUp = RelayStats.bytesUp.get()
         prevDown = RelayStats.bytesDown.get()
         syncService()
@@ -152,6 +161,9 @@ class AndroidEngine(context: Context) : Engine {
             dpiApplyProbes = p.dpiApplyProbes(),
             dpiApplyDirect = p.dpiApplyDirect(),
             langCode = p.lang(),
+            expEngineMode = p.expEngineMode(),
+            netLogEnabled = p.netLogEnabled(),
+            relayConnectMode = p.relayConnectMode(),
         )
     }
 
@@ -181,6 +193,10 @@ class AndroidEngine(context: Context) : Engine {
         p.setDpiApplyProbes(s.dpiApplyProbes)
         p.setDpiApplyDirect(s.dpiApplyDirect)
         p.setLang(s.langCode)
+        p.setExpEngineMode(s.expEngineMode)
+        p.setNetLogEnabled(s.netLogEnabled)
+        p.setRelayConnectMode(s.relayConnectMode)
+        NetLog.setEnabled(s.netLogEnabled)
         loadSettings()
         if (p.appEnabled() || p.scanEnabled()) RelayService.reconfigure(ctx)
         appendLog("⚙ настройки сохранены")
@@ -204,6 +220,21 @@ class AndroidEngine(context: Context) : Engine {
             }
             HandshakeOption(m.ordinal, label, m == auto || m == normal)
         }
+    }
+
+    override fun expEngineOptions(): List<ExpEngineOption> =
+        WireShaper.Mode.values().map { ExpEngineOption(it.code, it.label, it.description) }
+
+    override fun connectEngineOptions(): List<ExpEngineOption> =
+        RelayConnectMode.values().map { ExpEngineOption(it.code, it.label, it.description) }
+
+    override fun netLogPath(): String? = NetLog.file()?.absolutePath
+
+    override fun openNetLogFolder() {
+        // Android has no folder-opener; surface the path so the user can pull
+        // the file with a file manager from the app's external files dir.
+        val p = NetLog.file()?.absolutePath
+        appendLog(if (p != null) "· лог сетевого обмена: $p" else "⚠ путь лога недоступен")
     }
 
     override fun handshakeStats(): List<HandshakeStatRow> =
@@ -338,7 +369,9 @@ class AndroidEngine(context: Context) : Engine {
         if (deltaUp + deltaDown > 0) lastDataAt = now
 
         val conns = RelayStats.liveConnections()
-        val pending = RelayStats.accepting.get()
+        // Clamp: a stray accept-counter underflow must never show as a negative
+        // socket count or wedge the status in a perpetual "connecting" state.
+        val pending = maxOf(0, RelayStats.accepting.get())
         var longestBytes = 0L
         var mostRecentDataAt = 0L
         var firstStart = Long.MAX_VALUE
@@ -477,7 +510,7 @@ class AndroidEngine(context: Context) : Engine {
             totalUp = "↑ ${TrafficMeter.human(up)}",
             latency = latency,
             sessions = sessions,
-            socketsTgToConnector = conns.size + pending,
+            socketsTgToConnector = maxOf(0, conns.size + pending),
             socketsConnectorToProxy = conns.size,
             currentProxy = currentProxy,
             connCount = conns.size,

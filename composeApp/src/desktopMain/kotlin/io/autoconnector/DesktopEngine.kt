@@ -7,6 +7,7 @@ import io.autoconnector.engine.ConnState
 import io.autoconnector.engine.Engine
 import io.autoconnector.engine.EngineSettings
 import io.autoconnector.engine.EngineState
+import io.autoconnector.engine.ExpEngineOption
 import io.autoconnector.engine.HandshakeOption
 import io.autoconnector.engine.HandshakeStatRow
 import io.autoconnector.engine.LogCat
@@ -26,8 +27,11 @@ import io.autoconnector.engine.model.ProxyType
 import io.autoconnector.engine.net.FakeTlsClient
 import io.autoconnector.engine.net.HandshakeMode
 import io.autoconnector.engine.net.HandshakeStats
+import io.autoconnector.engine.relay.NetLog
+import io.autoconnector.engine.relay.RelayConnectMode
 import io.autoconnector.engine.relay.RelayLog
 import io.autoconnector.engine.relay.RelayManager
+import io.autoconnector.engine.relay.WireShaper
 import io.autoconnector.engine.relay.RelayServer
 import io.autoconnector.engine.relay.RelayStats
 import io.autoconnector.engine.scan.PageScanner
@@ -65,7 +69,7 @@ private const val LOG_CAP_SUBS = 150
  * mains-check / spark-ingest loops itself — here with coroutines instead of a
  * HandlerThread + WorkManager.
  */
-class DesktopEngine(dataDir: File) : Engine {
+class DesktopEngine(private val dataDir: File) : Engine {
 
     private val ctx = Context(dataDir)
     private val store = ProxyStore.get(ctx)
@@ -91,8 +95,11 @@ class DesktopEngine(dataDir: File) : Engine {
     override fun start() {
         HandshakeStats.init(ctx)
         NetworkMonitor.init(ctx)
+        NetLog.init(dataDir)
+        Prefs(ctx).applyShippedDefaultsOnce()
         RelayLog.register { session, line -> appendLog(line, LogCat.TELEGRAM, session) }
         loadSettings()
+        NetLog.setEnabled(Prefs(ctx).netLogEnabled())
         prevUp = RelayStats.bytesUp.get()
         prevDown = RelayStats.bytesDown.get()
         applyRelayState()
@@ -181,6 +188,9 @@ class DesktopEngine(dataDir: File) : Engine {
             dpiApplyProbes = p.dpiApplyProbes(),
             dpiApplyDirect = p.dpiApplyDirect(),
             langCode = p.lang(),
+            expEngineMode = p.expEngineMode(),
+            netLogEnabled = p.netLogEnabled(),
+            relayConnectMode = p.relayConnectMode(),
         )
     }
 
@@ -210,6 +220,10 @@ class DesktopEngine(dataDir: File) : Engine {
         p.setDpiApplyProbes(s.dpiApplyProbes)
         p.setDpiApplyDirect(s.dpiApplyDirect)
         p.setLang(s.langCode)
+        p.setExpEngineMode(s.expEngineMode)
+        p.setNetLogEnabled(s.netLogEnabled)
+        p.setRelayConnectMode(s.relayConnectMode)
+        NetLog.setEnabled(s.netLogEnabled)
         loadSettings()
         // Ports may have changed — restart the relay if it's running.
         if (p.appEnabled()) {
@@ -237,6 +251,25 @@ class DesktopEngine(dataDir: File) : Engine {
                 else -> m.label
             }
             HandshakeOption(m.ordinal, label, m == auto || m == normal)
+        }
+    }
+
+    override fun expEngineOptions(): List<ExpEngineOption> =
+        WireShaper.Mode.values().map { ExpEngineOption(it.code, it.label, it.description) }
+
+    override fun connectEngineOptions(): List<ExpEngineOption> =
+        RelayConnectMode.values().map { ExpEngineOption(it.code, it.label, it.description) }
+
+    override fun netLogPath(): String? = NetLog.file()?.absolutePath
+
+    override fun openNetLogFolder() {
+        try {
+            val f = NetLog.file() ?: return
+            val dir = f.parentFile ?: return
+            dir.mkdirs()
+            java.awt.Desktop.getDesktop().open(dir)
+        } catch (t: Throwable) {
+            appendLog("⚠ не удалось открыть папку лога: ${t.message}")
         }
     }
 
@@ -269,8 +302,12 @@ class DesktopEngine(dataDir: File) : Engine {
     }
 
     override fun appInfo(): AppInfo = AppInfo(
-        version = "1.08 (9) · desktop",
-        buildDate = BUILD_DATE,
+        version = DESKTOP_VERSION,
+        // Stamped into the launcher (.bat passes -Dautoconnector.build=…, using
+        // '_' for spaces to avoid batch quoting); shows when this portable build
+        // was packaged. Falls back to "—" for dev runs.
+        buildDate = System.getProperty("autoconnector.build")?.takeIf { it.isNotBlank() }
+            ?.replace('_', ' ') ?: "—",
     )
 
     // === catalog actions =================================================
@@ -439,7 +476,9 @@ class DesktopEngine(dataDir: File) : Engine {
         if (deltaUp + deltaDown > 0) lastDataAt = now
 
         val conns = RelayStats.liveConnections()
-        val pending = RelayStats.accepting.get()
+        // Clamp: a stray accept-counter underflow must never show as a negative
+        // socket count or wedge the status in a perpetual "connecting" state.
+        val pending = maxOf(0, RelayStats.accepting.get())
         var longestBytes = 0L
         var mostRecentDataAt = 0L
         var firstStart = Long.MAX_VALUE
@@ -565,7 +604,7 @@ class DesktopEngine(dataDir: File) : Engine {
             totalUp = "↑ ${TrafficMeter.human(up)}",
             latency = latency,
             sessions = sessions,
-            socketsTgToConnector = conns.size + pending,
+            socketsTgToConnector = maxOf(0, conns.size + pending),
             socketsConnectorToProxy = conns.size,
             currentProxy = currentProxy,
             connCount = conns.size,
@@ -836,6 +875,8 @@ class DesktopEngine(dataDir: File) : Engine {
     }
 
     companion object {
-        private const val BUILD_DATE = "desktop"
+        // Single dotted-semver version line for the desktop build (matches the
+        // GitHub release tag vX.Y.Z). Build date is injected at launch — see appInfo().
+        private const val DESKTOP_VERSION = "1.0.9"
     }
 }

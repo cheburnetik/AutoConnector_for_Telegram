@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.sp
 import io.autoconnector.engine.AppInfo
 import io.autoconnector.engine.EngineSettings
 import io.autoconnector.engine.EngineState
+import io.autoconnector.engine.ExpEngineOption
 import io.autoconnector.engine.HandshakeOption
 import io.autoconnector.engine.HandshakeStatRow
 import io.autoconnector.engine.SourceItem
@@ -78,6 +79,10 @@ private fun titleFor(dest: MoreDest, t: Strings) = when (dest) {
 class MoreCallbacks(
     val settings: EngineSettings,
     val handshakeOptions: List<HandshakeOption>,
+    val expEngineOptions: List<ExpEngineOption>,
+    val connectEngineOptions: List<ExpEngineOption>,
+    val netLogPath: String?,
+    val onOpenNetLogFolder: () -> Unit,
     val onUpdateSettings: (EngineSettings) -> Unit,
     val sources: List<SourceItem>,
     val onAddSource: (String) -> Unit,
@@ -174,7 +179,12 @@ private fun SettingsPage(cb: MoreCallbacks) {
     var dpiDirect by remember { mutableStateOf(s.dpiApplyDirect) }
     var vpnMode by remember { mutableStateOf(s.proxyModeCode) }
     var lang by remember { mutableStateOf(s.langCode) }
+    var expEngine by remember { mutableStateOf(s.expEngineMode) }
+    var connEngine by remember { mutableStateOf(s.relayConnectMode) }
+    var netLog by remember { mutableStateOf(s.netLogEnabled) }
     var hsExpanded by remember { mutableStateOf(false) }
+    var expExpanded by remember { mutableStateOf(false) }
+    var connExpanded by remember { mutableStateOf(false) }
     var help by remember { mutableStateOf<Pair<String, String>?>(null) }
 
     fun save() {
@@ -204,6 +214,9 @@ private fun SettingsPage(cb: MoreCallbacks) {
                 dpiApplyProbes = dpiProbes,
                 dpiApplyDirect = dpiDirect,
                 langCode = lang,
+                expEngineMode = expEngine,
+                netLogEnabled = netLog,
+                relayConnectMode = connEngine,
             )
         )
     }
@@ -302,6 +315,47 @@ private fun SettingsPage(cb: MoreCallbacks) {
         SwitchRow(t.onlyCharging, charging) { charging = it; save() }
         SwitchRow(t.skipLowBattery, skipLow) { skipLow = it; save() }
 
+        // --- Experimental ------------------------------------------------
+        Section(t.experimental) { help = t.experimental to t.experimentalHelp }
+
+        // Connect engine — how fast the relay finds a working upstream.
+        Text(t.expConnectTitle, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+        ExpEnginePicker(cb.connectEngineOptions, connEngine, connExpanded, { connExpanded = it }) { connEngine = it; save() }
+        cb.connectEngineOptions.firstOrNull { it.code == connEngine }?.let { opt ->
+            Text(opt.description, color = AppColors.onSurfaceMuted, fontSize = 13.sp)
+        }
+        if (connEngine != 0) {
+            Text(t.expEngineWarn, color = AppColors.red, fontSize = 13.sp)
+        }
+        Spacer(Modifier.height(8.dp))
+
+        // Proxying engine — socket-level wire shaping (obfuscation).
+        Text(t.expEngineTitle, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+        ExpEnginePicker(cb.expEngineOptions, expEngine, expExpanded, { expExpanded = it }) { expEngine = it; save() }
+        cb.expEngineOptions.firstOrNull { it.code == expEngine }?.let { opt ->
+            Text(opt.description, color = AppColors.onSurfaceMuted, fontSize = 13.sp)
+        }
+        if (expEngine != 0) {
+            Text(t.expEngineWarn, color = AppColors.red, fontSize = 13.sp)
+        }
+        Spacer(Modifier.height(4.dp))
+        SwitchRow(t.netLog, netLog) { netLog = it; save() }
+        Text(t.netLogSub, color = AppColors.onSurfaceMuted, fontSize = 13.sp)
+        if (netLog && cb.netLogPath != null) {
+            Text(
+                cb.netLogPath,
+                fontFamily = monospaceFontFamily(),
+                fontSize = 12.sp,
+                color = AppColors.onSurfaceMuted,
+            )
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = cb.onOpenNetLogFolder, modifier = Modifier.weight(1f)) {
+                    Text(t.openLogFolder, fontSize = 14.sp)
+                }
+                OutlinedButton(onClick = { cb.onCopy(cb.netLogPath) }) { Text(t.copyPath, fontSize = 14.sp) }
+            }
+        }
+
         Text(t.autosaved, color = AppColors.onSurfaceMuted, fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
         Spacer(Modifier.height(16.dp))
     }
@@ -352,6 +406,44 @@ private fun HandshakePicker(
 }
 
 @Composable
+private fun ExpEnginePicker(
+    options: List<ExpEngineOption>,
+    selectedCode: Int,
+    expanded: Boolean,
+    setExpanded: (Boolean) -> Unit,
+    onPick: (Int) -> Unit,
+) {
+    val current = options.firstOrNull { it.code == selectedCode } ?: options.firstOrNull()
+    val isOff = selectedCode == 0
+    OutlinedButton({ setExpanded(true) }, Modifier.fillMaxWidth()) {
+        Text(
+            current?.label ?: "—",
+            fontSize = 15.sp,
+            color = if (isOff) AppColors.onSurface else AppColors.accent,
+            fontWeight = if (isOff) FontWeight.Normal else FontWeight.Bold,
+        )
+    }
+    DropdownMenu(expanded, { setExpanded(false) }) {
+        options.forEachIndexed { i, opt ->
+            DropdownMenuItem(
+                text = {
+                    Text(
+                        opt.label,
+                        fontSize = 15.sp,
+                        fontWeight = if (opt.code == 0) FontWeight.Bold else FontWeight.Normal,
+                        color = if (opt.code == 0) AppColors.accent else AppColors.onSurface,
+                    )
+                },
+                onClick = { onPick(opt.code); setExpanded(false) },
+            )
+            if (opt.code == 0 && i + 1 < options.size) {
+                Box(Modifier.fillMaxWidth().height(1.dp).background(AppColors.cardBorder))
+            }
+        }
+    }
+}
+
+@Composable
 private fun Section(title: String, onHelp: (() -> Unit)? = null) {
     Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(title, color = AppColors.accent, fontWeight = FontWeight.Bold, fontSize = 15.sp)
@@ -371,7 +463,11 @@ private fun NumField(value: String, onChange: (String) -> Unit, label: String, m
         { v -> onChange(v.filter { it.isDigit() || (decimal && (it == '.' || it == ',')) }.replace(',', '.')) },
         modifier,
         label = { Text(label, fontSize = 14.sp) },
-        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 16.sp),
+        // Explicit family: a bare TextStyle defaults to FontFamily.Default, which
+        // the text field's heightInLines resolves eagerly — and that generic
+        // family can't be loaded under Wine (Skia can't read system fonts there),
+        // crashing the Settings page. Pin it to the bundled sans like everywhere else.
+        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 16.sp, fontFamily = sansFontFamily()),
         singleLine = true,
     )
 }

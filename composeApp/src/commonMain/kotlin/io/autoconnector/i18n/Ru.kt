@@ -163,6 +163,18 @@ object Ru : Strings {
     override val onlyWifi = "Только по Wi-Fi"; override val onlyCharging = "Только при зарядке"; override val skipLowBattery = "Пропускать при низком заряде"
     override val autosaved = "Настройки сохраняются автоматически."
     override val dpiAutoLabel = "Авто-перебор DPI-трюков"; override val dpiNoneLabel = "Без DPI-трюков (обычный)"
+    override val experimental = "Экспериментально"
+    override val experimentalHelp = "Альтернативные движки проксирования к MTProto-прокси и диагностический лог. " +
+        "Эталонный (рабочий) путь при «Выключено» не меняется. Меняется только то, КАК зашифрованный поток " +
+        "пишется в TCP-сокет апстрима (размер сегментов, тайминг, границы TLS-records) — сам поток байт-в-байт тот же. " +
+        "Применяется к живому релею через прокси (не к пробам и не к прямому выходу)."
+    override val expEngineTitle = "Движок проксирования (обфускация сокетов)"
+    override val expConnectTitle = "Движок коннекта (поиск апстрима)"
+    override val expEngineWarn = "⚠ Экспериментальный режим. Если связь стала хуже — верните «Выключено (эталонный путь)»."
+    override val netLog = "Включить лог сетевого обмена"
+    override val netLogSub = "Пишет в файл КТО-КОМУ-КОГДА и размеры пакетов (БЕЗ содержимого данных) — " +
+        "чтобы сравнить характер обмена с VPN и без него."
+    override val openLogFolder = "Открыть папку лога"; override val copyPath = "Скопировать путь"
 
     override val sourceUrl = "URL источника"
     override fun sourceAlive(alive: Int, total: Int) = "живых $alive/$total"
