@@ -54,9 +54,17 @@ public class Prefs {
 
     // --- checking schedule -------------------------------------------------
 
+    /**
+     * Platform-injected shipped default for the proxying engine
+     * ({@code exp_engine_mode}). Android sets this to 0 (off — the native
+     * socket path works there); desktop leaves it at 4 (coalescing/batching).
+     * Set before {@link #applyShippedDefaultsOnce()} runs.
+     */
+    public static int SHIPPED_EXP_ENGINE = 4;
+
     /** How often, in minutes, the background checker re-probes proxies. */
     public int checkIntervalMin() {
-        return sp.getInt("check_interval_min", 15);
+        return sp.getInt("check_interval_min", 10);
     }
 
     /** How many parallel threads the proxy checker uses. */
@@ -340,7 +348,7 @@ public class Prefs {
      */
     // Default = 4 (WireShaper.Mode.COALESCE_DELAY): coalescing/batching is the
     // shipped default proxying engine.
-    public int expEngineMode() { return sp.getInt("exp_engine_mode", 4); }
+    public int expEngineMode() { return sp.getInt("exp_engine_mode", SHIPPED_EXP_ENGINE); }
     public void setExpEngineMode(int code) {
         sp.edit().putInt("exp_engine_mode", Math.max(0, code)).apply();
     }
@@ -375,6 +383,13 @@ public class Prefs {
         if (v < 1) {
             // v1: coalescing/batching becomes the default proxying engine.
             sp.edit().putInt("exp_engine_mode", 4).putInt("defaults_v", 1).apply();
+            v = 1;
+        }
+        if (v < 2) {
+            // v2: the shipped proxying-engine default is now platform-specific —
+            // OFF on Android (native path works), coalescing on desktop. Force
+            // the platform default once; afterwards the user's choice is kept.
+            sp.edit().putInt("exp_engine_mode", SHIPPED_EXP_ENGINE).putInt("defaults_v", 2).apply();
         }
     }
 }

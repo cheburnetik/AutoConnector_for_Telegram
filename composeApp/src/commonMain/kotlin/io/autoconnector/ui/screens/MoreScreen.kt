@@ -5,7 +5,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -13,6 +16,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -49,6 +53,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.autoconnector.engine.AppInfo
@@ -95,6 +100,7 @@ class MoreCallbacks(
     val onToggleSource: (Long, Boolean) -> Unit,
     val state: EngineState,
     val exportLinks: () -> List<String>,
+    val onExportToFile: () -> String?,
     val onCopy: (String) -> Unit,
     val handshakeStats: () -> List<HandshakeStatRow>,
     val onResetStats: () -> Unit,
@@ -382,14 +388,11 @@ private fun SettingsPage(cb: MoreCallbacks) {
         IntensitySlider("LTE", spLte.toFloatOrNull() ?: 1f) { spLte = fmtMult(it); save() }
 
         Section(t.adaptiveSpeed) { help = t.adaptiveSpeed to t.adaptiveHelp }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            NumField(aliveThr, { aliveThr = it }, t.threshMany, Modifier.weight(1f))
-            NumField(fastMul, { fastMul = it }, t.mulFast, Modifier.weight(1f), decimal = true)
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            NumField(lazyThr, { lazyThr = it }, t.threshFew, Modifier.weight(1f))
-            NumField(lazyMul, { lazyMul = it }, t.mulLazy, Modifier.weight(1f), decimal = true)
-        }
+        // Threshold (compact field) + acceleration as a log slider, one per line.
+        AdaptiveRow(aliveThr, { aliveThr = it; save() }, t.threshMany,
+            fastMul.toFloatOrNull() ?: 1f) { fastMul = fmtMult(it); save() }
+        AdaptiveRow(lazyThr, { lazyThr = it; save() }, t.threshFew,
+            lazyMul.toFloatOrNull() ?: 1f) { lazyMul = fmtMult(it); save() }
 
         Section(t.netBattery) { help = t.netBattery to t.netBatteryHelp }
         SwitchRow(t.onlyWifi, wifiOnly) { wifiOnly = it; save() }
@@ -399,26 +402,22 @@ private fun SettingsPage(cb: MoreCallbacks) {
         // --- Experimental ------------------------------------------------
         Section(t.experimental) { help = t.experimental to t.experimentalHelp }
 
-        // Connect engine — how fast the relay finds a working upstream.
-        Text(t.expConnectTitle, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+        // Connect engine — just the picker button; the description of the
+        // selected engine (plus the experimental warning) lives in the ? dialog.
+        Section(t.expConnectTitle) {
+            val opt = cb.connectEngineOptions.firstOrNull { it.code == connEngine }
+            help = t.expConnectTitle to ((opt?.description ?: "") +
+                (if (connEngine != 0) "\n\n" + t.expEngineWarn else ""))
+        }
         ExpEnginePicker(cb.connectEngineOptions, connEngine, connExpanded, { connExpanded = it }) { connEngine = it; save() }
-        cb.connectEngineOptions.firstOrNull { it.code == connEngine }?.let { opt ->
-            Text(opt.description, color = AppColors.onSurfaceMuted, fontSize = 13.sp)
-        }
-        if (connEngine != 0) {
-            Text(t.expEngineWarn, color = AppColors.red, fontSize = 13.sp)
-        }
-        Spacer(Modifier.height(8.dp))
 
-        // Proxying engine — socket-level wire shaping (obfuscation).
-        Text(t.expEngineTitle, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+        // Proxying engine — same: button only, description inside the ? dialog.
+        Section(t.expEngineTitle) {
+            val opt = cb.expEngineOptions.firstOrNull { it.code == expEngine }
+            help = t.expEngineTitle to ((opt?.description ?: "") +
+                (if (expEngine != 0) "\n\n" + t.expEngineWarn else ""))
+        }
         ExpEnginePicker(cb.expEngineOptions, expEngine, expExpanded, { expExpanded = it }) { expEngine = it; save() }
-        cb.expEngineOptions.firstOrNull { it.code == expEngine }?.let { opt ->
-            Text(opt.description, color = AppColors.onSurfaceMuted, fontSize = 13.sp)
-        }
-        if (expEngine != 0) {
-            Text(t.expEngineWarn, color = AppColors.red, fontSize = 13.sp)
-        }
         Spacer(Modifier.height(4.dp))
         SwitchRow(t.netLog, netLog) { netLog = it; save() }
         Text(t.netLogSub, color = AppColors.onSurfaceMuted, fontSize = 13.sp)
@@ -572,37 +571,70 @@ private fun fmtMult(m: Float): String {
     return if (r == r.toInt().toFloat()) r.toInt().toString() else r.toString()
 }
 
-/**
- * Logarithmic scan-intensity slider. The underlying value is the check-interval
- * multiplier used by dynamicCheckInterval(): 1.0 = standard, >1 scans rarer
- * (slower), <1 scans more often (faster). The slider is log-scaled over
- * [0.01 .. 100] so "standard" sits dead centre and each end is ×100. A live
- * caption translates the raw multiplier into «стандарт / медленнее ×N / быстрее ×N».
- */
+// Shared log mapping for the intensity / adaptive sliders. The underlying value
+// is the check-interval multiplier used by dynamicCheckInterval(): 1.0 =
+// standard, >1 scans rarer (slower), <1 scans more often (faster). Log-scaled
+// over [0.01 .. 100] so "standard" sits dead centre and each end is ×100.
+private const val SLIDER_MIN_LOG = -2.0
+private const val SLIDER_MAX_LOG = 2.0
+
+private fun multToPos(mult: Float): Float =
+    ((log10(mult.coerceIn(0.01f, 100f).toDouble()) - SLIDER_MIN_LOG) /
+        (SLIDER_MAX_LOG - SLIDER_MIN_LOG)).coerceIn(0.0, 1.0).toFloat()
+
+private fun posToMult(p: Float): Float =
+    10.0.pow(SLIDER_MIN_LOG + p * (SLIDER_MAX_LOG - SLIDER_MIN_LOG)).toFloat()
+
+private fun multCaption(mult: Float, t: Strings): String {
+    val c = mult.coerceIn(0.01f, 100f)
+    return when {
+        c in 0.9f..1.1f -> t.intensStandard
+        c > 1.1f -> t.intensSlower + " ×" + c.roundToInt()
+        else -> t.intensFaster + " ×" + (1f / c).roundToInt()
+    }
+}
+
+/** The log slider + its live caption, sized to fill the rest of a Row. */
+@Composable
+private fun RowScope.MultSlider(mult: Float, onChange: (Float) -> Unit) {
+    val t = LocalStrings.current
+    Slider(
+        value = multToPos(mult),
+        onValueChange = { onChange(posToMult(it)) },
+        modifier = Modifier.weight(1f),
+    )
+    Spacer(Modifier.width(8.dp))
+    Text(
+        multCaption(mult, t),
+        color = AppColors.accent, fontSize = 13.sp, fontWeight = FontWeight.Bold,
+        textAlign = TextAlign.End, maxLines = 1,
+        modifier = Modifier.widthIn(min = 88.dp),
+    )
+}
+
+/** Scan-intensity slider — name, slider and value all on one line. */
 @Composable
 private fun IntensitySlider(label: String, mult: Float, onChange: (Float) -> Unit) {
-    val t = LocalStrings.current
-    val minLog = -2.0; val maxLog = 2.0     // 0.01 .. 100
-    val clamped = mult.coerceIn(0.01f, 100f)
-    val pos = ((log10(clamped.toDouble()) - minLog) / (maxLog - minLog))
-        .coerceIn(0.0, 1.0).toFloat()
-    val caption = when {
-        clamped in 0.9f..1.1f -> t.intensStandard
-        clamped > 1.1f -> t.intensSlower + " ×" + clamped.roundToInt()
-        else -> t.intensFaster + " ×" + (1f / clamped).roundToInt()
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1,
+            modifier = Modifier.width(52.dp))
+        MultSlider(mult.coerceIn(0.01f, 100f), onChange)
     }
-    Column(Modifier.fillMaxWidth()) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(label, fontWeight = FontWeight.Bold, fontSize = 15.sp, modifier = Modifier.weight(1f))
-            Text(caption, color = AppColors.accent, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-        }
-        Slider(
-            value = pos,
-            onValueChange = { p ->
-                val m = 10.0.pow(minLog + p * (maxLog - minLog)).toFloat()
-                onChange(m)
-            },
-        )
+}
+
+/** One adaptive-speed line: a compact threshold field + an acceleration slider. */
+@Composable
+private fun AdaptiveRow(
+    thr: String, onThr: (String) -> Unit, thrLabel: String,
+    mult: Float, onMult: (Float) -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        NumField(thr, onThr, thrLabel, Modifier.width(104.dp))
+        MultSlider(mult.coerceIn(0.01f, 100f), onMult)
     }
 }
 
@@ -832,22 +864,29 @@ private fun AboutPage(cb: MoreCallbacks) {
 
 // === Export =============================================================
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ExportPage(cb: MoreCallbacks) {
     val t = LocalStrings.current
     val links = remember { cb.exportLinks() }
     val allText = remember(links) { links.joinToString("\n") }
+    var savedPath by remember { mutableStateOf<String?>(null) }
     fun copyN(n: Int) { if (links.isNotEmpty()) cb.onCopy(links.take(n).joinToString("\n")) }
     Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(t.aliveLinks(links.size), fontWeight = FontWeight.Bold, fontSize = 16.sp)
 
-        // Copy the first 1 / 10 / 30 / 100 / all links.
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            CountCopyButton("1", links.isNotEmpty(), Modifier.weight(1f)) { copyN(1) }
-            CountCopyButton("10", links.isNotEmpty(), Modifier.weight(1f)) { copyN(10) }
-            CountCopyButton("30", links.isNotEmpty(), Modifier.weight(1f)) { copyN(30) }
-            CountCopyButton("100", links.isNotEmpty(), Modifier.weight(1f)) { copyN(100) }
-            CountCopyButton(t.allShort, links.isNotEmpty(), Modifier.weight(1f)) { copyN(links.size) }
+        // Copy the first 1 / 10 / 30 / 100 / all links — each button spells out
+        // "copy"; they wrap to a second line on narrow screens.
+        FlowRow(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            CountCopyButton("${t.actCopy} 1", links.isNotEmpty()) { copyN(1) }
+            CountCopyButton("${t.actCopy} 10", links.isNotEmpty()) { copyN(10) }
+            CountCopyButton("${t.actCopy} 30", links.isNotEmpty()) { copyN(30) }
+            CountCopyButton("${t.actCopy} 100", links.isNotEmpty()) { copyN(100) }
+            CountCopyButton("${t.actCopy} ${t.allShort}", links.isNotEmpty()) { copyN(links.size) }
         }
 
         // Open / copy a random link from the list.
@@ -870,6 +909,21 @@ private fun ExportPage(cb: MoreCallbacks) {
             }
         }
 
+        // Dump everything to a text file in the user's home / pull-able dir.
+        OutlinedButton(
+            onClick = { savedPath = cb.onExportToFile() },
+            enabled = links.isNotEmpty(), modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(t.exportToFile, fontSize = 14.sp)
+        }
+        savedPath?.let {
+            Text(
+                "${t.exportSaved} $it",
+                color = AppColors.onSurfaceMuted, fontSize = 12.sp,
+                fontFamily = monospaceFontFamily(),
+            )
+        }
+
         // All links in one big selectable/read-only text field.
         OutlinedTextField(
             value = allText,
@@ -882,14 +936,13 @@ private fun ExportPage(cb: MoreCallbacks) {
     }
 }
 
-/** A small fixed-label button that copies a slice of the export list. */
+/** A small button that copies a slice of the export list (label spells "copy N"). */
 @Composable
-private fun CountCopyButton(label: String, enabled: Boolean, modifier: Modifier, onClick: () -> Unit) {
+private fun CountCopyButton(label: String, enabled: Boolean, onClick: () -> Unit) {
     OutlinedButton(
         onClick = onClick,
         enabled = enabled,
-        modifier = modifier,
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 2.dp, vertical = 8.dp),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 8.dp),
     ) {
         Text(label, fontSize = 13.sp, maxLines = 1)
     }

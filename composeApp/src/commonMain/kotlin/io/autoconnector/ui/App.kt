@@ -130,6 +130,7 @@ fun App(engine: Engine) {
             onToggleSource = engine::setSourceEnabled,
             state = state,
             exportLinks = engine::exportAliveLinks,
+            onExportToFile = engine::exportLinksToFile,
             onCopy = engine::copyToClipboard,
             handshakeStats = engine::handshakeStats,
             onResetStats = engine::resetStats,

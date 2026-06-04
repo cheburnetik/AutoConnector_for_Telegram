@@ -96,6 +96,9 @@ class DesktopEngine(private val dataDir: File) : Engine {
         HandshakeStats.init(ctx)
         NetworkMonitor.init(ctx)
         NetLog.init(dataDir)
+        // Desktop ships coalescing/batching as the default proxying engine (the
+        // only stable desktop mode). Android overrides this to OFF.
+        Prefs.SHIPPED_EXP_ENGINE = 4
         Prefs(ctx).applyShippedDefaultsOnce()
         RelayLog.register { session, line -> appendLog(line, LogCat.TELEGRAM, session) }
         loadSettings()
@@ -379,6 +382,21 @@ class DesktopEngine(private val dataDir: File) : Engine {
 
     override fun exportAliveLinks(): List<String> =
         store.topAlive(2000).map { it.tgLink() }
+
+    override fun exportLinksToFile(): String? {
+        val links = exportAliveLinks()
+        if (links.isEmpty()) return null
+        return try {
+            val home = System.getProperty("user.home") ?: dataDir.absolutePath
+            val f = java.io.File(home, "autoconnector_proxies.txt")
+            f.writeText(links.joinToString("\n"))
+            appendLog("⤓ экспортировано ${links.size} ссылок → ${f.absolutePath}")
+            f.absolutePath
+        } catch (e: Throwable) {
+            appendLog("⚠ экспорт в файл не удался: ${e.message}")
+            null
+        }
+    }
 
     override fun refreshNow() {
         scope.launch(Dispatchers.IO) { scanAndCheck() }
@@ -895,6 +913,6 @@ class DesktopEngine(private val dataDir: File) : Engine {
     companion object {
         // Single dotted-semver version line for the desktop build (matches the
         // GitHub release tag vX.Y.Z). Build date is injected at launch — see appInfo().
-        private const val DESKTOP_VERSION = "1.0.14"
+        private const val DESKTOP_VERSION = "1.0.15"
     }
 }

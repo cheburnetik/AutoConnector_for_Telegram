@@ -95,6 +95,10 @@ class AndroidEngine(context: Context) : Engine {
         // Net-log goes to the app's external files dir so the user can pull it
         // with a file manager (falls back to private files dir).
         NetLog.init(ctx.getExternalFilesDir(null) ?: ctx.filesDir)
+        // On Android the native socket path works through the kernel VPN stack,
+        // so the proxying-engine shaping defaults to OFF here (it caused media
+        // stalls / instant "broken proxy" on phones). Desktop keeps coalescing.
+        Prefs.SHIPPED_EXP_ENGINE = 0
         Prefs(ctx).applyShippedDefaultsOnce()
         RelayLog.register { session, line -> appendLog(line, LogCat.TELEGRAM, session) }
         loadSettings()
@@ -344,6 +348,23 @@ class AndroidEngine(context: Context) : Engine {
 
     override fun exportAliveLinks(): List<String> =
         store.topAlive(2000).map { it.tgLink() }
+
+    override fun exportLinksToFile(): String? {
+        val links = exportAliveLinks()
+        if (links.isEmpty()) return null
+        return try {
+            // App's external files dir is pull-able with a file manager and needs
+            // no runtime permission — the same place the diagnostic net-log lives.
+            val dir = ctx.getExternalFilesDir(null) ?: ctx.filesDir
+            val f = java.io.File(dir, "autoconnector_proxies.txt")
+            f.writeText(links.joinToString("\n"))
+            appendLog("⤓ экспортировано ${links.size} ссылок → ${f.absolutePath}")
+            f.absolutePath
+        } catch (e: Throwable) {
+            appendLog("⚠ экспорт в файл не удался: ${e.message}")
+            null
+        }
+    }
 
     override fun refreshNow() {
         scope.launch(Dispatchers.IO) { scanAndCheck() }
