@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -18,6 +19,7 @@ import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -179,44 +181,66 @@ fun CatalogDetailPage(
                 Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()).padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                DetailRow(Icons.Filled.CheckCircle, t.statusLabel, if (p.alive) t.live else t.deadW, if (p.alive) AppColors.green else AppColors.red)
-                DetailRow(Icons.Filled.Bolt, t.rating, "${p.rating} / 9")
-                DetailRow(Icons.Filled.Dns, t.type, p.typeLabel)
-                DetailRow(Icons.Filled.Numbers, t.port, "${p.port}")
-                DetailRow(Icons.Filled.Speed, t.rttPing, if (p.rttMs >= 0) "${p.rttMs} ${t.unitMs}" else t.dash)
-                DetailRow(ICON_CHECKED, t.checkedField, if (p.checkedMinsAgo >= 0) t.agoFmt(fmtMins(p.checkedMinsAgo, t)) else t.dash)
-                DetailRow(ICON_CHECKS, t.okOfTotal, "${p.successes} / ${p.successes + p.failures}")
-                DetailRow(ICON_TG, t.tgConnectedField, if (p.tgConnectMinsAgo >= 0) t.agoFmt(fmtMins(p.tgConnectMinsAgo, t)) else t.dash)
-                DetailRow(Icons.Filled.Send, t.tgSessions, "${p.tgConnections}")
-                DetailRow(ICON_TRAFFIC, t.trafficThroughProxy, p.bytesRelayedHuman)
-                DetailRow(Icons.Filled.Schedule, t.sessionsTotal, p.sessionTotalHuman)
-                DetailRow(Icons.Filled.Bolt, t.relayNow, if (p.live) t.yes else t.no, if (p.live) AppColors.green else AppColors.onSurfaceMuted)
-                p.secret?.let { DetailRow(Icons.Filled.Lock, t.secret, if (it.length > 26) it.substring(0, 25) + "…" else it, mono = true) }
-                p.tlsDomain?.let { DetailRow(Icons.Filled.Shield, t.tlsDomain, it, mono = true) }
-                p.sourceNum?.let { DetailRow(Icons.Filled.Storage, t.sourceSub, "#$it") }
-                p.lastErrorShort?.let { DetailRow(Icons.Filled.CheckCircle, t.lastError, it, AppColors.red) }
-
-                Spacer(Modifier.height(16.dp))
-
-                Button(
-                    onClick = onCopy,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(containerColor = AppColors.accent, contentColor = Color.White),
-                ) {
-                    Icon(Icons.Filled.ContentCopy, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(t.copyAsLink)
+                // Compact one-line actions: copy / open / make-relay.
+                Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    CompactAction(Icons.Filled.ContentCopy, t.actCopy, Modifier.weight(1f), onCopy)
+                    CompactAction(Icons.AutoMirrored.Filled.OpenInNew, t.actOpen, Modifier.weight(1f), onOpen)
+                    CompactAction(Icons.Filled.PushPin, t.actRelay, Modifier.weight(1f), onMakeRelay)
                 }
-                Spacer(Modifier.height(8.dp))
-                OutlinedButton(onClick = onOpen, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.AutoMirrored.Filled.OpenInNew, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(t.openInTelegram)
-                }
-                Spacer(Modifier.height(8.dp))
-                OutlinedButton(onClick = onMakeRelay, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.Filled.PushPin, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(t.makeNextRelay)
+
+                // All fields are selectable text (long-press / drag to copy any of
+                // them). Host:port and the secret sit on top as full, untruncated
+                // copyable values.
+                SelectionContainer {
+                    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        CopyField(t.host, "${p.host}:${p.port}")
+                        p.secret?.let { CopyField(t.secret, it) }
+                        p.tlsDomain?.let { CopyField(t.tlsDomain, it) }
+
+                        DetailRow(Icons.Filled.CheckCircle, t.statusLabel, if (p.alive) t.live else t.deadW, if (p.alive) AppColors.green else AppColors.red)
+                        DetailRow(Icons.Filled.Bolt, t.rating, "${p.rating} / 9")
+                        DetailRow(Icons.Filled.Dns, t.type, p.typeLabel)
+                        DetailRow(Icons.Filled.Speed, t.rttPing, if (p.rttMs >= 0) "${p.rttMs} ${t.unitMs}" else t.dash)
+                        DetailRow(ICON_CHECKED, t.checkedField, if (p.checkedMinsAgo >= 0) t.agoFmt(fmtMins(p.checkedMinsAgo, t)) else t.dash)
+                        DetailRow(ICON_CHECKS, t.okOfTotal, "${p.successes} / ${p.successes + p.failures}")
+                        DetailRow(ICON_TG, t.tgConnectedField, if (p.tgConnectMinsAgo >= 0) t.agoFmt(fmtMins(p.tgConnectMinsAgo, t)) else t.dash)
+                        DetailRow(Icons.Filled.Send, t.tgSessions, "${p.tgConnections}")
+                        DetailRow(ICON_TRAFFIC, t.trafficThroughProxy, p.bytesRelayedHuman)
+                        DetailRow(Icons.Filled.Schedule, t.sessionsTotal, p.sessionTotalHuman)
+                        DetailRow(Icons.Filled.Bolt, t.relayNow, if (p.live) t.yes else t.no, if (p.live) AppColors.green else AppColors.onSurfaceMuted)
+                        p.sourceNum?.let { DetailRow(Icons.Filled.Storage, t.sourceSub, "#$it") }
+                        p.lastErrorShort?.let { DetailRow(Icons.Filled.CheckCircle, t.lastError, it, AppColors.red) }
+                    }
                 }
                 Spacer(Modifier.height(16.dp))
             }
         }
     }
+}
+
+/** A compact icon+label action button for the one-line action row. */
+@Composable
+private fun CompactAction(icon: ImageVector, label: String, modifier: Modifier, onClick: () -> Unit) {
+    OutlinedButton(
+        onClick = onClick,
+        modifier = modifier,
+        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp),
+    ) {
+        Icon(icon, null, Modifier.size(16.dp))
+        Spacer(Modifier.width(4.dp))
+        Text(label, fontSize = 13.sp, maxLines = 1)
+    }
+}
+
+/** A full, untruncated, selectable label/value field (wrap freely so the whole
+ *  value can be selected and copied). Lives inside a SelectionContainer. */
+@Composable
+private fun CopyField(label: String, value: String) {
+    Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+        Text(label, color = AppColors.onSurfaceMuted, fontSize = 13.sp)
+        Text(value, color = AppColors.onSurface, fontWeight = FontWeight.Bold, fontSize = 14.sp, fontFamily = monospaceFontFamily())
+    }
+    Box(Modifier.fillMaxWidth().height(1.dp).background(AppColors.cardBorder))
 }
 
 @Composable

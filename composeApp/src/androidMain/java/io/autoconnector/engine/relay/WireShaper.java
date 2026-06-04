@@ -80,7 +80,68 @@ public final class WireShaper {
         /** No userspace delay — just TCP_NODELAY off; let the kernel (Nagle) coalesce. */
         NAGLE_ONLY(7, "nagle", "Только Nagle (ядро)",
                 "Без искусственной задержки: только TCP_NODELAY выкл — ядро само склеивает "
-                + "мелкие записи (Nagle). Самый лёгкий по скорости; проверить, хватает ли его маскировки.");
+                + "мелкие записи (Nagle). Самый лёгкий по скорости; проверить, хватает ли его маскировки."),
+
+        // --- New coalescing engines: media-friendly, TCP_NODELAY ON ---------------
+        // The older coalescing modes (4–6) keep Nagle ON, so the kernel holds the
+        // batch a SECOND time on top of the userspace buffer — two buffers stacked,
+        // which is exactly what strangled media. These force TCP_NODELAY ON:
+        // userspace alone decides batching, and a flush always hits the wire at once.
+
+        /** Smart media engine: batch small MTProto control packets at the start to
+         *  keep the bulk-TLS look, pass large writes straight through, and LATCH to
+         *  full passthrough after the opening window / first big burst. */
+        COALESCE_TURBO(8, "coalesce_turbo", "Коалесинг турбо (медиа)",
+                "Лучший для медиа. В начале прячет мелко-пакетную сигнатуру (батчит "
+                + "записи <512 Б, задержка ~3 мс, TCP_NODELAY ВКЛ), крупные пропускает сразу. "
+                + "После ~256 КБ или первой большой порции защёлкивается в полный проброс — "
+                + "медиа идёт на полной скорости, а старт всё равно выглядит как bulk-TLS."),
+
+        /** Lightest masking: batch only tiny control packets, everything else goes
+         *  immediately. TCP_NODELAY ON so a flush is never double-buffered. */
+        COALESCE_LIGHT(9, "coalesce_light", "Коалесинг мягкий",
+                "Минимум маскировки, максимум скорости: батчит только крошечные управляющие "
+                + "пакеты (<256 Б, ~2 мс), всё крупнее шлёт сразу. TCP_NODELAY ВКЛ. "
+                + "Если «турбо» быстр, но рвётся связь на больших файлах — попробуйте этот."),
+
+        /** Pure bulk-batching like classic coalescing, but TCP_NODELAY ON so the
+         *  kernel doesn't stack a second Nagle delay on top of the userspace buffer. */
+        COALESCE_NODELAY(10, "coalesce_nd", "Коалесинг без Nagle",
+                "Как обычный коалесинг (батчит всё до ~1400 Б / ~8 мс под bulk-загрузку), "
+                + "но TCP_NODELAY ВКЛ — ядро не добавляет вторую задержку поверх буфера. "
+                + "Маскировка как у обычного, но без двойной буферизации, которая душила медиа."),
+
+        // --- Time-released coalescing + GoodbyeDPI-style first-packet split -------
+        // Why time-based: byte-latched modes (turbo/warmup) only go transparent
+        // after enough bytes are SENT upstream. A media DOWNLOAD sends almost
+        // nothing upstream (just tiny ACK/request packets), so the latch never
+        // trips and those ACKs stay delayed — which throttles the download to a
+        // crawl. A wall-clock release fires regardless of direction, so it covers
+        // the DPI's start-of-flow classification window and then frees media.
+
+        /** Coalesce small writes only for the first ~1.5 s of the connection, then
+         *  go fully transparent — fixes media DOWNLOADS that byte-latched modes
+         *  can't (a download sends too little upstream to ever trip a byte latch). */
+        COALESCE_TIME(11, "coalesce_time", "Коалесинг старта по времени",
+                "Прячет мелко-пакетную сигнатуру первые ~1.5 с соединения (батчит записи "
+                + "<512 Б, крупные — сразу), потом полностью прозрачно. В отличие от «турбо/старта», "
+                + "release по ВРЕМЕНИ, а не по объёму — поэтому разблокирует и СКАЧИВАНИЕ медиа "
+                + "(при загрузке вверх уходит мало байт, и счётчик защёлки не срабатывал)."),
+
+        /** GoodbyeDPI's signature move (-e 2 --native-frag): split only the very
+         *  first outbound payload into a tiny first TCP segment + the rest, then
+         *  pass through. TCP_NODELAY ON so each flush is its own real segment. */
+        GBDPI_SPLIT(12, "gbdpi_split", "GoodbyeDPI: сплит первого пакета",
+                "Идея из GoodbyeDPI (-e 2): самый первый исходящий пакет режется на крошечный "
+                + "первый TCP-сегмент (≈2 Б) + остаток — так маркер/сигнатура не лежит целиком в "
+                + "одном сегменте. Дальше поток без изменений (TCP_NODELAY ВКЛ). Лёгкий, не душит медиа."),
+
+        /** GoodbyeDPI first-packet split AND a time-released coalescing window —
+         *  handshake desync (GoodbyeDPI) + bulk-look that frees media after ~1.5 s. */
+        GBDPI_SPLIT_TIME(13, "gbdpi_split_time", "GoodbyeDPI сплит + коалесинг по времени",
+                "Комбо: режет первый пакет по-GoodbyeDPI И первые ~1.5 с маскирует обмен под "
+                + "bulk-загрузку, затем полный проброс. Лучший шанс пройти DPI на старте и не "
+                + "задушить медиа после. Пробуйте, если «турбо» держит связь, но медиа не грузится.");
 
         public final int code;
         public final String key;
@@ -119,6 +180,15 @@ public final class WireShaper {
                 case COALESCE_WARMUP:
                 case NAGLE_ONLY:
                     nagle = true; break;
+                // New coalescing engines own their batching in userspace and want
+                // TCP_NODELAY ON so a flush isn't held a second time by the kernel.
+                case COALESCE_TURBO:
+                case COALESCE_LIGHT:
+                case COALESCE_NODELAY:
+                case COALESCE_TIME:
+                case GBDPI_SPLIT:
+                case GBDPI_SPLIT_TIME:
+                    nagle = false; break;
                 default:
                     nagle = false; break;
             }
@@ -147,6 +217,28 @@ public final class WireShaper {
             case COALESCE_WARMUP:
                 // Coalesce the first 128 KB like COALESCE_DELAY, then passthrough.
                 return new WarmupCoalescing(raw, 128 * 1024, 1400, 12);
+            case COALESCE_TURBO:
+                // small (<512B) batch to 8 KB / 3 ms, large pass straight through,
+                // then LATCH to full passthrough after 256 KB or a 16 KB burst.
+                return new TurboCoalescing(raw, 512, 8192, 3, 256 * 1024, 16 * 1024);
+            case COALESCE_LIGHT:
+                // Only tiny (<256 B) control packets batched (4 KB / 2 ms cap);
+                // anything larger passes through. Paired with TCP_NODELAY ON.
+                return new AdaptiveCoalescing(raw, 256, 4096, 2);
+            case COALESCE_NODELAY:
+                // Classic bulk batching (1400 B / 8 ms) but with TCP_NODELAY ON.
+                return new Coalescing(raw, 1400, 8);
+            case COALESCE_TIME:
+                // Coalesce small (<512B) writes for the first 1500 ms, then transparent.
+                return new TimeCoalescing(raw, 1500, 512, 8192, 4);
+            case GBDPI_SPLIT:
+                // GoodbyeDPI -e 2: split the first payload at 2 bytes, then passthrough.
+                return new FirstSplit(raw, 2);
+            case GBDPI_SPLIT_TIME:
+                // GoodbyeDPI first-packet split (innermost, nearest the socket) under a
+                // 1500 ms coalescing window (outer). The coalescer's first flush is what
+                // the splitter cuts, so the split survives the batching.
+                return new TimeCoalescing(new FirstSplit(raw, 2), 1500, 512, 8192, 4);
             case NAGLE_ONLY:
                 // No userspace shaping; the kernel coalesces via Nagle (nodelay off).
                 return raw;
@@ -442,6 +534,217 @@ public final class WireShaper {
                 if (len >= threshold) send();
             }
             if (written >= warmupBytes) { send(); warm = true; }
+        }
+
+        private void send() throws IOException {
+            if (len == 0) return;
+            d.write(buf, 0, len);
+            d.flush();
+            len = 0;
+        }
+
+        @Override public synchronized void flush() throws IOException {
+            if (warm) { d.flush(); return; }
+            if (len > 0 && System.currentTimeMillis() - firstAt >= maxDelayMs) send();
+        }
+
+        @Override public synchronized void close() throws IOException {
+            try { send(); } finally { d.close(); }
+        }
+    }
+
+    /**
+     * The media-first coalescing engine. While "cold" it behaves like
+     * {@link AdaptiveCoalescing}: small writes are batched (hiding the small-packet
+     * MTProto cadence behind a bulk-TLS look) and large writes pass straight
+     * through. Once the connection has pushed {@code latchBytes} total <em>or</em>
+     * emitted a single write ≥ {@code burstLatch}, it LATCHES into pure passthrough
+     * for the rest of its life — no buffering, no delay. The opening-window bet is
+     * the same as {@link WarmupCoalescing} (DPI fingerprints a flow at its start),
+     * but the latch also trips on the first real media burst, so big transfers are
+     * never throttled. TCP_NODELAY is ON for this mode, so every flush hits the
+     * wire immediately instead of being held again by the kernel.
+     */
+    private static final class TurboCoalescing extends OutputStream {
+        private final OutputStream d;
+        private final int smallThreshold;   // writes >= this bypass the buffer
+        private final int batchThreshold;   // flush the small-buffer at this fill
+        private final long maxDelayMs;
+        private final long latchBytes;      // total bytes after which we go transparent
+        private final int burstLatch;       // a single write this big latches too
+        private final byte[] buf;
+        private int len;
+        private long firstAt;
+        private long written;
+        private boolean latched;
+
+        TurboCoalescing(OutputStream d, int smallThreshold, int batchThreshold,
+                        long maxDelayMs, long latchBytes, int burstLatch) {
+            this.d = d;
+            this.smallThreshold = Math.max(1, smallThreshold);
+            this.batchThreshold = Math.max(this.smallThreshold, batchThreshold);
+            this.maxDelayMs = Math.max(1, maxDelayMs);
+            this.latchBytes = Math.max(1, latchBytes);
+            this.burstLatch = Math.max(1, burstLatch);
+            this.buf = new byte[this.batchThreshold + 1024];
+        }
+
+        @Override public synchronized void write(int b) throws IOException {
+            write(new byte[]{(byte) b}, 0, 1);
+        }
+
+        @Override public synchronized void write(byte[] b, int off, int n) throws IOException {
+            written += n;
+            if (latched) { d.write(b, off, n); d.flush(); return; }
+            // First big burst (or enough total bytes) → go transparent from here on.
+            if (n >= burstLatch || written >= latchBytes) {
+                send();                       // drain pending small bytes in order
+                d.write(b, off, n);
+                d.flush();
+                latched = true;
+                return;
+            }
+            if (n >= smallThreshold) {        // large-ish but pre-latch: pass through
+                send();
+                d.write(b, off, n);
+                d.flush();
+                return;
+            }
+            int p = off, end = off + n;       // small control packet: batch it
+            while (p < end) {
+                int room = buf.length - len;
+                if (room == 0) { send(); room = buf.length; }
+                int take = Math.min(room, end - p);
+                System.arraycopy(b, p, buf, len, take);
+                if (len == 0) firstAt = System.currentTimeMillis();
+                len += take;
+                p += take;
+                if (len >= batchThreshold) send();
+            }
+        }
+
+        private void send() throws IOException {
+            if (len == 0) return;
+            d.write(buf, 0, len);
+            d.flush();
+            len = 0;
+        }
+
+        @Override public synchronized void flush() throws IOException {
+            if (latched) { d.flush(); return; }
+            if (len > 0 && System.currentTimeMillis() - firstAt >= maxDelayMs) send();
+        }
+
+        @Override public synchronized void close() throws IOException {
+            try { send(); } finally { d.close(); }
+        }
+    }
+
+    /**
+     * GoodbyeDPI's first-packet TCP fragmentation ({@code -e <n>} / {@code
+     * --native-frag}), faithful to the userspace-doable subset: the very FIRST
+     * outbound payload is cut into a tiny first segment of {@code splitAt} bytes
+     * and the remainder, each flushed separately so (with TCP_NODELAY on) they
+     * become two distinct TCP segments. The forbidden marker therefore never sits
+     * contiguously in the first segment a non-reassembling DPI inspects. Every
+     * subsequent write passes straight through — throughput is untouched, so this
+     * does not strangle media. The fake-packet/low-TTL/wrong-seq tricks GoodbyeDPI
+     * also uses are NOT possible from a pure-Java connected socket and are omitted.
+     */
+    private static final class FirstSplit extends OutputStream {
+        private final OutputStream d;
+        private final int splitAt;
+        private boolean done;
+
+        FirstSplit(OutputStream d, int splitAt) {
+            this.d = d;
+            this.splitAt = Math.max(1, splitAt);
+        }
+
+        @Override public synchronized void write(int b) throws IOException {
+            d.write(b); d.flush(); done = true;   // a 1-byte write is already "split"
+        }
+
+        @Override public synchronized void write(byte[] b, int off, int len) throws IOException {
+            if (done || len <= splitAt) {
+                d.write(b, off, len);
+                d.flush();
+                done = true;
+                return;
+            }
+            d.write(b, off, splitAt);              // segment #1: tiny head
+            d.flush();
+            d.write(b, off + splitAt, len - splitAt); // segment #2: the rest
+            d.flush();
+            done = true;
+        }
+
+        @Override public void flush() throws IOException { d.flush(); }
+        @Override public void close() throws IOException { d.close(); }
+    }
+
+    /**
+     * Coalesces SMALL writes (hiding the small-packet MTProto cadence behind a
+     * bulk-TLS look) only for the first {@code warmupMs} wall-clock milliseconds
+     * of the connection, then switches to pure passthrough forever. Large writes
+     * always pass straight through even during the window.
+     *
+     * <p>Unlike {@link WarmupCoalescing} / {@link TurboCoalescing}, the release is
+     * driven by ELAPSED TIME, not bytes sent. That matters for media DOWNLOADS:
+     * the upstream direction carries only tiny ACK/request packets, so a byte
+     * latch never trips and those ACKs stay coalesced — throttling the download.
+     * A time latch always fires, covering the DPI's start-of-flow classification
+     * window and then letting ACKs (and uploads) flow immediately. TCP_NODELAY is
+     * on for this mode so a flushed batch egresses at once.
+     */
+    private static final class TimeCoalescing extends OutputStream {
+        private final OutputStream d;
+        private final long warmupMs;
+        private final int smallThreshold;
+        private final int batchThreshold;
+        private final long maxDelayMs;
+        private final byte[] buf;
+        private int len;
+        private long firstAt;
+        private long startAt;      // 0 until the first write
+        private boolean warm;
+
+        TimeCoalescing(OutputStream d, long warmupMs, int smallThreshold,
+                       int batchThreshold, long maxDelayMs) {
+            this.d = d;
+            this.warmupMs = Math.max(1, warmupMs);
+            this.smallThreshold = Math.max(1, smallThreshold);
+            this.batchThreshold = Math.max(this.smallThreshold, batchThreshold);
+            this.maxDelayMs = Math.max(1, maxDelayMs);
+            this.buf = new byte[this.batchThreshold + 1024];
+        }
+
+        @Override public synchronized void write(int b) throws IOException {
+            write(new byte[]{(byte) b}, 0, 1);
+        }
+
+        @Override public synchronized void write(byte[] b, int off, int n) throws IOException {
+            long now = System.currentTimeMillis();
+            if (startAt == 0) startAt = now;
+            if (!warm && now - startAt >= warmupMs) { send(); warm = true; }
+            if (warm) { d.write(b, off, n); d.flush(); return; }
+            if (n >= smallThreshold) {             // large write passes immediately
+                send();
+                d.write(b, off, n);
+                d.flush();
+                return;
+            }
+            int p = off, end = off + n;            // small write: batch it
+            while (p < end) {
+                int room = buf.length - len;
+                if (room == 0) { send(); room = buf.length; }
+                int take = Math.min(room, end - p);
+                System.arraycopy(b, p, buf, len, take);
+                if (len == 0) firstAt = now;
+                len += take;
+                p += take;
+                if (len >= batchThreshold) send();
+            }
         }
 
         private void send() throws IOException {

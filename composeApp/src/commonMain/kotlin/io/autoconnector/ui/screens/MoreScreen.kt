@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -33,6 +34,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -57,6 +59,9 @@ import io.autoconnector.engine.HandshakeOption
 import io.autoconnector.engine.HandshakeStatRow
 import io.autoconnector.engine.SourceItem
 import io.autoconnector.i18n.LocalStrings
+import kotlin.math.log10
+import kotlin.math.pow
+import kotlin.math.roundToInt
 import io.autoconnector.i18n.Strings
 import io.autoconnector.ui.components.CardBox
 import io.autoconnector.ui.components.Caption
@@ -93,6 +98,8 @@ class MoreCallbacks(
     val onCopy: (String) -> Unit,
     val handshakeStats: () -> List<HandshakeStatRow>,
     val onResetStats: () -> Unit,
+    val onResetCatalogStats: () -> Unit,
+    val onClearHosts: () -> Unit,
     val appInfo: AppInfo,
     val onOpenUrl: (String) -> Unit,
 )
@@ -125,6 +132,82 @@ fun MoreFullPage(dest: MoreDest, cb: MoreCallbacks, onBack: () -> Unit) {
                 MoreDest.EXPORT -> ExportPage(cb)
                 MoreDest.ABOUT -> AboutPage(cb)
             }
+        }
+    }
+}
+
+/**
+ * Full-screen "quick switch" page reachable from a small button on the
+ * Connector tab. Three single-choice lists, in the order the user asked for:
+ * proxying-engine shaping, connect engine, anti-DPI. Picking any item applies
+ * that one setting immediately and closes the page (via [onBack]).
+ */
+@Composable
+fun QuickSettingsPage(cb: MoreCallbacks, onBack: () -> Unit) {
+    val t = LocalStrings.current
+    val s = cb.settings
+    androidx.compose.material3.Surface(Modifier.fillMaxSize(), color = AppColors.background) {
+        Column(Modifier.fillMaxSize()) {
+            TopBar(t.quickSwitchTitle, onBack)
+            Column(
+                Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                // 1) Дробление проксирования — socket wire shaping.
+                SubTitle(t.expEngineTitle)
+                cb.expEngineOptions.forEach { opt ->
+                    QuickChoice(opt.label, opt.description, s.expEngineMode == opt.code) {
+                        cb.onUpdateSettings(s.copy(expEngineMode = opt.code)); onBack()
+                    }
+                }
+
+                Spacer(Modifier.height(10.dp))
+
+                // 2) Движок коннекта — how the relay finds a working upstream.
+                SubTitle(t.expConnectTitle)
+                cb.connectEngineOptions.forEach { opt ->
+                    QuickChoice(opt.label, opt.description, s.relayConnectMode == opt.code) {
+                        cb.onUpdateSettings(s.copy(relayConnectMode = opt.code)); onBack()
+                    }
+                }
+
+                Spacer(Modifier.height(10.dp))
+
+                // 3) Анти-DPI — handshake trick (AUTO/NONE entries are special).
+                SubTitle(t.antiDpiTrick)
+                var seenSpecial = 0
+                cb.handshakeOptions.forEach { opt ->
+                    val label = when {
+                        opt.special && seenSpecial++ == 0 -> t.dpiAutoLabel
+                        opt.special -> t.dpiNoneLabel
+                        else -> opt.label
+                    }
+                    QuickChoice(label, "", s.handshakeMode == opt.ordinal) {
+                        cb.onUpdateSettings(s.copy(handshakeMode = opt.ordinal)); onBack()
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun QuickChoice(title: String, desc: String, selected: Boolean, onSelect: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onSelect).padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Checkbox(checked = selected, onCheckedChange = { onSelect() })
+        Spacer(Modifier.width(4.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                title,
+                fontSize = 16.sp,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                color = if (selected) AppColors.accent else AppColors.onSurface,
+            )
+            if (desc.isNotEmpty()) Text(desc, color = AppColors.onSurfaceMuted, fontSize = 13.sp)
         }
     }
 }
@@ -294,11 +377,9 @@ private fun SettingsPage(cb: MoreCallbacks) {
         }
 
         Section(t.speedByNet) { help = t.speedByNet to t.speedByNetHelp }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            NumField(spVpn, { spVpn = it }, "VPN", Modifier.weight(1f), decimal = true)
-            NumField(spWifi, { spWifi = it }, "Wi-Fi", Modifier.weight(1f), decimal = true)
-            NumField(spLte, { spLte = it }, "LTE", Modifier.weight(1f), decimal = true)
-        }
+        IntensitySlider("VPN", spVpn.toFloatOrNull() ?: 1f) { spVpn = fmtMult(it); save() }
+        IntensitySlider("Wi-Fi", spWifi.toFloatOrNull() ?: 1f) { spWifi = fmtMult(it); save() }
+        IntensitySlider("LTE", spLte.toFloatOrNull() ?: 1f) { spLte = fmtMult(it); save() }
 
         Section(t.adaptiveSpeed) { help = t.adaptiveSpeed to t.adaptiveHelp }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -354,6 +435,35 @@ private fun SettingsPage(cb: MoreCallbacks) {
                 }
                 OutlinedButton(onClick = { cb.onCopy(cb.netLogPath) }) { Text(t.copyPath, fontSize = 14.sp) }
             }
+        }
+
+        // --- Reset / maintenance ----------------------------------------
+        Section(t.maintenance) { help = t.maintenance to t.maintenanceHelp }
+        var confirmCatalog by remember { mutableStateOf(false) }
+        var confirmHosts by remember { mutableStateOf(false) }
+        OutlinedButton(onClick = { confirmCatalog = true }, modifier = Modifier.fillMaxWidth()) {
+            Text(t.resetCatalog, fontSize = 15.sp)
+        }
+        OutlinedButton(onClick = { confirmHosts = true }, modifier = Modifier.fillMaxWidth()) {
+            Text(t.clearHosts, fontSize = 15.sp, color = AppColors.red)
+        }
+        if (confirmCatalog) {
+            AlertDialog(
+                onDismissRequest = { confirmCatalog = false },
+                confirmButton = { TextButton({ cb.onResetCatalogStats(); confirmCatalog = false }) { Text(t.doReset) } },
+                dismissButton = { TextButton({ confirmCatalog = false }) { Text(t.doCancel) } },
+                title = { Text(t.resetCatalog, fontWeight = FontWeight.Bold) },
+                text = { Text(t.resetCatalogConfirm, fontSize = 15.sp) },
+            )
+        }
+        if (confirmHosts) {
+            AlertDialog(
+                onDismissRequest = { confirmHosts = false },
+                confirmButton = { TextButton({ cb.onClearHosts(); confirmHosts = false }) { Text(t.doReset) } },
+                dismissButton = { TextButton({ confirmHosts = false }) { Text(t.doCancel) } },
+                title = { Text(t.clearHosts, fontWeight = FontWeight.Bold) },
+                text = { Text(t.clearHostsConfirm, fontSize = 15.sp) },
+            )
         }
 
         Text(t.autosaved, color = AppColors.onSurfaceMuted, fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
@@ -453,6 +563,46 @@ private fun Section(title: String, onHelp: (() -> Unit)? = null) {
                 Icon(Icons.AutoMirrored.Filled.HelpOutline, LocalStrings.current.whatIsThis, tint = AppColors.accent, modifier = Modifier.size(20.dp))
             }
         }
+    }
+}
+
+/** Formats a scan-speed multiplier compactly: integers without a trailing ".0". */
+private fun fmtMult(m: Float): String {
+    val r = (m * 100f).roundToInt() / 100f
+    return if (r == r.toInt().toFloat()) r.toInt().toString() else r.toString()
+}
+
+/**
+ * Logarithmic scan-intensity slider. The underlying value is the check-interval
+ * multiplier used by dynamicCheckInterval(): 1.0 = standard, >1 scans rarer
+ * (slower), <1 scans more often (faster). The slider is log-scaled over
+ * [0.01 .. 100] so "standard" sits dead centre and each end is ×100. A live
+ * caption translates the raw multiplier into «стандарт / медленнее ×N / быстрее ×N».
+ */
+@Composable
+private fun IntensitySlider(label: String, mult: Float, onChange: (Float) -> Unit) {
+    val t = LocalStrings.current
+    val minLog = -2.0; val maxLog = 2.0     // 0.01 .. 100
+    val clamped = mult.coerceIn(0.01f, 100f)
+    val pos = ((log10(clamped.toDouble()) - minLog) / (maxLog - minLog))
+        .coerceIn(0.0, 1.0).toFloat()
+    val caption = when {
+        clamped in 0.9f..1.1f -> t.intensStandard
+        clamped > 1.1f -> t.intensSlower + " ×" + clamped.roundToInt()
+        else -> t.intensFaster + " ×" + (1f / clamped).roundToInt()
+    }
+    Column(Modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(label, fontWeight = FontWeight.Bold, fontSize = 15.sp, modifier = Modifier.weight(1f))
+            Text(caption, color = AppColors.accent, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        }
+        Slider(
+            value = pos,
+            onValueChange = { p ->
+                val m = 10.0.pow(minLog + p * (maxLog - minLog)).toFloat()
+                onChange(m)
+            },
+        )
     }
 }
 
@@ -686,21 +836,61 @@ private fun AboutPage(cb: MoreCallbacks) {
 private fun ExportPage(cb: MoreCallbacks) {
     val t = LocalStrings.current
     val links = remember { cb.exportLinks() }
+    val allText = remember(links) { links.joinToString("\n") }
+    fun copyN(n: Int) { if (links.isNotEmpty()) cb.onCopy(links.take(n).joinToString("\n")) }
     Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(t.aliveLinks(links.size), fontWeight = FontWeight.Bold, fontSize = 16.sp)
-        Button(
-            onClick = { cb.onCopy(links.joinToString("\n")) },
-            modifier = Modifier.fillMaxWidth(),
-            enabled = links.isNotEmpty(),
-        ) { Text(t.copyAll, fontSize = 16.sp) }
-        Column(
-            Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            for (l in links) {
-                Text(l, fontFamily = monospaceFontFamily(), fontSize = 14.sp, maxLines = 1)
-            }
-            Spacer(Modifier.height(8.dp))
+
+        // Copy the first 1 / 10 / 30 / 100 / all links.
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            CountCopyButton("1", links.isNotEmpty(), Modifier.weight(1f)) { copyN(1) }
+            CountCopyButton("10", links.isNotEmpty(), Modifier.weight(1f)) { copyN(10) }
+            CountCopyButton("30", links.isNotEmpty(), Modifier.weight(1f)) { copyN(30) }
+            CountCopyButton("100", links.isNotEmpty(), Modifier.weight(1f)) { copyN(100) }
+            CountCopyButton(t.allShort, links.isNotEmpty(), Modifier.weight(1f)) { copyN(links.size) }
         }
+
+        // Open / copy a random link from the list.
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(
+                onClick = { if (links.isNotEmpty()) cb.onOpenUrl(links.random()) },
+                enabled = links.isNotEmpty(), modifier = Modifier.weight(1f),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 8.dp),
+            ) {
+                Icon(Icons.Filled.OpenInNew, null, Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp)); Text(t.openRandom, fontSize = 13.sp, maxLines = 1)
+            }
+            OutlinedButton(
+                onClick = { if (links.isNotEmpty()) cb.onCopy(links.random()) },
+                enabled = links.isNotEmpty(), modifier = Modifier.weight(1f),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 8.dp),
+            ) {
+                Icon(Icons.Filled.ContentCopy, null, Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp)); Text(t.copyRandom, fontSize = 13.sp, maxLines = 1)
+            }
+        }
+
+        // All links in one big selectable/read-only text field.
+        OutlinedTextField(
+            value = allText,
+            onValueChange = {},
+            readOnly = true,
+            modifier = Modifier.fillMaxWidth().weight(1f),
+            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp, fontFamily = monospaceFontFamily()),
+            label = { Text(t.aliveLinks(links.size), fontSize = 13.sp) },
+        )
+    }
+}
+
+/** A small fixed-label button that copies a slice of the export list. */
+@Composable
+private fun CountCopyButton(label: String, enabled: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    OutlinedButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier,
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 2.dp, vertical = 8.dp),
+    ) {
+        Text(label, fontSize = 13.sp, maxLines = 1)
     }
 }

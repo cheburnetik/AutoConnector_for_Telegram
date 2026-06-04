@@ -268,6 +268,14 @@ interface Engine {
     fun handshakeStats(): List<HandshakeStatRow>
     fun resetStats()
 
+    /** Resets the working catalog + all statistics, keeping downloaded hosts and
+     *  subscriptions (everything gets re-rated on the next scan). */
+    fun resetCatalogStats()
+
+    /** Forgets the whole downloaded-host pool but keeps subscriptions, so the
+     *  next scan re-fills the pool from them. */
+    fun clearDownloadedHosts()
+
     /** App version + build date for the About page. */
     fun appInfo(): AppInfo
 

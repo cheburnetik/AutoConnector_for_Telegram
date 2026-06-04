@@ -67,6 +67,7 @@ object En : Strings {
     override val sessionsTotal = "Sessions total"; override val relayNow = "Relay now"; override val tlsDomain = "TLS domain (SNI)"
     override val sourceSub = "Source (subscription)"; override val lastError = "Last error"; override val yes = "yes"; override val no = "no"
     override val copyAsLink = "Copy as link"; override val openInTelegram = "Open host in Telegram"; override val makeNextRelay = "Make next relay"
+    override val actCopy = "Copy"; override val actOpen = "Open"; override val actRelay = "Relay"
     override fun agoFmt(v: String) = "$v ago"
     override val live = "live"; override val deadW = "dead"; override val unitMs = "ms"
     override val agoMin = "m"; override val agoHour = "h"; override val agoDay = "d"
@@ -140,10 +141,27 @@ object En : Strings {
         "how many proxies to check per run.\n• Parallel — how many checks to run at once (more = " +
         "faster, but higher network and battery load)."
     override val scanMin = "Scan, min"; override val checkMin = "Check, min"; override val batchSize = "Batch size"; override val parallel = "Parallel"
-    override val speedByNet = "Speed by network"
-    override val speedByNetHelp = "Check-speed multipliers depending on the current network. 1.0 = base " +
-        "speed. Lower — gentler on traffic/battery, higher — more aggressive.\n• VPN — when an external " +
-        "VPN is active.\n• Wi-Fi — on a Wi-Fi network.\n• LTE — on a mobile network."
+    override val speedByNet = "Scan intensity by network"
+    override val speedByNetHelp = "How often to check proxies depending on the current network. " +
+        "\"Standard\" = base interval. Slide right for rarer (slower, gentler on traffic/battery), " +
+        "left for more often (faster, more aggressive). Logarithmic scale, up to ×100 each way.\n" +
+        "• VPN — when an external VPN is active.\n• Wi-Fi — on a Wi-Fi network.\n• LTE — on a mobile network."
+    override val intensStandard = "standard"
+    override val intensSlower = "slower"
+    override val intensFaster = "faster"
+    override val maintenance = "Reset data"
+    override val maintenanceHelp = "• \"Reset catalog & statistics\" — zeroes ratings, counters, traffic " +
+        "and check logs, but keeps the downloaded hosts and subscriptions (everything is re-rated on " +
+        "the next scan).\n• \"Clear downloaded hosts\" — deletes the whole proxy pool but keeps " +
+        "subscriptions so the scan refills the pool. Subscriptions are never touched either way."
+    override val resetCatalog = "Reset catalog & statistics"
+    override val resetCatalogConfirm = "Zero all ratings, counters and check logs? " +
+        "Downloaded hosts and subscriptions are kept and re-rated on the next scan."
+    override val clearHosts = "Clear downloaded hosts"
+    override val clearHostsConfirm = "Delete the entire list of downloaded hosts (proxies)? " +
+        "Subscriptions are kept and the scan will refill the pool."
+    override val doReset = "Reset"
+    override val doCancel = "Cancel"
     override val adaptiveSpeed = "Adaptive speed"
     override val adaptiveHelp = "Liveness checks run at a base interval (from \"Scan & check\", also " +
         "multiplied by the network multiplier). \"Adaptive speed\" speeds them up or slows them down " +
@@ -178,6 +196,7 @@ object En : Strings {
     override val netLogSub = "Writes WHO-TO-WHOM-WHEN and packet sizes to a file (NO payload data) — " +
         "to compare the exchange pattern with vs. without a VPN."
     override val openLogFolder = "Open log folder"; override val copyPath = "Copy path"
+    override val quickSwitchTitle = "Quick switch"; override val quickSwitchSub = "Shaping, connect, anti-DPI"
 
     override val sourceUrl = "Source URL"
     override fun sourceAlive(alive: Int, total: Int) = "live $alive/$total"
@@ -199,6 +218,7 @@ object En : Strings {
 
     override fun aliveLinks(n: Int) = "Live links: $n"
     override val copyAll = "Copy all"
+    override val openRandom = "Open random"; override val copyRandom = "Copy random"; override val allShort = "All"
 
     override val appTagline = "Cross-platform auto-connector: it finds, checks and runs MTProto proxies " +
         "that Telegram works through."

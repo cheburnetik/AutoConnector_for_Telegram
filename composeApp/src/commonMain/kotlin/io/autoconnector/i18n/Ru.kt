@@ -65,6 +65,7 @@ object Ru : Strings {
     override val sessionsTotal = "Суммарно сессий"; override val relayNow = "Релей сейчас"; override val tlsDomain = "TLS-домен (SNI)"
     override val sourceSub = "Источник (подписка)"; override val lastError = "Последняя ошибка"; override val yes = "да"; override val no = "нет"
     override val copyAsLink = "Скопировать как ссылку"; override val openInTelegram = "Открыть хост в Telegram"; override val makeNextRelay = "Сделать следующим релеем"
+    override val actCopy = "Копировать"; override val actOpen = "Открыть"; override val actRelay = "В реле"
     override fun agoFmt(v: String) = "$v назад"
     override val live = "жив"; override val deadW = "мёртв"; override val unitMs = "мс"
     override val agoMin = "м"; override val agoHour = "ч"; override val agoDay = "д"
@@ -137,10 +138,27 @@ object Ru : Strings {
         "сколько прокси проверять за один прогон.\n• Параллельно — сколько проверок выполнять " +
         "одновременно (больше = быстрее, но выше нагрузка на сеть и батарею)."
     override val scanMin = "Скан, мин"; override val checkMin = "Проверка, мин"; override val batchSize = "Размер пачки"; override val parallel = "Параллельно"
-    override val speedByNet = "Скорость по сети"
-    override val speedByNetHelp = "Множители скорости проверок в зависимости от текущей сети. 1.0 = " +
-        "базовая скорость. Меньше — бережнее к трафику/батарее, больше — агрессивнее.\n• VPN — когда " +
-        "активен внешний VPN.\n• Wi-Fi — в Wi-Fi сети.\n• LTE — в мобильной сети."
+    override val speedByNet = "Интенсивность скана по сети"
+    override val speedByNetHelp = "Как часто проверять прокси в зависимости от текущей сети. " +
+        "«Стандарт» = базовый интервал. Сдвиг вправо — реже (медленнее, бережнее к трафику/" +
+        "батарее), влево — чаще (быстрее, агрессивнее). Шкала логарифмическая, до ×100 в каждую " +
+        "сторону.\n• VPN — когда активен внешний VPN.\n• Wi-Fi — в Wi-Fi сети.\n• LTE — в мобильной сети."
+    override val intensStandard = "стандарт"
+    override val intensSlower = "медленнее"
+    override val intensFaster = "быстрее"
+    override val maintenance = "Сброс данных"
+    override val maintenanceHelp = "• «Сбросить каталог и статистику» — обнуляет оценки, счётчики, " +
+        "трафик и логи проверок, но сохраняет сами скачанные хосты и подписки (всё переоценится " +
+        "при следующем скане).\n• «Очистить скачанные хосты» — удаляет весь пул прокси, но " +
+        "оставляет подписки, чтобы скан набрал пул заново. Подписки не трогаются ни в одном случае."
+    override val resetCatalog = "Сбросить каталог и статистику"
+    override val resetCatalogConfirm = "Обнулить оценки, счётчики и логи проверок? " +
+        "Скачанные хосты и подписки сохранятся, всё переоценится при следующем скане."
+    override val clearHosts = "Очистить скачанные хосты"
+    override val clearHostsConfirm = "Удалить весь список скачанных хостов (прокси)? " +
+        "Подписки сохранятся, и скан наберёт пул заново."
+    override val doReset = "Сбросить"
+    override val doCancel = "Отмена"
     override val adaptiveSpeed = "Адаптивная скорость"
     override val adaptiveHelp = "Проверки живости идут с базовым интервалом (из раздела «Скан и " +
         "проверка», ещё умноженным на множитель сети). «Адаптивная скорость» сама ускоряет или " +
@@ -175,6 +193,7 @@ object Ru : Strings {
     override val netLogSub = "Пишет в файл КТО-КОМУ-КОГДА и размеры пакетов (БЕЗ содержимого данных) — " +
         "чтобы сравнить характер обмена с VPN и без него."
     override val openLogFolder = "Открыть папку лога"; override val copyPath = "Скопировать путь"
+    override val quickSwitchTitle = "Быстрое переключение"; override val quickSwitchSub = "Дробление, коннект, анти-DPI"
 
     override val sourceUrl = "URL источника"
     override fun sourceAlive(alive: Int, total: Int) = "живых $alive/$total"
@@ -196,6 +215,7 @@ object Ru : Strings {
 
     override fun aliveLinks(n: Int) = "Живых ссылок: $n"
     override val copyAll = "Скопировать все"
+    override val openRandom = "Открыть случайный"; override val copyRandom = "Копировать случайный"; override val allShort = "Все"
 
     override val appTagline = "Кросс-платформенный авто-коннектор: сам находит, проверяет и поднимает " +
         "MTProto-прокси, через которые работает Telegram."

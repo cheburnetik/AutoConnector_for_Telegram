@@ -130,7 +130,19 @@ public final class RelayConnection implements Runnable {
             // Dropping it makes Telegram declare the proxy "misconfigured" and
             // DISABLE it; a direct pass-through keeps the proxy enabled, and as
             // soon as live proxies appear the next connections route through them.
-            if (store.countAlive() == 0) {
+            int aliveNow;
+            try {
+                aliveNow = store.countAlive();
+            } catch (Exception dbErr) {
+                // A transient DB hiccup (e.g. SQLITE_BUSY under a concurrent scan)
+                // must NEVER tear this connection down — Telegram would instantly
+                // flag the proxy as broken and disable it. Treat it as a cold pool
+                // and pass straight through, which keeps the proxy enabled.
+                RelayLog.emit("⚠ БД на миг недоступна — Telegram идёт напрямую к DC "
+                        + "(прокси не отключаем)");
+                aliveNow = 0;
+            }
+            if (aliveNow == 0) {
                 RelayLog.emit("⚠ живых прокси пока нет — Telegram идёт напрямую к DC "
                         + "(чтобы Telegram не отключил прокси); идёт набор пула…");
                 acceptingDecremented = true;  // see note above — avoid double-decrement
@@ -467,9 +479,10 @@ public final class RelayConnection implements Runnable {
 
         // 1. Top alive for THIS network — VPN/WiFi/LTE are graded separately
         //    so we don't try VPN-only winners on bare LTE.
-        java.util.List<ProxyEntry> topAlive = usePerMode
-                ? store.topAliveForMode(net, wantTop * multi)
-                : store.topAlive(wantTop * multi);
+        final io.autoconnector.engine.core.NetworkMode fnet = net;
+        java.util.List<ProxyEntry> topAlive = safeList(() -> usePerMode
+                ? store.topAliveForMode(fnet, wantTop * multi)
+                : store.topAlive(wantTop * multi));
         for (ProxyEntry p : topAlive) {
             if (onlyFakeTls && !p.isFakeTls()) continue;
             if (!containsId(candidates, p.id)) candidates.add(p);
@@ -477,9 +490,9 @@ public final class RelayConnection implements Runnable {
         }
         // 2. Random alive outside the top — diversifies and exposes hosts
         //    the rating undervalues (or that just recovered).
-        java.util.List<ProxyEntry> randomAlive = usePerMode
-                ? store.randomAliveForMode(net, wantRandom * multi)
-                : store.randomAlive(wantRandom * multi);
+        java.util.List<ProxyEntry> randomAlive = safeList(() -> usePerMode
+                ? store.randomAliveForMode(fnet, wantRandom * multi)
+                : store.randomAlive(wantRandom * multi));
         for (ProxyEntry p : randomAlive) {
             if (onlyFakeTls && !p.isFakeTls()) continue;
             if (!containsId(candidates, p.id)) candidates.add(p);
@@ -491,12 +504,12 @@ public final class RelayConnection implements Runnable {
         //    ones exist somewhere. Handing over a dead upstream is exactly what
         //    made Telegram see a "broken" proxy and disable it.
         if (candidates.size() < 5) {
-            for (ProxyEntry p : store.topAlive(wantTop * multi)) {
+            for (ProxyEntry p : safeList(() -> store.topAlive(wantTop * multi))) {
                 if (onlyFakeTls && !p.isFakeTls()) continue;
                 if (!containsId(candidates, p.id)) candidates.add(p);
                 if (candidates.size() >= wantTop + 1) break;
             }
-            for (ProxyEntry p : store.randomAlive(wantRandom * multi)) {
+            for (ProxyEntry p : safeList(() -> store.randomAlive(wantRandom * multi))) {
                 if (onlyFakeTls && !p.isFakeTls()) continue;
                 if (!containsId(candidates, p.id)) candidates.add(p);
                 if (candidates.size() >= wantTop + wantRandom + 1) break;
@@ -505,10 +518,10 @@ public final class RelayConnection implements Runnable {
         // 4. Truly nothing alive matched — last resort, try best-by-score
         //    (may be unverified) so there's at least something to attempt.
         if (candidates.isEmpty()) {
-            java.util.List<ProxyEntry> fallback = usePerMode
-                    ? store.topForMode(net, 20 * multi)
-                    : store.top(20 * multi);
-            if (fallback.isEmpty()) fallback = store.top(20 * multi);
+            java.util.List<ProxyEntry> fallback = safeList(() -> usePerMode
+                    ? store.topForMode(fnet, 20 * multi)
+                    : store.top(20 * multi));
+            if (fallback.isEmpty()) fallback = safeList(() -> store.top(20 * multi));
             for (ProxyEntry p : fallback) {
                 if (onlyFakeTls && !p.isFakeTls()) continue;
                 if (!containsId(candidates, p.id)) candidates.add(p);
@@ -666,6 +679,24 @@ public final class RelayConnection implements Runnable {
                 RelayLog.emit("расширенная проверка: " + t.getMessage());
             }
         });
+    }
+
+    /** Supplies a proxy list, possibly throwing a DB error. */
+    private interface ListSupplier { List<ProxyEntry> get() throws Exception; }
+
+    /**
+     * Runs a pool query, returning an empty list if it throws. A transient DB
+     * error on one source must not bubble up and null the whole upstream
+     * selection — that handed Telegram nothing and showed as an instant "broken
+     * proxy". We just fall through to the next source / fallback instead.
+     */
+    private static List<ProxyEntry> safeList(ListSupplier s) {
+        try {
+            List<ProxyEntry> r = s.get();
+            return r != null ? r : java.util.Collections.emptyList();
+        } catch (Exception e) {
+            return java.util.Collections.emptyList();
+        }
     }
 
     private static boolean containsId(List<ProxyEntry> list, long id) {

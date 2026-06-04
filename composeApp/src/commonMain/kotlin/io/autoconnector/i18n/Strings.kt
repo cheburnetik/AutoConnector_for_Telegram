@@ -70,6 +70,7 @@ interface Strings {
     val live: String; val deadW: String; val unitMs: String
     val agoMin: String; val agoHour: String; val agoDay: String
     val copyAsLink: String; val openInTelegram: String; val makeNextRelay: String
+    val actCopy: String; val actOpen: String; val actRelay: String
     fun agoFmt(v: String): String
 
     // guide
@@ -103,6 +104,12 @@ interface Strings {
     val scanCheck: String; val scanCheckHelp: String
     val scanMin: String; val checkMin: String; val batchSize: String; val parallel: String
     val speedByNet: String; val speedByNetHelp: String
+    val intensStandard: String; val intensSlower: String; val intensFaster: String
+    // reset / maintenance
+    val maintenance: String; val maintenanceHelp: String
+    val resetCatalog: String; val resetCatalogConfirm: String
+    val clearHosts: String; val clearHostsConfirm: String
+    val doReset: String; val doCancel: String
     val adaptiveSpeed: String; val adaptiveHelp: String
     val threshMany: String; val threshFew: String; val mulFast: String; val mulLazy: String
     val netBattery: String; val netBatteryHelp: String
@@ -115,6 +122,7 @@ interface Strings {
     val expConnectTitle: String
     val netLog: String; val netLogSub: String
     val openLogFolder: String; val copyPath: String
+    val quickSwitchTitle: String; val quickSwitchSub: String
 
     // sources
     val sourceUrl: String
@@ -136,6 +144,7 @@ interface Strings {
     // export
     fun aliveLinks(n: Int): String
     val copyAll: String
+    val openRandom: String; val copyRandom: String; val allShort: String
 
     // about
     val appTagline: String

@@ -63,6 +63,7 @@ import io.autoconnector.ui.screens.MoreCallbacks
 import io.autoconnector.ui.screens.MoreDest
 import io.autoconnector.ui.screens.MoreFullPage
 import io.autoconnector.ui.screens.MoreScreen
+import io.autoconnector.ui.screens.QuickSettingsPage
 import io.autoconnector.ui.screens.ScanContent
 import io.autoconnector.ui.screens.catalogItems
 import io.autoconnector.ui.screens.logsItems
@@ -93,6 +94,7 @@ fun App(engine: Engine) {
         var showGuide by remember { mutableStateOf(false) }
         var detail by remember { mutableStateOf<CatalogItem?>(null) }
         var morePage by remember { mutableStateOf<MoreDest?>(null) }
+        var quickSettings by remember { mutableStateOf(false) }
         var notifInfo by remember { mutableStateOf(false) }
         val listState = rememberLazyListState()
         val scope = rememberCoroutineScope()
@@ -131,6 +133,8 @@ fun App(engine: Engine) {
             onCopy = engine::copyToClipboard,
             handshakeStats = engine::handshakeStats,
             onResetStats = engine::resetStats,
+            onResetCatalogStats = engine::resetCatalogStats,
+            onClearHosts = engine::clearDownloadedHosts,
             appInfo = engine.appInfo(),
             onOpenUrl = engine::openLink,
         )
@@ -168,6 +172,13 @@ fun App(engine: Engine) {
             return@CompositionLocalProvider
         }
 
+        // Full-screen quick-switch page (reached from the Connector tab button).
+        if (quickSettings) {
+            PlatformBackHandler(true) { quickSettings = false }
+            QuickSettingsPage(moreCallbacks()) { quickSettings = false }
+            return@CompositionLocalProvider
+        }
+
         // On any non-main tab, the system back returns to the Connector tab
         // instead of closing the app.
         PlatformBackHandler(tab != Tabs.CONNECTOR) { tab = Tabs.CONNECTOR }
@@ -192,7 +203,9 @@ fun App(engine: Engine) {
                 }
 
                 when (tab) {
-                    Tabs.CONNECTOR -> item { ConnectorContent(state) { showGuide = true } }
+                    Tabs.CONNECTOR -> item {
+                        ConnectorContent(state, onOpenGuide = { showGuide = true }, onOpenQuick = { quickSettings = true })
+                    }
                     Tabs.SCAN -> item { ScanContent(state) }
                     Tabs.CATALOG -> catalogItems(catalog, onClick = { detail = it })
                     Tabs.LOGS -> logsItems(
