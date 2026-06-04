@@ -89,14 +89,6 @@ public final class SQLiteDatabase {
         return c;
     }
 
-    /** A connection for a one-shot op: the thread's txn connection if one is open,
-     *  otherwise a pooled/fresh one (caller must {@link #recycle} it). */
-    private Connection borrow() {
-        Connection c = txnConn.get();
-        if (c != null) return c;
-        return acquire();
-    }
-
     /** A pooled or freshly-opened connection, independent of any transaction. */
     private Connection acquire() {
         Connection c = idle.poll();
@@ -118,18 +110,88 @@ public final class SQLiteDatabase {
         }
     }
 
+    // --- resilient one-shot execution ----------------------------------------
+
+    /** A unit of work over a borrowed connection. */
+    private interface ConnFn<T> { T apply(Connection c) throws Exception; }
+
+    /**
+     * Runs {@code fn} on a connection with two safety nets the first desktop port
+     * lacked, and which caused the "instant broken proxy" the relay reported:
+     *
+     * <ol>
+     *   <li><b>Never recycle a tainted connection.</b> A connection that threw is
+     *       CLOSED, not returned to the pool. The old code's {@code finally
+     *       recycle(c)} put a possibly-broken connection back, so the next borrower
+     *       inherited the fault and every following query threw — a burst of
+     *       Telegram connects all saw "broken proxy" at once.</li>
+     *   <li><b>Retry a transient lock.</b> A short {@code SQLITE_BUSY}/locked race
+     *       (a writer holding the single WAL write-lock) is retried a couple of
+     *       times with a tiny backoff instead of bubbling up and tearing the
+     *       Telegram connection down.</li>
+     * </ol>
+     *
+     * A transaction-pinned connection skips both — it is owned by the caller's
+     * {@code begin/endTransaction} and must stay open across the whole txn.
+     */
+    private <T> T withConn(String what, ConnFn<T> fn) {
+        Connection pinned = txnConn.get();
+        if (pinned != null) {
+            try {
+                return fn.apply(pinned);
+            } catch (Exception e) {
+                throw new RuntimeException(what + " failed", e);
+            }
+        }
+        Exception last = null;
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            Connection c = acquire();
+            boolean tainted = false;
+            try {
+                return fn.apply(c);
+            } catch (Exception e) {
+                last = e;
+                tainted = true;               // assume dirty; reopening is cheap, poison is not
+                if (!isTransientLock(e) || attempt == 3) {
+                    throw new RuntimeException(what + " failed", e);
+                }
+            } finally {
+                if (tainted) closeQuietly(c); else recycle(c);
+            }
+            sleepQuiet(15L * attempt);         // brief backoff before retrying a locked db
+        }
+        throw new RuntimeException(what + " failed", last);
+    }
+
+    private static boolean isTransientLock(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            String m = t.getMessage();
+            if (m != null) {
+                String s = m.toLowerCase(java.util.Locale.ROOT);
+                if (s.contains("busy") || s.contains("locked")) return true;
+            }
+        }
+        return false;
+    }
+
+    private static void closeQuietly(Connection c) {
+        try { if (c != null) c.close(); } catch (Exception ignored) {}
+    }
+
+    private static void sleepQuiet(long ms) {
+        try { Thread.sleep(ms); }
+        catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+    }
+
     // --- schema version (PRAGMA user_version), used by SQLiteOpenHelper --------
 
     int getUserVersion() {
-        Connection c = borrow();
-        try (Statement st = c.createStatement();
-             ResultSet rs = st.executeQuery("PRAGMA user_version")) {
-            return rs.next() ? rs.getInt(1) : 0;
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        } finally {
-            recycle(c);
-        }
+        return withConn("user_version", c -> {
+            try (Statement st = c.createStatement();
+                 ResultSet rs = st.executeQuery("PRAGMA user_version")) {
+                return rs.next() ? rs.getInt(1) : 0;
+            }
+        });
     }
 
     void setUserVersion(int v) {
@@ -139,47 +201,40 @@ public final class SQLiteDatabase {
     // --- writes ---------------------------------------------------------------
 
     public void execSQL(String sql) {
-        Connection c = borrow();
-        try (Statement st = c.createStatement()) {
-            st.execute(sql);
-        } catch (Exception e) {
-            throw new RuntimeException("execSQL failed: " + sql, e);
-        } finally {
-            recycle(c);
-        }
+        withConn("execSQL: " + sql, c -> {
+            try (Statement st = c.createStatement()) {
+                st.execute(sql);
+            }
+            return null;
+        });
     }
 
     public void execSQL(String sql, Object[] bindArgs) {
-        Connection c = borrow();
-        try (PreparedStatement ps = c.prepareStatement(sql)) {
-            bind(ps, bindArgs, 1);
-            ps.executeUpdate();
-        } catch (Exception e) {
-            throw new RuntimeException("execSQL failed: " + sql, e);
-        } finally {
-            recycle(c);
-        }
+        withConn("execSQL: " + sql, c -> {
+            try (PreparedStatement ps = c.prepareStatement(sql)) {
+                bind(ps, bindArgs, 1);
+                ps.executeUpdate();
+            }
+            return null;
+        });
     }
 
     public Cursor rawQuery(String sql, String[] selectionArgs) {
-        Connection c = borrow();
-        try (PreparedStatement ps = c.prepareStatement(sql)) {
-            if (selectionArgs != null) {
-                for (int i = 0; i < selectionArgs.length; i++) {
-                    ps.setString(i + 1, selectionArgs[i]);
+        return withConn("rawQuery: " + sql, c -> {
+            try (PreparedStatement ps = c.prepareStatement(sql)) {
+                if (selectionArgs != null) {
+                    for (int i = 0; i < selectionArgs.length; i++) {
+                        ps.setString(i + 1, selectionArgs[i]);
+                    }
+                }
+                try (ResultSet rs = ps.executeQuery()) {
+                    // SnapshotCursor materialises the rows eagerly, so the connection
+                    // is free to return to the pool immediately — no live ResultSet
+                    // is ever held across threads.
+                    return new SnapshotCursor(rs);
                 }
             }
-            try (ResultSet rs = ps.executeQuery()) {
-                // SnapshotCursor materialises the rows eagerly, so the connection
-                // is free to return to the pool immediately — no live ResultSet
-                // is ever held across threads.
-                return new SnapshotCursor(rs);
-            }
-        } catch (Exception e) {
-            throw new RuntimeException("rawQuery failed: " + sql, e);
-        } finally {
-            recycle(c);
-        }
+        });
     }
 
     /**
@@ -190,8 +245,7 @@ public final class SQLiteDatabase {
      */
     public long insertWithOnConflict(String table, String nullColumnHack,
                                      ContentValues values, int conflictAlgorithm) {
-        Connection c = borrow();
-        try {
+        return withConn("insert into " + table, c -> {
             StringBuilder cols = new StringBuilder();
             StringBuilder qs = new StringBuilder();
             Object[] vals = new Object[values.size()];
@@ -214,17 +268,12 @@ public final class SQLiteDatabase {
                  ResultSet rs = st.executeQuery("SELECT last_insert_rowid()")) {
                 return rs.next() ? rs.getLong(1) : -1L;
             }
-        } catch (Exception e) {
-            throw new RuntimeException("insert failed into " + table, e);
-        } finally {
-            recycle(c);
-        }
+        });
     }
 
     /** {@code UPDATE table SET col=? … WHERE <where>} with values then whereArgs bound. */
     public int update(String table, ContentValues values, String whereClause, String[] whereArgs) {
-        Connection c = borrow();
-        try {
+        return withConn("update " + table, c -> {
             StringBuilder set = new StringBuilder();
             Object[] vals = new Object[values.size()];
             int i = 0;
@@ -242,11 +291,7 @@ public final class SQLiteDatabase {
                 }
                 return ps.executeUpdate();
             }
-        } catch (Exception e) {
-            throw new RuntimeException("update failed on " + table, e);
-        } finally {
-            recycle(c);
-        }
+        });
     }
 
     // --- transactions ---------------------------------------------------------

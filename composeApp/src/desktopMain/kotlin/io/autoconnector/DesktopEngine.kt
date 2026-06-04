@@ -301,6 +301,17 @@ class DesktopEngine(private val dataDir: File) : Engine {
         appendLog("⚙ статистика хитростей сброшена")
     }
 
+    override fun resetCatalogStats() {
+        store.resetCatalogStats()
+        HandshakeStats.resetAll()
+        appendLog("⚙ каталог и статистика сброшены (хосты и подписки сохранены)", LogCat.SCAN)
+    }
+
+    override fun clearDownloadedHosts() {
+        store.clearDownloadedHosts()
+        appendLog("⚙ список скачанных хостов очищен (подписки сохранены)", LogCat.SCAN)
+    }
+
     override fun appInfo(): AppInfo = AppInfo(
         version = DESKTOP_VERSION,
         // Stamped into the launcher (.bat passes -Dautoconnector.build=…, using
@@ -412,7 +423,14 @@ class DesktopEngine(private val dataDir: File) : Engine {
             try {
                 if (Prefs(ctx).scanEnabled()) checkMains()
             } catch (_: Throwable) {}
-            delay(dynamicCheckInterval())
+            // Sleep toward the target interval in 1 s steps, recomputing the
+            // target each step. Changing scan intensity then takes effect within
+            // ~1 s instead of only after the current (possibly long) sleep ends.
+            var slept = 0L
+            while (slept < dynamicCheckInterval()) {
+                delay(1000)
+                slept += 1000
+            }
         }
     }
 
@@ -877,6 +895,6 @@ class DesktopEngine(private val dataDir: File) : Engine {
     companion object {
         // Single dotted-semver version line for the desktop build (matches the
         // GitHub release tag vX.Y.Z). Build date is injected at launch — see appInfo().
-        private const val DESKTOP_VERSION = "1.0.10"
+        private const val DESKTOP_VERSION = "1.0.14"
     }
 }

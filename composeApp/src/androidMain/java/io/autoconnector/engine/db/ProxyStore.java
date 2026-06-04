@@ -353,6 +353,42 @@ public class ProxyStore extends SQLiteOpenHelper {
                 new Object[]{cutoff});
     }
 
+    /**
+     * Resets the working catalog state + all statistics WITHOUT deleting hosts
+     * or subscriptions. Every proxy keeps its identity (host/port/secret/type/
+     * source/added_at) and stays in the pool, but its health + rating + tallies
+     * are zeroed, so the next scan re-rates everything from scratch. The rolling
+     * check/relay logs and per-network mode stats are cleared too.
+     *
+     * <p>Leaves {@code sources} (subscriptions) and {@code source_proxies} (the
+     * host↔subscription linkage) completely untouched.
+     */
+    public void resetCatalogStats() {
+        SQLiteDatabase db = getWritableDatabase();
+        db.execSQL("UPDATE " + T + " SET "
+                + "last_check=0, alive=0, rtt_ms=-1, successes=0, failures=0, "
+                + "score=0, last_error=NULL, last_ok=0, tg_connections=0, "
+                + "total_session_ms=0, bytes_relayed=0, last_tg_connect_at=0");
+        db.execSQL("DELETE FROM " + CL);
+        db.execSQL("DELETE FROM " + RL);
+        db.execSQL("DELETE FROM " + PMS);
+    }
+
+    /**
+     * Forgets every downloaded host (the whole proxy pool) and everything keyed
+     * to it, but keeps the user's subscriptions so the next scan can re-fill the
+     * pool from them. {@code sources} rows survive; {@code source_proxies} links
+     * are cleared since the proxies they referenced are gone.
+     */
+    public void clearDownloadedHosts() {
+        SQLiteDatabase db = getWritableDatabase();
+        db.execSQL("DELETE FROM " + T);
+        db.execSQL("DELETE FROM " + SP);
+        db.execSQL("DELETE FROM " + CL);
+        db.execSQL("DELETE FROM " + RL);
+        db.execSQL("DELETE FROM " + PMS);
+    }
+
     /** {@code [ok, fail]} probe counts for one proxy over the last 24 hours. */
     public int[] checks24h(long proxyId) {
         long cutoff = System.currentTimeMillis() - 86_400_000L;

@@ -265,6 +265,17 @@ class AndroidEngine(context: Context) : Engine {
         appendLog("⚙ статистика хитростей сброшена")
     }
 
+    override fun resetCatalogStats() {
+        store.resetCatalogStats()
+        HandshakeStats.resetAll()
+        appendLog("⚙ каталог и статистика сброшены (хосты и подписки сохранены)")
+    }
+
+    override fun clearDownloadedHosts() {
+        store.clearDownloadedHosts()
+        appendLog("⚙ список скачанных хостов очищен (подписки сохранены)")
+    }
+
     override fun appInfo(): AppInfo = AppInfo(
         version = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
         buildDate = BuildConfig.BUILD_DATE,
