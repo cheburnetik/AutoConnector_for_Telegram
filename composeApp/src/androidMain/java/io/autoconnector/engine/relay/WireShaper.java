@@ -58,7 +58,29 @@ public final class WireShaper {
         /** Buffer + Nagle on: send larger batches, mimic a bulk TLS download. */
         COALESCE_DELAY(4, "coalesce", "Коалесинг (батчинг)",
                 "Буферизует мелкие записи и шлёт крупными порциями (TCP_NODELAY выкл, "
-                + "задержка до ~12 мс) — маскирует обмен под bulk-загрузку. Обратный по смыслу режим.");
+                + "задержка до ~12 мс) — маскирует обмен под bulk-загрузку. Единственный "
+                + "стабильный режим, но душит загрузку/отправку медиа."),
+
+        // --- Coalescing-family experiments (fix media throughput, keep evasion) ---
+
+        /** Batch SMALL writes (hide MTProto cadence), pass LARGE writes straight
+         *  through (media data), with a shorter delay. Aimed at uploads + mixed. */
+        COALESCE_ADAPTIVE(5, "coalesce_adaptive", "Коалесинг адаптивный",
+                "Мелкие записи батчит (прячет «мелко-пакетную» сигнатуру MTProto), "
+                + "а крупные (медиа-данные) пропускает сразу, задержка короче (~4 мс). "
+                + "Цель — не душить аплоад/крупный трафик, оставаясь незаметным."),
+
+        /** Coalesce only the opening window, then full passthrough — bets that DPI
+         *  classifies a flow at its start. Aimed at downloads. */
+        COALESCE_WARMUP(6, "coalesce_warmup", "Коалесинг старта",
+                "Батчит только первые ~128 КБ соединения, дальше — полностью прозрачно. "
+                + "Расчёт: DPI «решает» в начале потока; после прогрева медиа идёт на полной скорости. "
+                + "Если связь отваливается на больших файлах — значит DPI смотрит постоянно, верните обычный коалесинг."),
+
+        /** No userspace delay — just TCP_NODELAY off; let the kernel (Nagle) coalesce. */
+        NAGLE_ONLY(7, "nagle", "Только Nagle (ядро)",
+                "Без искусственной задержки: только TCP_NODELAY выкл — ядро само склеивает "
+                + "мелкие записи (Nagle). Самый лёгкий по скорости; проверить, хватает ли его маскировки.");
 
         public final int code;
         public final String key;
@@ -88,9 +110,19 @@ public final class WireShaper {
     public static void applySocketOptions(Socket s, Mode m) {
         if (s == null || m == Mode.OFF) return;
         try {
-            // Fragmenting modes need Nagle OFF so each flushed segment goes out
-            // on its own; the coalescing mode wants Nagle ON to batch.
-            s.setTcpNoDelay(m != Mode.COALESCE_DELAY);
+            // Coalescing family wants Nagle ON (nodelay=false) to batch; the
+            // fragmenting family wants it OFF so each flushed segment goes out.
+            boolean nagle;
+            switch (m) {
+                case COALESCE_DELAY:
+                case COALESCE_ADAPTIVE:
+                case COALESCE_WARMUP:
+                case NAGLE_ONLY:
+                    nagle = true; break;
+                default:
+                    nagle = false; break;
+            }
+            s.setTcpNoDelay(!nagle);
         } catch (Exception ignored) {
         }
     }
@@ -108,6 +140,16 @@ public final class WireShaper {
                 return new Fragmenting(raw, 80, 1200, 0);
             case COALESCE_DELAY:
                 return new Coalescing(raw, 1400, 12);
+            case COALESCE_ADAPTIVE:
+                // Small (<512B) writes batch up to 16 KB / 4 ms; larger writes
+                // (media bursts) pass straight through.
+                return new AdaptiveCoalescing(raw, 512, 16384, 4);
+            case COALESCE_WARMUP:
+                // Coalesce the first 128 KB like COALESCE_DELAY, then passthrough.
+                return new WarmupCoalescing(raw, 128 * 1024, 1400, 12);
+            case NAGLE_ONLY:
+                // No userspace shaping; the kernel coalesces via Nagle (nodelay off).
+                return raw;
             default:
                 return raw;
         }
@@ -279,6 +321,138 @@ public final class WireShaper {
 
         @Override public synchronized void flush() throws IOException {
             // Lazy: only drain if the buffer is already aged past the cap.
+            if (len > 0 && System.currentTimeMillis() - firstAt >= maxDelayMs) send();
+        }
+
+        @Override public synchronized void close() throws IOException {
+            try { send(); } finally { d.close(); }
+        }
+    }
+
+    /**
+     * Coalesces only SMALL writes — hiding the tell-tale small-packet MTProto
+     * cadence — while letting LARGE writes (media bursts) pass straight through,
+     * with a short flush delay. Keeps the bulk-TLS look that survives DPI without
+     * throttling big transfers (the weakness of plain {@link Coalescing}).
+     */
+    private static final class AdaptiveCoalescing extends OutputStream {
+        private final OutputStream d;
+        private final int smallThreshold;   // writes >= this bypass the buffer
+        private final int batchThreshold;   // flush the small-buffer at this fill
+        private final long maxDelayMs;
+        private final byte[] buf;
+        private int len;
+        private long firstAt;
+
+        AdaptiveCoalescing(OutputStream d, int smallThreshold, int batchThreshold, long maxDelayMs) {
+            this.d = d;
+            this.smallThreshold = Math.max(1, smallThreshold);
+            this.batchThreshold = Math.max(this.smallThreshold, batchThreshold);
+            this.maxDelayMs = Math.max(1, maxDelayMs);
+            this.buf = new byte[this.batchThreshold + 1024];
+        }
+
+        @Override public synchronized void write(int b) throws IOException {
+            if (len == buf.length) send();
+            if (len == 0) firstAt = System.currentTimeMillis();
+            buf[len++] = (byte) b;
+            if (len >= batchThreshold) send();
+        }
+
+        @Override public synchronized void write(byte[] b, int off, int n) throws IOException {
+            if (n >= smallThreshold) {
+                // Large (media) write: flush pending small bytes to keep order,
+                // then send the big chunk straight through.
+                send();
+                d.write(b, off, n);
+                d.flush();
+                return;
+            }
+            int p = off, end = off + n;
+            while (p < end) {
+                int room = buf.length - len;
+                if (room == 0) { send(); room = buf.length; }
+                int take = Math.min(room, end - p);
+                System.arraycopy(b, p, buf, len, take);
+                if (len == 0) firstAt = System.currentTimeMillis();
+                len += take;
+                p += take;
+                if (len >= batchThreshold) send();
+            }
+        }
+
+        private void send() throws IOException {
+            if (len == 0) return;
+            d.write(buf, 0, len);
+            d.flush();
+            len = 0;
+        }
+
+        @Override public synchronized void flush() throws IOException {
+            if (len > 0 && System.currentTimeMillis() - firstAt >= maxDelayMs) send();
+        }
+
+        @Override public synchronized void close() throws IOException {
+            try { send(); } finally { d.close(); }
+        }
+    }
+
+    /**
+     * Coalesces like {@link Coalescing} until {@code warmupBytes} have flowed, then
+     * switches to plain passthrough — bets that DPI fingerprints a flow only near
+     * its start, so media after the warmup runs at full speed. If a connection
+     * dies on large transfers under this mode, DPI is watching continuously and
+     * plain coalescing is the safer pick.
+     */
+    private static final class WarmupCoalescing extends OutputStream {
+        private final OutputStream d;
+        private final long warmupBytes;
+        private final int threshold;
+        private final long maxDelayMs;
+        private final byte[] buf;
+        private int len;
+        private long firstAt;
+        private long written;
+        private boolean warm;
+
+        WarmupCoalescing(OutputStream d, long warmupBytes, int threshold, long maxDelayMs) {
+            this.d = d;
+            this.warmupBytes = Math.max(1, warmupBytes);
+            this.threshold = Math.max(64, threshold);
+            this.maxDelayMs = Math.max(1, maxDelayMs);
+            this.buf = new byte[this.threshold * 2 + 1024];
+        }
+
+        @Override public synchronized void write(int b) throws IOException {
+            write(new byte[]{(byte) b}, 0, 1);
+        }
+
+        @Override public synchronized void write(byte[] b, int off, int n) throws IOException {
+            written += n;
+            if (warm) { d.write(b, off, n); d.flush(); return; }
+            int p = off, end = off + n;
+            while (p < end) {
+                int room = buf.length - len;
+                if (room == 0) { send(); room = buf.length; }
+                int take = Math.min(room, end - p);
+                System.arraycopy(b, p, buf, len, take);
+                if (len == 0) firstAt = System.currentTimeMillis();
+                len += take;
+                p += take;
+                if (len >= threshold) send();
+            }
+            if (written >= warmupBytes) { send(); warm = true; }
+        }
+
+        private void send() throws IOException {
+            if (len == 0) return;
+            d.write(buf, 0, len);
+            d.flush();
+            len = 0;
+        }
+
+        @Override public synchronized void flush() throws IOException {
+            if (warm) { d.flush(); return; }
             if (len > 0 && System.currentTimeMillis() - firstAt >= maxDelayMs) send();
         }
 
