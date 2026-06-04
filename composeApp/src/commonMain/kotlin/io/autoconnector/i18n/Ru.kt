@@ -216,6 +216,7 @@ object Ru : Strings {
     override fun aliveLinks(n: Int) = "Живых ссылок: $n"
     override val copyAll = "Скопировать все"
     override val openRandom = "Открыть случайный"; override val copyRandom = "Копировать случайный"; override val allShort = "Все"
+    override val exportToFile = "Экспорт в файл"; override val exportSaved = "Сохранено в файл:"
 
     override val appTagline = "Кросс-платформенный авто-коннектор: сам находит, проверяет и поднимает " +
         "MTProto-прокси, через которые работает Telegram."

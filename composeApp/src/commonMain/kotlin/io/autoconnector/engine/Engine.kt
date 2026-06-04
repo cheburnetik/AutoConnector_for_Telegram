@@ -89,7 +89,7 @@ data class EngineSettings(
     val proxyModeCode: String = "auto",
     // Restored from the original app:
     val scanIntervalMin: Int = 15,
-    val checkIntervalMin: Int = 5,
+    val checkIntervalMin: Int = 10,
     val checkBatch: Int = 100,
     val checkConcurrency: Int = 16,
     val speedVpn: Float = 1f,
@@ -295,6 +295,10 @@ interface Engine {
 
     /** tg:// links of currently-alive proxies, for the Export page. */
     fun exportAliveLinks(): List<String>
+
+    /** Writes all alive links to a text file in the user's home/pull-able dir
+     *  and returns its absolute path, or null on failure. */
+    fun exportLinksToFile(): String?
 
     fun refreshNow()
 

@@ -145,6 +145,7 @@ interface Strings {
     fun aliveLinks(n: Int): String
     val copyAll: String
     val openRandom: String; val copyRandom: String; val allShort: String
+    val exportToFile: String; val exportSaved: String
 
     // about
     val appTagline: String

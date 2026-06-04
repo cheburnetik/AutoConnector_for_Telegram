@@ -219,6 +219,7 @@ object En : Strings {
     override fun aliveLinks(n: Int) = "Live links: $n"
     override val copyAll = "Copy all"
     override val openRandom = "Open random"; override val copyRandom = "Copy random"; override val allShort = "All"
+    override val exportToFile = "Export to file"; override val exportSaved = "Saved to file:"
 
     override val appTagline = "Cross-platform auto-connector: it finds, checks and runs MTProto proxies " +
         "that Telegram works through."
