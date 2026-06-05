@@ -87,18 +87,18 @@ data class EngineSettings(
     val notificationsEnabled: Boolean = true,
     val onlyFakeTls: Boolean = false,
     val proxyModeCode: String = "auto",
-    // Restored from the original app:
-    val scanIntervalMin: Int = 15,
-    val checkIntervalMin: Int = 10,
-    val checkBatch: Int = 100,
-    val checkConcurrency: Int = 16,
+    // Defaults mirror Prefs (the source of truth); these are pre-load fallbacks.
+    val scanIntervalMin: Int = 30,
+    val checkIntervalMin: Int = 5,
+    val checkBatch: Int = 50,
+    val checkConcurrency: Int = 10,
     val speedVpn: Float = 1f,
     val speedWifi: Float = 1f,
     val speedLte: Float = 1f,
-    val adaptiveAliveThreshold: Int = 0,
-    val fastSpeedMultiplier: Float = 1f,
-    val lazyAliveThreshold: Int = 0,
-    val lazySpeedMultiplier: Float = 1f,
+    val adaptiveAliveThreshold: Int = 30,
+    val fastSpeedMultiplier: Float = 0.1f,
+    val lazyAliveThreshold: Int = 60,
+    val lazySpeedMultiplier: Float = 5f,
     val wifiOnly: Boolean = false,
     val chargingOnly: Boolean = false,
     val skipLowBattery: Boolean = false,
@@ -106,9 +106,10 @@ data class EngineSettings(
     val dpiApplyProbes: Boolean = true,
     val dpiApplyDirect: Boolean = false,
     val langCode: String = "auto",
-    // Experimental: alternative upstream proxying engine. Default 4 =
-    // WireShaper.Mode.COALESCE_DELAY (coalescing/batching) — the shipped default.
-    val expEngineMode: Int = 4,
+    // Experimental: alternative upstream proxying engine. Default 14 =
+    // WireShaper.Mode.SPLIT_FIRST_X3 («Сплит первого пакета ×3») on desktop;
+    // Android forces OFF. Pre-load fallback only — Prefs is the source of truth.
+    val expEngineMode: Int = 14,
     val netLogEnabled: Boolean = false,
     // Experimental: upstream-acquisition strategy (0 = OFF = serial reference).
     val relayConnectMode: Int = 0,
@@ -116,6 +117,15 @@ data class EngineSettings(
 
 /** A selectable experimental upstream engine for the settings picker. */
 data class ExpEngineOption(val code: Int, val label: String, val description: String)
+
+/** Effective scan parameters derived from a base trio + intensity multiplier,
+ *  for the settings preview. [continuous] = interval collapsed to non-stop. */
+data class ScanParams(
+    val intervalSec: Int,
+    val batch: Int,
+    val concurrency: Int,
+    val continuous: Boolean,
+)
 
 /** Build/version info for the About page. */
 data class AppInfo(val version: String, val buildDate: String)
@@ -147,6 +157,9 @@ data class HandshakeStatRow(
 data class EngineState(
     val proxyEnabled: Boolean = false,
     val scanEnabled: Boolean = false,
+    // True while a check pass is actively probing right now (manual button OR
+    // the scheduled loop) — drives the «Скан идёт / idle» header indicator.
+    val scanRunning: Boolean = false,
 
     val setupNeeded: Boolean = false,
     val setupCta: String? = null,
@@ -258,6 +271,10 @@ interface Engine {
     /** Experimental connect-strategy options for the settings picker (OFF first). */
     fun connectEngineOptions(): List<ExpEngineOption>
 
+    /** Pure preview: effective scan params for a base trio scaled by [mult].
+     *  Used by the settings screen to show the «мало/много» final numbers. */
+    fun scanParamsFor(checkMin: Int, batch: Int, concurrency: Int, mult: Float): ScanParams
+
     /** Absolute path of the diagnostic network-exchange log file (or null). */
     fun netLogPath(): String?
 
@@ -301,6 +318,11 @@ interface Engine {
     fun exportLinksToFile(): String?
 
     fun refreshNow()
+
+    /** Immediate, settings-ignoring probe of up to 500 pool proxies at 50
+     *  threads — what the Scan tab's «Сканировать сейчас» button triggers.
+     *  Skips the subscription download and the scan-enabled / intensity gates. */
+    fun scanNow()
 
     fun start()
     fun dispose()

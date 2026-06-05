@@ -80,24 +80,15 @@ public final class RelayService extends Service {
         io.autoconnector.engine.core.Prefs prefs = new io.autoconnector.engine.core.Prefs(this);
         io.autoconnector.engine.core.NetworkMode net =
                 io.autoconnector.engine.core.NetworkMonitor.currentMode();
-        float mult = prefs.speedMultiplier(net);
-        if (io.autoconnector.engine.core.BurstMode.isActive()) {
-            mult = Math.min(mult, 0.25f);
-        } else {
-            int alive = (net != io.autoconnector.engine.core.NetworkMode.UNKNOWN)
-                    ? ProxyStore.get(this).aliveCountForMode(net)
-                    : ProxyStore.get(this).aliveCount();
-            // Three tiers — too few alive: speed up to refill; plenty alive:
-            // slow way down to save battery; in between: per-net default.
-            if (alive < prefs.adaptiveAliveThreshold()) {
-                mult *= prefs.fastSpeedMultiplier();
-            } else if (alive > prefs.lazyAliveThreshold()) {
-                mult *= prefs.lazySpeedMultiplier();
-            }
-        }
-        long base = MAINS_CHECK_INTERVAL_MS;
-        long out = (long) (base * Math.max(0.1f, mult));
-        return Math.max(15_000L, out);
+        int alive = (net != io.autoconnector.engine.core.NetworkMode.UNKNOWN)
+                ? ProxyStore.get(this).aliveCountForMode(net)
+                : ProxyStore.get(this).aliveCount();
+        // Base interval is the user's «Проверка, мин», scaled by the combined
+        // intensity (per-net × adaptive). At max intensity it collapses to 0 →
+        // we scan continuously (loop with a 1 s yield, not a hot spin).
+        float mult = prefs.currentScanMult(net, alive);
+        int sec = io.autoconnector.engine.core.Prefs.effectiveCheckSec(prefs.checkIntervalMin(), mult);
+        return sec <= 0 ? 1_000L : sec * 1_000L;
     }
 
     /** Once-a-second SparkBuffer ingest, runs as long as the service is alive,
@@ -312,10 +303,19 @@ public final class RelayService extends Service {
                     ? new java.util.ArrayList<>()
                     : store.proxiesByIds(ids);
 
-            // Exploration: 80 due-for-check candidates alongside the mains.
-            // At 2-min interval this covers ~2400 hosts/hour — a typical
-            // 8000-host catalogue cycles every 3-4 hours.
-            List<ProxyEntry> due = store.dueForCheck(80);
+            // Exploration batch + parallelism scale with the current scan
+            // intensity («Размер пачки» / «Параллельно» × per-net × adaptive),
+            // so cranking intensity probes more hosts, more concurrently.
+            io.autoconnector.engine.core.Prefs prefs = new io.autoconnector.engine.core.Prefs(this);
+            io.autoconnector.engine.core.NetworkMode net =
+                    io.autoconnector.engine.core.NetworkMonitor.currentMode();
+            int aliveNow = (net != io.autoconnector.engine.core.NetworkMode.UNKNOWN)
+                    ? store.aliveCountForMode(net) : store.aliveCount();
+            float mult = prefs.currentScanMult(net, aliveNow);
+            int batch = io.autoconnector.engine.core.Prefs.effectiveBatch(prefs.checkBatch(), mult);
+            int conc = io.autoconnector.engine.core.Prefs.effectiveConcurrency(prefs.checkConcurrency(), mult);
+
+            List<ProxyEntry> due = store.dueForCheck(batch);
             List<ProxyEntry> combined = new java.util.ArrayList<>(mains);
             for (ProxyEntry d : due) {
                 if (!containsId(combined, d.id)) combined.add(d);
@@ -325,7 +325,7 @@ public final class RelayService extends Service {
             RelayLog.emit("⟳ проверка: главных " + mains.size()
                     + " + новых " + (combined.size() - mains.size()));
             CheckRunner runner = new CheckRunner(store, RelayLog::emit,
-                    Math.min(12, combined.size()));
+                    Math.min(conc, combined.size()));
             runner.runOn(combined, "mains+due");
 
             List<ProxyEntry> after = ids.isEmpty()

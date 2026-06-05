@@ -62,6 +62,7 @@ import io.autoconnector.engine.EngineState
 import io.autoconnector.engine.ExpEngineOption
 import io.autoconnector.engine.HandshakeOption
 import io.autoconnector.engine.HandshakeStatRow
+import io.autoconnector.engine.ScanParams
 import io.autoconnector.engine.SourceItem
 import io.autoconnector.i18n.LocalStrings
 import kotlin.math.log10
@@ -91,6 +92,7 @@ class MoreCallbacks(
     val handshakeOptions: List<HandshakeOption>,
     val expEngineOptions: List<ExpEngineOption>,
     val connectEngineOptions: List<ExpEngineOption>,
+    val scanParamsFor: (Int, Int, Int, Float) -> ScanParams,
     val netLogPath: String?,
     val onOpenNetLogFolder: () -> Unit,
     val onUpdateSettings: (EngineSettings) -> Unit,
@@ -159,6 +161,13 @@ fun QuickSettingsPage(cb: MoreCallbacks, onBack: () -> Unit) {
                 Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
+                // Intro: how to pick a block-bypass trick + the Telegram proxy error.
+                Text(
+                    t.quickSwitchIntro,
+                    color = AppColors.onSurfaceMuted, fontSize = 13.sp,
+                    modifier = Modifier.padding(bottom = 6.dp),
+                )
+
                 // 1) Дробление проксирования — socket wire shaping.
                 SubTitle(t.expEngineTitle)
                 cb.expEngineOptions.forEach { opt ->
@@ -389,10 +398,17 @@ private fun SettingsPage(cb: MoreCallbacks) {
 
         Section(t.adaptiveSpeed) { help = t.adaptiveSpeed to t.adaptiveHelp }
         // Threshold (compact field) + acceleration as a log slider, one per line.
+        // Below each: the FINAL effective numbers for that mode, computed live
+        // from the base trio above × this mode's multiplier (clamped to sanity).
+        val baseMin = checkInt.toIntOrNull() ?: s.checkIntervalMin
+        val baseBatch = batch.toIntOrNull() ?: s.checkBatch
+        val baseConc = conc.toIntOrNull() ?: s.checkConcurrency
         AdaptiveRow(aliveThr, { aliveThr = it; save() }, t.threshMany,
             fastMul.toFloatOrNull() ?: 1f) { fastMul = fmtMult(it); save() }
+        ScanParamReadout(t.effForFew, cb.scanParamsFor(baseMin, baseBatch, baseConc, fastMul.toFloatOrNull() ?: 1f))
         AdaptiveRow(lazyThr, { lazyThr = it; save() }, t.threshFew,
             lazyMul.toFloatOrNull() ?: 1f) { lazyMul = fmtMult(it); save() }
+        ScanParamReadout(t.effForMany, cb.scanParamsFor(baseMin, baseBatch, baseConc, lazyMul.toFloatOrNull() ?: 1f))
 
         Section(t.netBattery) { help = t.netBattery to t.netBatteryHelp }
         SwitchRow(t.onlyWifi, wifiOnly) { wifiOnly = it; save() }
@@ -636,6 +652,24 @@ private fun AdaptiveRow(
         NumField(thr, onThr, thrLabel, Modifier.width(104.dp))
         MultSlider(mult.coerceIn(0.01f, 100f), onMult)
     }
+}
+
+/** One-line readout of the effective scan numbers for a mode (live preview). */
+@Composable
+private fun ScanParamReadout(label: String, p: ScanParams) {
+    val t = LocalStrings.current
+    val interval = when {
+        p.continuous -> t.effContinuous
+        p.intervalSec < 90 -> "${p.intervalSec} ${t.secShort}"
+        else -> "${p.intervalSec / 60} ${t.minShort}"
+    }
+    Text(
+        "$label → ${t.effCheck} $interval · ${t.effBatch} ${p.batch} · ${t.effPar} ${p.concurrency}",
+        color = if (p.continuous) AppColors.accent else AppColors.onSurfaceMuted,
+        fontSize = 12.sp,
+        fontWeight = if (p.continuous) FontWeight.Bold else FontWeight.Normal,
+        modifier = Modifier.padding(start = 4.dp, bottom = 2.dp),
+    )
 }
 
 @Composable

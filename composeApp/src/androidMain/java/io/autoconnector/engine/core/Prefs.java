@@ -64,12 +64,12 @@ public class Prefs {
 
     /** How often, in minutes, the background checker re-probes proxies. */
     public int checkIntervalMin() {
-        return sp.getInt("check_interval_min", 10);
+        return sp.getInt("check_interval_min", 5);
     }
 
     /** How many parallel threads the proxy checker uses. */
     public int checkConcurrency() {
-        return sp.getInt("check_concurrency", 12);
+        return sp.getInt("check_concurrency", 10);
     }
 
     public void setCheckConcurrency(int n) {
@@ -83,7 +83,7 @@ public class Prefs {
 
     /** How many proxies one background check pass probes. */
     public int checkBatch() {
-        return sp.getInt("check_batch", 60);
+        return sp.getInt("check_batch", 50);
     }
 
     public void setCheckBatch(int n) {
@@ -105,7 +105,9 @@ public class Prefs {
     }
 
     public void setSpeedMultiplier(NetworkMode mode, float x) {
-        x = Math.max(0.25f, Math.min(8f, x));
+        // Full slider range: ×100 faster (0.01) .. ×100 slower (100). At the
+        // fast end the scheduler switches to continuous scanning.
+        x = Math.max(0.01f, Math.min(100f, x));
         String key;
         switch (mode) {
             case VPN: key = "speed_x_vpn"; break;
@@ -119,7 +121,7 @@ public class Prefs {
     /** If alive-count for current mode drops below this, the scheduler
      *  speeds up by {@link #fastSpeedMultiplier()} to refill the pool. */
     public int adaptiveAliveThreshold() {
-        return sp.getInt("adaptive_alive_threshold", 20);
+        return sp.getInt("adaptive_alive_threshold", 30);
     }
 
     public void setAdaptiveAliveThreshold(int n) {
@@ -129,17 +131,17 @@ public class Prefs {
     /** Multiplier applied to interval when adaptive-fast kicks in (alive count
      *  is below {@link #adaptiveAliveThreshold()}). 0.5 = twice as fast. */
     public float fastSpeedMultiplier() {
-        return sp.getFloat("adaptive_speed_x", 0.5f);
+        return sp.getFloat("adaptive_speed_x", 0.1f);
     }
 
     public void setFastSpeedMultiplier(float x) {
-        sp.edit().putFloat("adaptive_speed_x", Math.max(0.1f, Math.min(2f, x))).apply();
+        sp.edit().putFloat("adaptive_speed_x", Math.max(0.01f, Math.min(100f, x))).apply();
     }
 
     /** «Хороших хостов уже достаточно» — выше этого порога сканируем редко
      *  ({@link #lazySpeedMultiplier()} ×). */
     public int lazyAliveThreshold() {
-        return sp.getInt("lazy_alive_threshold", 50);
+        return sp.getInt("lazy_alive_threshold", 60);
     }
 
     public void setLazyAliveThreshold(int n) {
@@ -148,11 +150,60 @@ public class Prefs {
 
     /** Multiplier for the "we already have enough" mode. >1 slows down. */
     public float lazySpeedMultiplier() {
-        return sp.getFloat("lazy_speed_x", 4.0f);
+        return sp.getFloat("lazy_speed_x", 5.0f);
     }
 
     public void setLazySpeedMultiplier(float x) {
-        sp.edit().putFloat("lazy_speed_x", Math.max(1f, Math.min(20f, x))).apply();
+        sp.edit().putFloat("lazy_speed_x", Math.max(0.01f, Math.min(100f, x))).apply();
+    }
+
+    // --- intensity → effective scan parameters -----------------------------
+    // Pure helpers shared by the Android relay loop, the desktop engine and the
+    // settings preview, so all three derive identical numbers from one place.
+    // A smaller multiplier means "more intense": shorter interval, bigger
+    // batch, more parallelism — each clamped so nothing silly happens.
+
+    /** fd/OOM ceiling for concurrent probes. */
+    public static final int CONCURRENCY_CAP = 32;
+    /** Effective intervals shorter than this switch the scan to continuous. */
+    public static final int CONTINUOUS_BELOW_SEC = 8;
+
+    private static float clampIntensity(float m) {
+        return Math.max(0.005f, Math.min(100f, m));
+    }
+
+    /** Effective check interval in seconds = base (minutes) × intensity.
+     *  Returns 0 when so small the scan should run continuously (no sleep). */
+    public static int effectiveCheckSec(int baseMin, float mult) {
+        float m = clampIntensity(mult);
+        long sec = Math.round(Math.max(1, baseMin) * 60.0 * m);
+        if (sec < CONTINUOUS_BELOW_SEC) return 0;       // super-intense → непрерывно
+        return (int) Math.min(sec, 6L * 3600L);         // never longer than 6 h
+    }
+
+    /** Effective batch: more intense (smaller mult) probes more hosts per pass. */
+    public static int effectiveBatch(int baseBatch, float mult) {
+        float m = clampIntensity(mult);
+        long b = Math.round(Math.max(1, baseBatch) / m);
+        return (int) Math.max(10, Math.min(1000, b));
+    }
+
+    /** Effective parallelism: grows ~1/√intensity so it stays sane, capped. */
+    public static int effectiveConcurrency(int baseConc, float mult) {
+        float m = clampIntensity(mult);
+        long c = Math.round(Math.max(1, baseConc) / Math.sqrt(m));
+        return (int) Math.max(1, Math.min(CONCURRENCY_CAP, c));
+    }
+
+    /** Combined intensity for the current connection + adaptive alive-state —
+     *  the same three-tier logic the schedulers use, centralised so interval,
+     *  batch and concurrency all read one multiplier. */
+    public float currentScanMult(NetworkMode net, int alive) {
+        float mult = speedMultiplier(net);
+        if (BurstMode.isActive()) return Math.min(mult, 0.25f);
+        if (alive < adaptiveAliveThreshold()) mult *= fastSpeedMultiplier();
+        else if (alive > lazyAliveThreshold()) mult *= lazySpeedMultiplier();
+        return mult;
     }
 
     // --- master switches ---------------------------------------------------
@@ -390,6 +441,34 @@ public class Prefs {
             // OFF on Android (native path works), coalescing on desktop. Force
             // the platform default once; afterwards the user's choice is kept.
             sp.edit().putInt("exp_engine_mode", SHIPPED_EXP_ENGINE).putInt("defaults_v", 2).apply();
+            v = 2;
+        }
+        if (v < 3) {
+            // v3: desktop default moved from coalescing to «Сплит первого пакета»
+            // (code 12); Android stays OFF. Re-apply the platform default once.
+            sp.edit().putInt("exp_engine_mode", SHIPPED_EXP_ENGINE).putInt("defaults_v", 3).apply();
+            v = 3;
+        }
+        if (v < 4) {
+            // v4: refreshed scan-tuning baseline requested by the user. Applied
+            // once so existing installs pick it up; afterwards the user's own
+            // edits in Settings are respected.
+            sp.edit()
+              .putInt("scan_interval_min", 30)
+              .putInt("check_interval_min", 5)
+              .putInt("check_batch", 50)
+              .putInt("check_concurrency", 10)
+              .putInt("adaptive_alive_threshold", 30)
+              .putFloat("adaptive_speed_x", 0.1f)   // «мало» → ×10 быстрее
+              .putInt("lazy_alive_threshold", 60)
+              .putFloat("lazy_speed_x", 5.0f)        // «много» → ×5 медленнее
+              .putInt("defaults_v", 4).apply();
+            v = 4;
+        }
+        if (v < 5) {
+            // v5: desktop/non-Android default proxying engine → «Сплит первого
+            // пакета ×3» (code 14). Android stays OFF (SHIPPED_EXP_ENGINE=0).
+            sp.edit().putInt("exp_engine_mode", SHIPPED_EXP_ENGINE).putInt("defaults_v", 5).apply();
         }
     }
 }

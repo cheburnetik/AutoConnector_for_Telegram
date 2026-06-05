@@ -194,6 +194,11 @@ object Ru : Strings {
         "чтобы сравнить характер обмена с VPN и без него."
     override val openLogFolder = "Открыть папку лога"; override val copyPath = "Скопировать путь"
     override val quickSwitchTitle = "Быстрое переключение"; override val quickSwitchSub = "Дробление, коннект, анти-DPI"
+    override val quickSwitchIntro = "Здесь вы можете подобрать трюки обхода блокировок. Если телеграм " +
+        "выдаёт ошибку «The proxy you are using is not configured correctly and will be disabled. " +
+        "Please find another one», подбирайте экспериментально, какой из видов обфускации трафика " +
+        "сработает и Телеграм бы не выдавал эту ошибку. Начните со сплит* режимов. Ещё работают " +
+        "коалесинг*, но при этом в телеграме плохо грузятся картинки/видео."
 
     override val sourceUrl = "URL источника"
     override fun sourceAlive(alive: Int, total: Int) = "живых $alive/$total"
@@ -217,6 +222,11 @@ object Ru : Strings {
     override val copyAll = "Скопировать все"
     override val openRandom = "Открыть случайный"; override val copyRandom = "Копировать случайный"; override val allShort = "Все"
     override val exportToFile = "Экспорт в файл"; override val exportSaved = "Сохранено в файл:"
+    override val scanNow = "Сканировать сейчас"; override val scanOnShort = "Скан включён"
+    override val scanRunning = "Скан идёт"; override val scanIdle = "Скан idle"
+    override val effForFew = "При «мало»"; override val effForMany = "При «много»"
+    override val effCheck = "Проверка"; override val effBatch = "Пачка"; override val effPar = "Параллельно"
+    override val effContinuous = "непрерывно"; override val secShort = "с"; override val minShort = "мин"
 
     override val appTagline = "Кросс-платформенный авто-коннектор: сам находит, проверяет и поднимает " +
         "MTProto-прокси, через которые работает Telegram."

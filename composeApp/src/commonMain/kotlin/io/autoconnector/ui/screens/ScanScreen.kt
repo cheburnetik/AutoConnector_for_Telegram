@@ -6,8 +6,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -21,7 +26,7 @@ import io.autoconnector.ui.components.cell
 import io.autoconnector.ui.theme.AppColors
 
 @Composable
-fun ScanContent(s: EngineState) {
+fun ScanContent(s: EngineState, onScanNow: () -> Unit) {
     val t = LocalStrings.current
     val checkedMin = s.checksOk60s + s.checksFail60s
     val checkedHour = s.checksOk60m + s.checksFail60m
@@ -30,8 +35,19 @@ fun ScanContent(s: EngineState) {
         Modifier.fillMaxWidth().padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        if (!s.scanEnabled) {
-            StatTable(rows = listOf(listOf(cell(t.scanOff, AppColors.onSurfaceMuted))))
+        // First row: live scan state on the left ("Скан идёт / idle" — reflects
+        // whether a check pass is actually probing right now, by the button or by
+        // the schedule), and an icon-only "scan now" button on the right that
+        // kicks an immediate pass regardless of the toggle / intensity throttle.
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                if (s.scanRunning) t.scanRunning else t.scanIdle,
+                color = if (s.scanRunning) AppColors.green else AppColors.onSurfaceMuted,
+                fontWeight = FontWeight.Bold, fontSize = 15.sp, modifier = Modifier.weight(1f),
+            )
+            IconButton(onClick = onScanNow) {
+                Icon(Icons.Filled.Refresh, t.scanNow, tint = AppColors.accent)
+            }
         }
 
         // Graph moved to the top of the tab.
