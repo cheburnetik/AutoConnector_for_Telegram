@@ -111,7 +111,7 @@ public final class WireShaper {
                 + "но TCP_NODELAY ВКЛ — ядро не добавляет вторую задержку поверх буфера. "
                 + "Маскировка как у обычного, но без двойной буферизации, которая душила медиа."),
 
-        // --- Time-released coalescing + GoodbyeDPI-style first-packet split -------
+        // --- Time-released coalescing + first-packet split family -----------------
         // Why time-based: byte-latched modes (turbo/warmup) only go transparent
         // after enough bytes are SENT upstream. A media DOWNLOAD sends almost
         // nothing upstream (just tiny ACK/request packets), so the latch never
@@ -128,20 +128,47 @@ public final class WireShaper {
                 + "release по ВРЕМЕНИ, а не по объёму — поэтому разблокирует и СКАЧИВАНИЕ медиа "
                 + "(при загрузке вверх уходит мало байт, и счётчик защёлки не срабатывал)."),
 
-        /** GoodbyeDPI's signature move (-e 2 --native-frag): split only the very
-         *  first outbound payload into a tiny first TCP segment + the rest, then
-         *  pass through. TCP_NODELAY ON so each flush is its own real segment. */
-        GBDPI_SPLIT(12, "gbdpi_split", "GoodbyeDPI: сплит первого пакета",
-                "Идея из GoodbyeDPI (-e 2): самый первый исходящий пакет режется на крошечный "
-                + "первый TCP-сегмент (≈2 Б) + остаток — так маркер/сигнатура не лежит целиком в "
-                + "одном сегменте. Дальше поток без изменений (TCP_NODELAY ВКЛ). Лёгкий, не душит медиа."),
+        /** Split only the very first outbound payload into a tiny first TCP
+         *  segment + the rest, then pass through. TCP_NODELAY ON so each flush is
+         *  its own real segment. The lightest, media-safe desync — the default. */
+        GBDPI_SPLIT(12, "split_first_pkt", "Сплит первого пакета",
+                "Самый первый исходящий пакет режется на крошечный первый TCP-сегмент (≈2 Б) + "
+                + "остаток — так маркер/сигнатура не лежит целиком в одном сегменте, а DPI без "
+                + "пересборки её не видит. Дальше поток без изменений (TCP_NODELAY ВКЛ). "
+                + "Лёгкий, не душит медиа — рекомендуется по умолчанию."),
 
-        /** GoodbyeDPI first-packet split AND a time-released coalescing window —
-         *  handshake desync (GoodbyeDPI) + bulk-look that frees media after ~1.5 s. */
-        GBDPI_SPLIT_TIME(13, "gbdpi_split_time", "GoodbyeDPI сплит + коалесинг по времени",
-                "Комбо: режет первый пакет по-GoodbyeDPI И первые ~1.5 с маскирует обмен под "
-                + "bulk-загрузку, затем полный проброс. Лучший шанс пройти DPI на старте и не "
-                + "задушить медиа после. Пробуйте, если «турбо» держит связь, но медиа не грузится.");
+        /** First-packet split AND a time-released coalescing window — handshake
+         *  desync + bulk-look that frees media after ~1.5 s. */
+        GBDPI_SPLIT_TIME(13, "split_first_time", "Сплит первого пакета + коалесинг",
+                "Комбо: режет первый пакет И первые ~1.5 с маскирует обмен под bulk-загрузку, "
+                + "затем полный проброс. Шанс пройти DPI на старте и не задушить медиа после. "
+                + "Пробуйте, если простой сплит проходит, но хочется маскировки старта."),
+
+        // --- «Сплит первого пакета»: усиленные вариации (оригинал не трогаем) -----
+        // The plain split cuts ONE write at a tiny offset. These push the same idea
+        // harder for stubborn DPI, while still passing all later writes straight
+        // through (TCP_NODELAY ON) so media throughput stays intact.
+
+        /** Splits the first THREE outbound writes (handshake + first data), each
+         *  into a tiny head + rest — a stronger desync than the single-write split. */
+        SPLIT_FIRST_X3(14, "split_first_x3", "Сплит первого пакета ×3",
+                "Как «Сплит первого пакета», но режет первые ТРИ исходящие записи "
+                + "(рукопожатие + начало данных), каждую на крошечный сегмент (≈3 Б) + остаток. "
+                + "Сильнее сбивает DPI на старте; дальше — полный проброс, медиа не страдает."),
+
+        /** Dices the first payload into many tiny segments over its opening bytes —
+         *  no contiguous window for a non-reassembling DPI to match on. */
+        SPLIT_FIRST_MULTI(15, "split_first_multi", "Сплит первого пакета (мульти)",
+                "Первый пакет рубится на множество мелких сегментов (~8 Б) на первых ~64 байтах, "
+                + "затем остаток и весь дальнейший поток идут как есть. У DPI вообще нет цельного "
+                + "окна для матча в начале. Самый агрессивный сплит, медиа не душит."),
+
+        /** First-packet split with a short pause between the two segments so even a
+         *  stack that coalesces back-to-back writes still emits two packets. */
+        SPLIT_FIRST_GAP(16, "split_first_gap", "Сплит первого пакета с паузой",
+                "Режет первый пакет и делает короткую паузу (~6 мс) перед остатком — так даже "
+                + "сетевой стек, склеивающий соседние записи, гарантированно отправит ДВА пакета. "
+                + "Для DPI/прокси, где обычный сплит иногда «слипается» обратно в один сегмент.");
 
         public final int code;
         public final String key;
@@ -159,6 +186,27 @@ public final class WireShaper {
             for (Mode m : values()) if (m.code == c) return m;
             return OFF;
         }
+    }
+
+    /**
+     * Order the engines appear in the settings picker, independent of the enum's
+     * declaration order: OFF, then the first-packet split family (the default and
+     * its stronger variations), then the coalescing family, then the older
+     * fragmenting modes. Codes are unchanged, so saved settings still resolve.
+     */
+    public static Mode[] displayOrder() {
+        return new Mode[] {
+                Mode.OFF,
+                // First-packet split family — split first, default.
+                Mode.GBDPI_SPLIT, Mode.SPLIT_FIRST_X3, Mode.SPLIT_FIRST_MULTI,
+                Mode.SPLIT_FIRST_GAP, Mode.GBDPI_SPLIT_TIME,
+                // Coalescing family — they work but throttle media downloads.
+                Mode.COALESCE_DELAY, Mode.COALESCE_TURBO, Mode.COALESCE_LIGHT,
+                Mode.COALESCE_NODELAY, Mode.COALESCE_TIME, Mode.COALESCE_ADAPTIVE,
+                Mode.COALESCE_WARMUP, Mode.NAGLE_ONLY,
+                // Older fragmenting modes.
+                Mode.SPLIT_FIRST_N, Mode.FRAGMENT_ALL, Mode.TLS_RECHUNK,
+        };
     }
 
     private WireShaper() {}
@@ -188,6 +236,9 @@ public final class WireShaper {
                 case COALESCE_TIME:
                 case GBDPI_SPLIT:
                 case GBDPI_SPLIT_TIME:
+                case SPLIT_FIRST_X3:
+                case SPLIT_FIRST_MULTI:
+                case SPLIT_FIRST_GAP:
                     nagle = false; break;
                 default:
                     nagle = false; break;
@@ -232,13 +283,22 @@ public final class WireShaper {
                 // Coalesce small (<512B) writes for the first 1500 ms, then transparent.
                 return new TimeCoalescing(raw, 1500, 512, 8192, 4);
             case GBDPI_SPLIT:
-                // GoodbyeDPI -e 2: split the first payload at 2 bytes, then passthrough.
+                // Split the first payload at 2 bytes, then passthrough.
                 return new FirstSplit(raw, 2);
             case GBDPI_SPLIT_TIME:
-                // GoodbyeDPI first-packet split (innermost, nearest the socket) under a
-                // 1500 ms coalescing window (outer). The coalescer's first flush is what
-                // the splitter cuts, so the split survives the batching.
+                // First-packet split (innermost, nearest the socket) under a 1500 ms
+                // coalescing window (outer). The coalescer's first flush is what the
+                // splitter cuts, so the split survives the batching.
                 return new TimeCoalescing(new FirstSplit(raw, 2), 1500, 512, 8192, 4);
+            case SPLIT_FIRST_X3:
+                // Split each of the first 3 outbound writes at a 3-byte head.
+                return new FirstNSplit(raw, 3, 3);
+            case SPLIT_FIRST_MULTI:
+                // Dice the first payload into 8-byte segments over its first 64 bytes.
+                return new FirstMultiSplit(raw, 8, 64);
+            case SPLIT_FIRST_GAP:
+                // Split the first payload at 2 bytes with a 6 ms gap before the rest.
+                return new FirstSplitDelay(raw, 2, 6);
             case NAGLE_ONLY:
                 // No userspace shaping; the kernel coalesces via Nagle (nodelay off).
                 return raw;
@@ -641,15 +701,15 @@ public final class WireShaper {
     }
 
     /**
-     * GoodbyeDPI's first-packet TCP fragmentation ({@code -e <n>} / {@code
-     * --native-frag}), faithful to the userspace-doable subset: the very FIRST
-     * outbound payload is cut into a tiny first segment of {@code splitAt} bytes
-     * and the remainder, each flushed separately so (with TCP_NODELAY on) they
-     * become two distinct TCP segments. The forbidden marker therefore never sits
-     * contiguously in the first segment a non-reassembling DPI inspects. Every
-     * subsequent write passes straight through — throughput is untouched, so this
-     * does not strangle media. The fake-packet/low-TTL/wrong-seq tricks GoodbyeDPI
-     * also uses are NOT possible from a pure-Java connected socket and are omitted.
+     * First-packet TCP fragmentation (the userspace-doable subset): the very
+     * FIRST outbound payload is cut into a tiny first segment of {@code splitAt}
+     * bytes and the remainder, each flushed separately so (with TCP_NODELAY on)
+     * they become two distinct TCP segments. The forbidden marker therefore never
+     * sits contiguously in the first segment a non-reassembling DPI inspects.
+     * Every subsequent write passes straight through — throughput is untouched, so
+     * this does not strangle media. Raw-socket tricks (fake packets, low TTL,
+     * wrong seq/checksum) are NOT possible from a pure-Java connected socket and
+     * are omitted.
      */
     private static final class FirstSplit extends OutputStream {
         private final OutputStream d;
@@ -676,6 +736,121 @@ public final class WireShaper {
             d.flush();
             d.write(b, off + splitAt, len - splitAt); // segment #2: the rest
             d.flush();
+            done = true;
+        }
+
+        @Override public void flush() throws IOException { d.flush(); }
+        @Override public void close() throws IOException { d.close(); }
+    }
+
+    /**
+     * {@link FirstSplit} applied to the first {@code count} outbound writes (not
+     * just one): each is cut into a {@code splitAt}-byte head + the rest, flushed
+     * separately. Stronger handshake desync; every write after the count passes
+     * straight through, so throughput / media stay untouched.
+     */
+    private static final class FirstNSplit extends OutputStream {
+        private final OutputStream d;
+        private final int splitAt;
+        private int left;
+
+        FirstNSplit(OutputStream d, int count, int splitAt) {
+            this.d = d;
+            this.left = Math.max(1, count);
+            this.splitAt = Math.max(1, splitAt);
+        }
+
+        @Override public synchronized void write(int b) throws IOException {
+            d.write(b); d.flush(); if (left > 0) left--;
+        }
+
+        @Override public synchronized void write(byte[] b, int off, int len) throws IOException {
+            if (left <= 0 || len <= splitAt) {
+                d.write(b, off, len); d.flush();
+                if (left > 0) left--;
+                return;
+            }
+            d.write(b, off, splitAt); d.flush();              // tiny head
+            d.write(b, off + splitAt, len - splitAt); d.flush(); // the rest
+            left--;
+        }
+
+        @Override public void flush() throws IOException { d.flush(); }
+        @Override public void close() throws IOException { d.close(); }
+    }
+
+    /**
+     * Dices the FIRST outbound payload into {@code seg}-byte segments over its
+     * opening {@code head} bytes (each its own flush → its own TCP segment), then
+     * the remainder and every later write pass straight through. Leaves no
+     * contiguous opening window for a non-reassembling DPI to match — the most
+     * aggressive first-packet split — without touching later throughput.
+     */
+    private static final class FirstMultiSplit extends OutputStream {
+        private final OutputStream d;
+        private final int seg;
+        private final int head;
+        private boolean done;
+
+        FirstMultiSplit(OutputStream d, int seg, int head) {
+            this.d = d;
+            this.seg = Math.max(1, seg);
+            this.head = Math.max(this.seg, head);
+        }
+
+        @Override public synchronized void write(int b) throws IOException {
+            d.write(b); d.flush(); done = true;
+        }
+
+        @Override public synchronized void write(byte[] b, int off, int len) throws IOException {
+            if (done) { d.write(b, off, len); d.flush(); return; }
+            int end = off + len;
+            int cut = off + Math.min(len, head);
+            int p = off;
+            while (p < cut) {
+                int take = Math.min(seg, cut - p);
+                d.write(b, p, take); d.flush();
+                p += take;
+            }
+            if (p < end) { d.write(b, p, end - p); d.flush(); }
+            done = true;
+        }
+
+        @Override public void flush() throws IOException { d.flush(); }
+        @Override public void close() throws IOException { d.close(); }
+    }
+
+    /**
+     * {@link FirstSplit} plus a short {@code gapMs} pause between the head segment
+     * and the remainder, so even a network stack that coalesces back-to-back
+     * writes still emits two distinct packets. Only the first payload is affected.
+     */
+    private static final class FirstSplitDelay extends OutputStream {
+        private final OutputStream d;
+        private final int splitAt;
+        private final long gapMs;
+        private boolean done;
+
+        FirstSplitDelay(OutputStream d, int splitAt, long gapMs) {
+            this.d = d;
+            this.splitAt = Math.max(1, splitAt);
+            this.gapMs = Math.max(1, gapMs);
+        }
+
+        @Override public synchronized void write(int b) throws IOException {
+            d.write(b); d.flush(); done = true;
+        }
+
+        @Override public synchronized void write(byte[] b, int off, int len) throws IOException {
+            if (done || len <= splitAt) {
+                d.write(b, off, len); d.flush(); done = true;
+                return;
+            }
+            d.write(b, off, splitAt); d.flush();              // tiny head
+            try { Thread.sleep(gapMs); } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+            }
+            d.write(b, off + splitAt, len - splitAt); d.flush(); // the rest
             done = true;
         }
 

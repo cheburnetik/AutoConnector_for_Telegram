@@ -196,7 +196,11 @@ object En : Strings {
     override val netLogSub = "Writes WHO-TO-WHOM-WHEN and packet sizes to a file (NO payload data) — " +
         "to compare the exchange pattern with vs. without a VPN."
     override val openLogFolder = "Open log folder"; override val copyPath = "Copy path"
-    override val quickSwitchTitle = "Quick switch"; override val quickSwitchSub = "Shaping, connect, anti-DPI"
+    override val quickSwitchIntro = "Here you can pick a block-bypass trick. If Telegram shows the error " +
+        "“The proxy you are using is not configured correctly and will be disabled. Please find another " +
+        "one”, experiment with which traffic-obfuscation type works so Telegram stops showing it. Start " +
+        "with the split* modes. The coalesce* modes also work, but images/videos load poorly in Telegram with them."
+    override val quickSwitchTitle ="Quick switch"; override val quickSwitchSub = "Shaping, connect, anti-DPI"
 
     override val sourceUrl = "Source URL"
     override fun sourceAlive(alive: Int, total: Int) = "live $alive/$total"
@@ -220,6 +224,11 @@ object En : Strings {
     override val copyAll = "Copy all"
     override val openRandom = "Open random"; override val copyRandom = "Copy random"; override val allShort = "All"
     override val exportToFile = "Export to file"; override val exportSaved = "Saved to file:"
+    override val scanNow = "Scan now"; override val scanOnShort = "Scan on"
+    override val scanRunning = "Scan running"; override val scanIdle = "Scan idle"
+    override val effForFew = "When few"; override val effForMany = "When many"
+    override val effCheck = "Check"; override val effBatch = "Batch"; override val effPar = "Parallel"
+    override val effContinuous = "continuous"; override val secShort = "s"; override val minShort = "min"
 
     override val appTagline = "Cross-platform auto-connector: it finds, checks and runs MTProto proxies " +
         "that Telegram works through."

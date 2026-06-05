@@ -121,6 +121,7 @@ fun App(engine: Engine) {
             handshakeOptions = engine.handshakeOptions(),
             expEngineOptions = engine.expEngineOptions(),
             connectEngineOptions = engine.connectEngineOptions(),
+            scanParamsFor = engine::scanParamsFor,
             netLogPath = engine.netLogPath(),
             onOpenNetLogFolder = engine::openNetLogFolder,
             onUpdateSettings = engine::updateSettings,
@@ -207,7 +208,7 @@ fun App(engine: Engine) {
                     Tabs.CONNECTOR -> item {
                         ConnectorContent(state, onOpenGuide = { showGuide = true }, onOpenQuick = { quickSettings = true })
                     }
-                    Tabs.SCAN -> item { ScanContent(state) }
+                    Tabs.SCAN -> item { ScanContent(state, onScanNow = engine::scanNow) }
                     Tabs.CATALOG -> catalogItems(catalog, onClick = { detail = it })
                     Tabs.LOGS -> logsItems(
                         logs = logs,

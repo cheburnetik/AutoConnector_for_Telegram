@@ -123,6 +123,7 @@ interface Strings {
     val netLog: String; val netLogSub: String
     val openLogFolder: String; val copyPath: String
     val quickSwitchTitle: String; val quickSwitchSub: String
+    val quickSwitchIntro: String
 
     // sources
     val sourceUrl: String
@@ -146,6 +147,12 @@ interface Strings {
     val copyAll: String
     val openRandom: String; val copyRandom: String; val allShort: String
     val exportToFile: String; val exportSaved: String
+    // scan tab + intensity preview
+    val scanNow: String; val scanOnShort: String
+    val scanRunning: String; val scanIdle: String
+    val effForFew: String; val effForMany: String
+    val effCheck: String; val effBatch: String; val effPar: String
+    val effContinuous: String; val secShort: String; val minShort: String
 
     // about
     val appTagline: String

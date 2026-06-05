@@ -8,6 +8,7 @@ import io.autoconnector.engine.Engine
 import io.autoconnector.engine.EngineSettings
 import io.autoconnector.engine.EngineState
 import io.autoconnector.engine.ExpEngineOption
+import io.autoconnector.engine.ScanParams
 import io.autoconnector.engine.HandshakeOption
 import io.autoconnector.engine.HandshakeStatRow
 import io.autoconnector.engine.LogCat
@@ -96,9 +97,9 @@ class DesktopEngine(private val dataDir: File) : Engine {
         HandshakeStats.init(ctx)
         NetworkMonitor.init(ctx)
         NetLog.init(dataDir)
-        // Desktop ships coalescing/batching as the default proxying engine (the
-        // only stable desktop mode). Android overrides this to OFF.
-        Prefs.SHIPPED_EXP_ENGINE = 4
+        // Desktop ships «Сплит первого пакета ×3» (code 14) as the default
+        // proxying engine — stronger first-packet desync, media-safe. Android off.
+        Prefs.SHIPPED_EXP_ENGINE = 14
         Prefs(ctx).applyShippedDefaultsOnce()
         RelayLog.register { session, line -> appendLog(line, LogCat.TELEGRAM, session) }
         loadSettings()
@@ -258,10 +259,20 @@ class DesktopEngine(private val dataDir: File) : Engine {
     }
 
     override fun expEngineOptions(): List<ExpEngineOption> =
-        WireShaper.Mode.values().map { ExpEngineOption(it.code, it.label, it.description) }
+        WireShaper.displayOrder().map { ExpEngineOption(it.code, it.label, it.description) }
 
     override fun connectEngineOptions(): List<ExpEngineOption> =
         RelayConnectMode.values().map { ExpEngineOption(it.code, it.label, it.description) }
+
+    override fun scanParamsFor(checkMin: Int, batch: Int, concurrency: Int, mult: Float): ScanParams {
+        val sec = Prefs.effectiveCheckSec(checkMin, mult)
+        return ScanParams(
+            intervalSec = sec,
+            batch = Prefs.effectiveBatch(batch, mult),
+            concurrency = Prefs.effectiveConcurrency(concurrency, mult),
+            continuous = sec <= 0,
+        )
+    }
 
     override fun netLogPath(): String? = NetLog.file()?.absolutePath
 
@@ -402,6 +413,36 @@ class DesktopEngine(private val dataDir: File) : Engine {
         scope.launch(Dispatchers.IO) { scanAndCheck() }
     }
 
+    private val scanNowBusy = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    override fun scanNow() {
+        // Re-entry guard: ignore extra taps while a manual scan is already in
+        // flight, so hammering the button can't stack dozens of 500-host passes.
+        if (!scanNowBusy.compareAndSet(false, true)) {
+            appendLog("⚡ скан сейчас уже идёт — подождите завершения", LogCat.SCAN)
+            return
+        }
+        scope.launch(Dispatchers.IO) {
+            try {
+                val list = store.dueForCheck(500)
+                if (list.isEmpty()) {
+                    appendLog("⚡ скан сейчас: в базе нет прокси — нечего проверять", LogCat.SCAN)
+                    return@launch
+                }
+                appendLog("⚡ скан сейчас: ${list.size} прокси в 50 потоков", LogCat.SCAN)
+                val p = Prefs(ctx)
+                val runner = CheckRunner(store, CheckRunner.Log { line -> appendLog(line, LogCat.SCAN) }, 50)
+                runner.setProbeMode(if (p.dpiApplyProbes()) HandshakeMode.fromOrdinal(p.handshakeMode()) else HandshakeMode.NORMAL)
+                runner.runOn(list, "scan-now")
+                appendLog("⚡ скан сейчас готов: живых ${store.countAlive()} / ${store.count()}", LogCat.SCAN)
+            } catch (t: Throwable) {
+                appendLog("⚠ скан сейчас: ${t.message}", LogCat.SCAN)
+            } finally {
+                scanNowBusy.set(false)
+            }
+        }
+    }
+
     // === polling =========================================================
 
     private suspend fun pollLoop() {
@@ -455,29 +496,33 @@ class DesktopEngine(private val dataDir: File) : Engine {
     private fun dynamicCheckInterval(): Long {
         val prefs = Prefs(ctx)
         val net = NetworkMonitor.currentMode()
-        var mult = prefs.speedMultiplier(net)
-        if (io.autoconnector.engine.core.BurstMode.isActive()) {
-            mult = minOf(mult, 0.25f)
-        } else {
-            val alive = if (net != NetworkMode.UNKNOWN)
-                store.aliveCountForMode(net) else store.aliveCount()
-            if (alive < prefs.adaptiveAliveThreshold()) mult *= prefs.fastSpeedMultiplier()
-            else if (alive > prefs.lazyAliveThreshold()) mult *= prefs.lazySpeedMultiplier()
-        }
-        val out = (MAINS_CHECK_INTERVAL_MS * maxOf(0.1f, mult)).toLong()
-        return maxOf(15_000L, out)
+        val alive = if (net != NetworkMode.UNKNOWN)
+            store.aliveCountForMode(net) else store.aliveCount()
+        // Base interval is «Проверка, мин», scaled by combined intensity; at
+        // max intensity it collapses to 0 → scan continuously (1 s yield loop).
+        val mult = prefs.currentScanMult(net, alive)
+        val sec = Prefs.effectiveCheckSec(prefs.checkIntervalMin(), mult)
+        return if (sec <= 0) 1_000L else sec * 1_000L
     }
 
     private fun checkMains() {
         val ids = RelayManager.currentStickyProxyIds()
         val mains = if (ids.isEmpty()) ArrayList() else store.proxiesByIds(ids)
-        val due = store.dueForCheck(80)
+        // Batch + parallelism scale with the current scan intensity
+        // («Размер пачки» / «Параллельно» × per-net × adaptive).
+        val prefs = Prefs(ctx)
+        val net = NetworkMonitor.currentMode()
+        val aliveNow = if (net != NetworkMode.UNKNOWN) store.aliveCountForMode(net) else store.aliveCount()
+        val mult = prefs.currentScanMult(net, aliveNow)
+        val batch = Prefs.effectiveBatch(prefs.checkBatch(), mult)
+        val conc = Prefs.effectiveConcurrency(prefs.checkConcurrency(), mult)
+        val due = store.dueForCheck(batch)
         val combined = ArrayList(mains)
         for (d in due) if (combined.none { it.id == d.id }) combined.add(d)
         if (combined.isEmpty()) return
 
         RelayLog.emit("⟳ проверка: главных ${mains.size} + новых ${combined.size - mains.size}")
-        val runner = CheckRunner(store, CheckRunner.Log { line -> appendLog(line, LogCat.SCAN) }, minOf(12, combined.size))
+        val runner = CheckRunner(store, CheckRunner.Log { line -> appendLog(line, LogCat.SCAN) }, minOf(conc, combined.size))
         runner.runOn(combined, "mains+due")
 
         val after = if (ids.isEmpty()) ArrayList() else store.proxiesByIds(ids)
@@ -619,6 +664,7 @@ class DesktopEngine(private val dataDir: File) : Engine {
         _state.value = EngineState(
             proxyEnabled = proxyOn,
             scanEnabled = scanOn,
+            scanRunning = io.autoconnector.engine.core.ScanState.probing.isNotEmpty(),
             setupNeeded = setupNeeded,
             setupCta = cta,
             portA = p.relayPortA(),
@@ -913,6 +959,6 @@ class DesktopEngine(private val dataDir: File) : Engine {
     companion object {
         // Single dotted-semver version line for the desktop build (matches the
         // GitHub release tag vX.Y.Z). Build date is injected at launch — see appInfo().
-        private const val DESKTOP_VERSION = "1.0.15"
+        private const val DESKTOP_VERSION = "1.0.19"
     }
 }

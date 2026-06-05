@@ -14,6 +14,7 @@ import io.autoconnector.engine.Engine
 import io.autoconnector.engine.EngineSettings
 import io.autoconnector.engine.EngineState
 import io.autoconnector.engine.ExpEngineOption
+import io.autoconnector.engine.ScanParams
 import io.autoconnector.engine.HandshakeOption
 import io.autoconnector.engine.HandshakeStatRow
 import io.autoconnector.engine.LogCat
@@ -25,6 +26,7 @@ import io.autoconnector.engine.SourceItem
 import io.autoconnector.engine.check.CheckRunner
 import io.autoconnector.engine.core.Durations
 import io.autoconnector.engine.core.NetworkMode
+import io.autoconnector.engine.core.ScanState
 import io.autoconnector.engine.core.NetworkMonitor
 import io.autoconnector.engine.core.Prefs
 import io.autoconnector.engine.db.ProxyStore
@@ -227,10 +229,20 @@ class AndroidEngine(context: Context) : Engine {
     }
 
     override fun expEngineOptions(): List<ExpEngineOption> =
-        WireShaper.Mode.values().map { ExpEngineOption(it.code, it.label, it.description) }
+        WireShaper.displayOrder().map { ExpEngineOption(it.code, it.label, it.description) }
 
     override fun connectEngineOptions(): List<ExpEngineOption> =
         RelayConnectMode.values().map { ExpEngineOption(it.code, it.label, it.description) }
+
+    override fun scanParamsFor(checkMin: Int, batch: Int, concurrency: Int, mult: Float): ScanParams {
+        val sec = Prefs.effectiveCheckSec(checkMin, mult)
+        return ScanParams(
+            intervalSec = sec,
+            batch = Prefs.effectiveBatch(batch, mult),
+            concurrency = Prefs.effectiveConcurrency(concurrency, mult),
+            continuous = sec <= 0,
+        )
+    }
 
     override fun netLogPath(): String? = NetLog.file()?.absolutePath
 
@@ -368,6 +380,36 @@ class AndroidEngine(context: Context) : Engine {
 
     override fun refreshNow() {
         scope.launch(Dispatchers.IO) { scanAndCheck() }
+    }
+
+    private val scanNowBusy = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    override fun scanNow() {
+        // Re-entry guard: ignore extra taps while a manual scan is already in
+        // flight, so hammering the button can't stack dozens of 500-host passes.
+        if (!scanNowBusy.compareAndSet(false, true)) {
+            appendLog("⚡ скан сейчас уже идёт — подождите завершения", LogCat.SCAN)
+            return
+        }
+        scope.launch(Dispatchers.IO) {
+            try {
+                val list = store.dueForCheck(500)
+                if (list.isEmpty()) {
+                    appendLog("⚡ скан сейчас: в базе нет прокси — нечего проверять", LogCat.SCAN)
+                    return@launch
+                }
+                appendLog("⚡ скан сейчас: ${list.size} прокси в 50 потоков", LogCat.SCAN)
+                val p = Prefs(ctx)
+                val runner = CheckRunner(store, { line -> appendLog(line, LogCat.SCAN) }, 50)
+                runner.setProbeMode(if (p.dpiApplyProbes()) HandshakeMode.fromOrdinal(p.handshakeMode()) else HandshakeMode.NORMAL)
+                runner.runOn(list, "scan-now")
+                appendLog("⚡ скан сейчас готов: живых ${store.countAlive()} / ${store.count()}", LogCat.SCAN)
+            } catch (t: Throwable) {
+                appendLog("⚠ скан сейчас: ${t.message}", LogCat.SCAN)
+            } finally {
+                scanNowBusy.set(false)
+            }
+        }
     }
 
     // === polling =========================================================
@@ -521,6 +563,7 @@ class AndroidEngine(context: Context) : Engine {
         _state.value = EngineState(
             proxyEnabled = proxyOn,
             scanEnabled = scanOn,
+            scanRunning = ScanState.probing.isNotEmpty(),
             setupNeeded = setupNeeded,
             setupCta = cta,
             portA = p.relayPortA(),
