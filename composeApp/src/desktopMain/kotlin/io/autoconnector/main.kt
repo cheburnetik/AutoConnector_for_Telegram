@@ -77,6 +77,14 @@ fun main() = application {
         icon = icon,
         title = "AutoConnector for Telegram",
     ) {
-        App(engine)
+        // Desktop-only: shrink every sp-based font 20% vs Android (the shared UI
+        // is tuned for phones). dp sizes are untouched, so layout stays intact.
+        val d = androidx.compose.ui.platform.LocalDensity.current
+        androidx.compose.runtime.CompositionLocalProvider(
+            androidx.compose.ui.platform.LocalDensity provides
+                androidx.compose.ui.unit.Density(d.density, d.fontScale * 0.88f),
+        ) {
+            App(engine)
+        }
     }
 }

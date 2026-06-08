@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -34,6 +35,7 @@ import androidx.compose.material.icons.filled.Numbers
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Storage
@@ -45,6 +47,10 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -59,6 +65,7 @@ import androidx.compose.ui.unit.sp
 import io.autoconnector.engine.CatalogItem
 import io.autoconnector.i18n.LocalStrings
 import io.autoconnector.i18n.Strings
+import io.autoconnector.i18n.modeLabel
 import io.autoconnector.ui.components.Caption
 import io.autoconnector.ui.components.RatingBars
 import io.autoconnector.ui.components.StatusDot
@@ -74,9 +81,9 @@ private val ICON_CHECKS = Icons.Filled.DoneAll      // успешно / всег
 private val ICON_TRAFFIC = Icons.Filled.SwapVert    // трафик через прокси
 
 /** Catalog tiles (2 rows each), sorted by rating, emitted into the page LazyColumn. */
-fun LazyListScope.catalogItems(items: List<CatalogItem>, onClick: (CatalogItem) -> Unit) {
+fun LazyListScope.catalogItems(items: List<CatalogItem>, modeLabel: String, onClick: (CatalogItem) -> Unit) {
     if (items.isEmpty()) {
-        item { Caption(LocalStrings.current.catalogEmpty, Modifier.padding(16.dp)) }
+        item { Caption(LocalStrings.current.catalogEmpty(modeLabel), Modifier.padding(16.dp)) }
         return
     }
     item { Spacer(Modifier.height(6.dp)) }
@@ -84,6 +91,139 @@ fun LazyListScope.catalogItems(items: List<CatalogItem>, onClick: (CatalogItem) 
         Column(Modifier.padding(horizontal = 12.dp, vertical = 3.dp)) { CatalogTile(p) { onClick(p) } }
     }
     item { Spacer(Modifier.height(6.dp)) }
+}
+
+// The five selectable network modes shown as the catalog tab row.
+private val CATALOG_MODES = listOf("vpn", "lte", "wifi", "ethernet", "wp")
+
+/**
+ * Catalog with a per-network-mode tab row on top (VPN | LTE | WiFi | WhitePages),
+ * then the host tiles for the selected mode. Ratings are split per mode, so the
+ * list swaps when a tab is selected. The tab equal to [activeMode] reuses the
+ * already-loaded [items]; other tabs are pulled lazily via [catalogForMode].
+ */
+@Composable
+fun CatalogContent(
+    items: List<CatalogItem>,
+    activeMode: String,
+    catalogForMode: (String) -> List<CatalogItem>,
+    onManageMode: (String) -> Unit,
+    onClick: (CatalogItem) -> Unit,
+) {
+    val t = LocalStrings.current
+    val initial = if (activeMode in CATALOG_MODES) activeMode else "vpn"
+    var selected by remember { mutableStateOf(initial) }
+    var showHelp by remember { mutableStateOf(false) }
+
+    if (showHelp) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showHelp = false },
+            confirmButton = {
+                androidx.compose.material3.TextButton({ showHelp = false }) { Text(t.gotIt) }
+            },
+            title = { Text(t.catalogModeHelpTitle, fontWeight = FontWeight.Bold) },
+            text = { Text(t.catalogModeHelp, fontSize = 15.sp) },
+        )
+    }
+    // Always pull per-mode data so a per-mode reset is reflected even on the active
+    // tab (the global aggregate [items] would mask it). [items] is kept in the
+    // signature only to avoid breaking the caller.
+    val shown = catalogForMode(selected)
+
+    // A plain Column (not LazyColumn): this composable is hosted inside the page's
+    // outer LazyColumn item, and a nested vertical LazyColumn would crash. The
+    // catalog is capped (~50 tiles) so non-lazy rendering is fine.
+    Column(Modifier.fillMaxWidth()) {
+        // Row 1: the mode chips spanning the full width.
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            for (code in CATALOG_MODES) {
+                ModeChip(
+                    label = modeLabel(code),
+                    selected = selected == code,
+                    modifier = Modifier.weight(1f),
+                ) { selected = code }
+            }
+        }
+        // Row 2: caption «which mode this TOP is for» on the left, the gear + (?)
+        // buttons on the right (below the chips, not inline with them).
+        Row(
+            Modifier.fillMaxWidth().padding(start = 12.dp, end = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "${t.catalogTopFor} ${modeLabel(selected)}",
+                color = AppColors.onSurfaceMuted,
+                fontSize = 12.sp,
+                modifier = Modifier.weight(1f),
+            )
+            androidx.compose.material3.IconButton(
+                onClick = { onManageMode(selected) },
+                modifier = Modifier.size(32.dp),
+            ) {
+                Icon(Icons.Filled.Settings, contentDescription = t.manageModeTitle, tint = AppColors.onSurfaceMuted, modifier = Modifier.size(20.dp))
+            }
+            androidx.compose.material3.IconButton(
+                onClick = { showHelp = true },
+                modifier = Modifier.size(32.dp),
+            ) {
+                Text("(?)", color = AppColors.onSurfaceMuted, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            }
+        }
+        // Warning when the viewed section isn't the one currently collecting stats.
+        if (selected != activeMode) {
+            Text(
+                t.catalogInactiveWarn(modeLabel(selected), modeLabel(activeMode)),
+                color = AppColors.amber,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+            )
+        }
+        if (shown.isEmpty()) {
+            Text(
+                t.catalogEmpty(modeLabel(selected)),
+                color = AppColors.onSurfaceMuted,
+                fontSize = 12.sp,
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+            )
+        } else {
+            Spacer(Modifier.height(6.dp))
+            for (p in shown) {
+                Column(Modifier.padding(horizontal = 12.dp, vertical = 3.dp)) { CatalogTile(p) { onClick(p) } }
+            }
+            Spacer(Modifier.height(6.dp))
+        }
+    }
+}
+
+/** A small selectable tab chip for the catalog mode row, styled like the tiles. */
+@Composable
+private fun ModeChip(label: String, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    Box(
+        modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (selected) AppColors.accent else AppColors.card)
+            .border(
+                1.dp,
+                if (selected) AppColors.accent else AppColors.cardBorder,
+                RoundedCornerShape(10.dp),
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 2.dp, vertical = 7.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            label,
+            color = if (selected) Color.White else AppColors.onSurfaceMuted,
+            fontWeight = FontWeight.Bold,
+            fontSize = 12.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
 }
 
 @Composable
@@ -193,7 +333,9 @@ fun CatalogDetailPage(
                 // copyable values.
                 SelectionContainer {
                     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        CopyField(t.host, "${p.host}:${p.port}")
+                        // p.host already contains "host:port" (+ optional →sni which
+                        // is shown separately as the TLS domain) — don't re-append the port.
+                        CopyField(t.host, p.host.substringBefore("→").trim())
                         p.secret?.let { CopyField(t.secret, it) }
                         p.tlsDomain?.let { CopyField(t.tlsDomain, it) }
 
@@ -252,4 +394,110 @@ private fun DetailRow(icon: ImageVector, label: String, value: String, color: Co
         Text(value, color = color, fontWeight = FontWeight.Bold, fontSize = 14.sp, fontFamily = if (mono) monospaceFontFamily() else sansFontFamily(), maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
     Box(Modifier.fillMaxWidth().height(1.dp).background(AppColors.cardBorder))
+}
+
+/** A pending confirm dialog spec for the mode-management actions. */
+private data class ManageConfirm(val title: String, val body: String, val confirmLabel: String, val action: () -> Unit)
+
+/**
+ * Full-screen management page for a single network mode. All three actions operate
+ * strictly on [mode] (the catalog tab the gear was opened from): reset the rating
+ * (keeping hosts), wipe the mode entirely, or copy another mode's hosts+ratings here.
+ */
+@Composable
+fun CatalogModeManagePage(
+    mode: String,
+    onBack: () -> Unit,
+    onResetStats: () -> Unit,
+    onForget: () -> Unit,
+    onCopyFrom: (String) -> Unit,
+) {
+    val t = LocalStrings.current
+    var pending by remember { mutableStateOf<ManageConfirm?>(null) }
+
+    pending?.let { c ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { pending = null },
+            confirmButton = {
+                androidx.compose.material3.TextButton({ pending = null; c.action() }) { Text(c.confirmLabel) }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton({ pending = null }) { Text(t.cancel) }
+            },
+            title = { Text(c.title, fontWeight = FontWeight.Bold) },
+            text = { Text(c.body, fontSize = 15.sp) },
+        )
+    }
+
+    Surface(Modifier.fillMaxSize(), color = AppColors.background) {
+        Column(Modifier.fillMaxSize()) {
+            // Top bar with back button (mirrors CatalogDetailPage).
+            Box(Modifier.fillMaxWidth().background(Brush.horizontalGradient(listOf(AppColors.accent, AppColors.accentDark)))) {
+                Row(Modifier.fillMaxWidth().height(54.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    androidx.compose.material3.IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, t.back, tint = Color.White)
+                    }
+                    Text("${t.manageModeTitle}: ${modeLabel(mode)}", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 2)
+                }
+            }
+
+            Column(
+                Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()).padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(20.dp),
+            ) {
+                // Every action names the mode it targets so it's unmistakable which
+                // catalog section is affected.
+                val ml = modeLabel(mode)
+
+                // Reset rating, keep hosts.
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    val label = "${t.manageResetRating} $ml"
+                    val hint = t.manageResetHint(ml)
+                    Button(
+                        onClick = { pending = ManageConfirm(label, hint, t.gotIt) { onResetStats() } },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDDDDDD), contentColor = Color.Black),
+                    ) { Text(label) }
+                    Text(hint, color = AppColors.onSurfaceMuted, fontSize = 13.sp)
+                }
+
+                androidx.compose.material3.HorizontalDivider(thickness = 1.dp, color = Color.Black)
+
+                // Delete everything in this mode (destructive).
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    val label = "${t.manageDeleteAll} $ml"
+                    val hint = t.manageDeleteHint(ml)
+                    Button(
+                        onClick = { pending = ManageConfirm(label, hint, t.delete) { onForget() } },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDDDDDD), contentColor = Color.Black),
+                    ) { Text(label) }
+                    Text(hint, color = AppColors.onSurfaceMuted, fontSize = 13.sp)
+                }
+
+                androidx.compose.material3.HorizontalDivider(thickness = 1.dp, color = Color.Black)
+
+                // Copy hosts + ratings here from another mode.
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(t.manageCopyFrom(ml), color = AppColors.onSurface, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        for (code in CATALOG_MODES) {
+                            if (code == mode) continue
+                            ModeChip(
+                                label = modeLabel(code),
+                                selected = false,
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                pending = ManageConfirm(
+                                    t.manageCopyFrom(ml),
+                                    "${modeLabel(code)} → $ml",
+                                    t.gotIt,
+                                ) { onCopyFrom(code) }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

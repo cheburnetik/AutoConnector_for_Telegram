@@ -214,6 +214,14 @@ public final class RelayConnection implements Runnable {
                     upstreamProxy.rttMs, sni, srcNum);
             liveConnRef = liveConn;
             liveConnRefForLatency = liveConn;
+            // Seed the relay-ping graph with this upstream's TCP-connect RTT — a
+            // real, always-present sample on every (re)connect. The per-chunk
+            // request→response pairing below then keeps it live during the
+            // session. Telegram reconnects often, so this alone keeps the line
+            // populated even if a session sees little request/response traffic.
+            if (up != null && up.connectMs > 0) {
+                io.autoconnector.engine.traffic.LatencyBuffer.INSTANCE.sample(up.connectMs);
+            }
             liveConn.lastDataAt.set(now);
             liveConn.killer = this::closeBoth;
             liveId = RelayStats.register(liveConn);
@@ -546,6 +554,15 @@ public final class RelayConnection implements Runnable {
                 break;
             case OFF:
             default:
+                // Spread repeated Telegram connects across DIFFERENT alive hosts
+                // instead of always re-using the sticky/top one. Otherwise a
+                // couple of high-rated hosts win every connection, their rating
+                // climbs unbeatably (rich-get-richer), and the rest of the live
+                // pool — including the «random alive» diversity candidates added
+                // above — never gets actually used. Every candidate here is
+                // already alive-verified, so randomising the order costs no
+                // reliability, just balances usage.
+                java.util.Collections.shuffle(candidates);
                 ch = trySerial(candidates, tag, dcId, dst, mode, exp, UPSTREAM_TIMEOUT_MS);
                 break;
         }

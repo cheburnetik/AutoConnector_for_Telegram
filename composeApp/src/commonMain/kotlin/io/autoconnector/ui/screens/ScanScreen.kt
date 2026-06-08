@@ -3,8 +3,8 @@ package io.autoconnector.ui.screens
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
@@ -19,14 +19,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.autoconnector.engine.EngineState
 import io.autoconnector.i18n.LocalStrings
-import io.autoconnector.ui.components.Caption
-import io.autoconnector.ui.components.CheckRateSparkline
+import io.autoconnector.i18n.modeLabel
 import io.autoconnector.ui.components.StatTable
 import io.autoconnector.ui.components.cell
+import io.autoconnector.ui.components.fmtLatency
+import io.autoconnector.ui.components.fmtLatencyPair
+import io.autoconnector.ui.components.fmtSpeed
+import io.autoconnector.ui.components.fmtSpeedPair
 import io.autoconnector.ui.theme.AppColors
 
 @Composable
-fun ScanContent(s: EngineState, onScanNow: () -> Unit) {
+fun ScanContent(s: EngineState, onScanNow: () -> Unit, onSetScanMode: (String) -> Unit) {
     val t = LocalStrings.current
     val checkedMin = s.checksOk60s + s.checksFail60s
     val checkedHour = s.checksOk60m + s.checksFail60m
@@ -35,58 +38,114 @@ fun ScanContent(s: EngineState, onScanNow: () -> Unit) {
         Modifier.fillMaxWidth().padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        // First row: live scan state on the left ("Скан идёт / idle" — reflects
-        // whether a check pass is actually probing right now, by the button or by
-        // the schedule), and an icon-only "scan now" button on the right that
-        // kicks an immediate pass regardless of the toggle / intensity throttle.
+        // Header line: scan state + time-to-next-pass + active mode on one row,
+        // then a muted line with the schedule (period / batch / threads). The
+        // refresh button still kicks an immediate pass regardless of the plan.
+        // Sub-minute periods were shown as "0 мин" (integer ÷60). Render seconds
+        // when < 1 min so an aggressive fresh-start plan reads e.g. "30 сек".
+        fun durLabel(sec: Int): String =
+            if (sec < 60) "$sec ${t.secShort}" else "${sec / 60} ${t.minShort}"
+        val period = when {
+            !s.scanEnabled || s.scanPlanIntervalSec < 0 -> t.disabledWord
+            s.scanPlanIntervalSec == 0 -> t.nonstopWord
+            else -> durLabel(s.scanPlanIntervalSec)
+        }
+        val head = when {
+            !s.scanEnabled -> t.scanOffState
+            s.scanRunning -> t.scanRunning
+            else -> "${t.scanIdle}, ${t.scanNextRun} ${durLabel(s.scanPlanNextSec)}"
+        }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                if (s.scanRunning) t.scanRunning else t.scanIdle,
-                color = if (s.scanRunning) AppColors.green else AppColors.onSurfaceMuted,
-                fontWeight = FontWeight.Bold, fontSize = 15.sp, modifier = Modifier.weight(1f),
-            )
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "${head} · ${t.modeWord} — ${modeLabel(s.activeMode)}",
+                    fontWeight = FontWeight.Bold, fontSize = 15.sp,
+                )
+                Text(
+                    "${t.scheduleWord}: ${t.scanEvery} [${period}], ${t.scanBatchPerThread} [${s.scanPlanBatch}] шт, ${t.scanThreads} [${s.scanPlanConcurrency}] шт",
+                    color = AppColors.onSurfaceMuted, fontSize = 13.sp,
+                )
+            }
             IconButton(onClick = onScanNow) {
                 Icon(Icons.Filled.Refresh, t.scanNow, tint = AppColors.accent)
             }
         }
 
-        // Graph moved to the top of the tab.
-        Text(t.checksMtproto, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            CheckRateSparkline(s.checkOkSec, s.checkFailSec, Modifier.weight(1f).height(48.dp))
-            CheckRateSparkline(s.checkOkMin, s.checkFailMin, Modifier.weight(1f).height(48.dp))
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Caption(t.sec60, Modifier.weight(1f))
-            Caption(t.min60, Modifier.weight(1f))
+        // Live scan graphs (same look as the connector tab): successful / failed
+        // checks, scan traffic rate and probe ping. Per-second (2 s buckets)
+        // on the left, per-minute on the right.
+        Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            val sec = s.nowSec
+            val secTick = sec / 2
+            // Column captions sit tight above the first graph row, aligned to the
+            // two graph columns (the left label column is just a spacer).
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Spacer(Modifier.weight(0.30f))
+                GraphHeader(t.perSecond, Modifier.weight(0.35f))
+                GraphHeader(t.perMinute, Modifier.weight(0.35f))
+            }
+            GraphRow(
+                t.scanOkGraph, { a, b -> "$a · $b ${t.unitPcsPerSec}" },
+                ds2(LongArray(60) { s.checkOkSec[it].toLong() }, sec, avg = false),
+                LongArray(60) { s.checkOkMin[it].toLong() }, secTick, s.nowMin,
+                AppColors.green, minScale = 5, logBase = 1.0, { "$it ${t.unitPcsPerSec}" },
+            )
+            GraphRow(
+                t.scanFailGraph, { a, b -> "$a · $b ${t.unitPcsPerSec}" },
+                ds2(LongArray(60) { s.checkFailSec[it].toLong() }, sec, avg = false),
+                LongArray(60) { s.checkFailMin[it].toLong() }, secTick, s.nowMin,
+                AppColors.red, minScale = 5, logBase = 1.0, { "$it ${t.unitPcsPerSec}" },
+            )
+            GraphRow(
+                t.scanTrafficGraph,
+                ::fmtSpeedPair,
+                ds2(s.scanTrafficSec, sec, avg = true),
+                LongArray(60) { s.scanTrafficMin[it] / 60 }, secTick, s.nowMin,
+                AppColors.blue, minScale = 1024, logBase = 1.0, ::fmtSpeed,
+            )
+            GraphRow(
+                t.subTrafficGraph,
+                ::fmtSpeedPair,
+                ds2(s.subTrafficSec, sec, avg = true),
+                LongArray(60) { s.subTrafficMin[it] / 60 }, secTick, s.nowMin,
+                AppColors.green, minScale = 1024, logBase = 1.0, ::fmtSpeed,
+            )
+            GraphRow(
+                t.scanPingGraph,
+                ::fmtLatencyPair,
+                ds2(s.scanPingSec, sec, avg = true),
+                s.scanPingMin, secTick, s.nowMin,
+                AppColors.accent, minScale = 50, logBase = 5.0, ::fmtLatency,
+            )
+            GraphRow(
+                t.threadsGraph,
+                { a, b -> "$a · ${t.pcs(b.toInt())}" },
+                ds2(s.threadsSec, sec, avg = true),
+                s.threadsMin, secTick, s.nowMin,
+                AppColors.amber, minScale = 5, logBase = 1.0, { t.pcs(it.toInt()) },
+            )
         }
 
-        // Pool — labels in the header, numbers only in cells.
-        Text(t.proxiesInBase, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+        // Live "now" snapshot, transposed to label:value rows.
+        fun dur(sec: Long): String = if (sec >= 60) "${sec / 60}м ${sec % 60}с" else "${sec}с"
+        Text(t.scanNowTitle, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+        StatTable(
+            rows = listOf(
+                listOf(cell(t.scanNowThreadsLabel, AppColors.onSurfaceMuted), cell(t.pcs(s.scanNowThreads), if (s.scanRunning) AppColors.green else AppColors.onSurfaceMuted, bold = true)),
+                listOf(cell(t.scanNowPerThreadLabel, AppColors.onSurfaceMuted), cell(t.pcs(s.scanPlanBatch), bold = true)),
+                listOf(cell(t.scanNowElapsedLabel, AppColors.onSurfaceMuted), cell(dur(s.scanNowSeconds), bold = true)),
+            ),
+            weights = listOf(1.5f, 1f),
+            fontSize = 14,
+        )
+
+        // Pool counts, scoped to the active network mode (ratings are split
+        // per-mode, so "alive for VPN" can differ from "alive for LTE").
+        Text("${t.proxiesInBase} · ${modeLabel(s.activeMode)}", fontWeight = FontWeight.Bold, fontSize = 14.sp)
         StatTable(
             rows = listOf(
                 listOf(cell(t.total, AppColors.onSurfaceMuted), cell(t.alive, AppColors.onSurfaceMuted), cell(t.dead, AppColors.onSurfaceMuted)),
-                listOf(cell("${s.totalCount}", bold = true), cell("${s.aliveCount}", AppColors.green, bold = true), cell("${s.deadCount}", AppColors.gray, bold = true)),
-            ),
-            fontSize = 14,
-        )
-
-        // Telegram connections.
-        Text(t.tgConnectedTitle, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-        StatTable(
-            rows = listOf(
-                listOf(cell(t.total, AppColors.onSurfaceMuted), cell(t.successful, AppColors.onSurfaceMuted)),
-                listOf(cell("${s.tgSessAll}", bold = true), cell("${s.tgSessOk}", AppColors.green, bold = true)),
-            ),
-            fontSize = 14,
-        )
-
-        // Socket longevity — separate table.
-        Text(t.socketsHeld, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-        StatTable(
-            rows = listOf(
-                listOf(cell(t.over1m, AppColors.onSurfaceMuted), cell(t.over5m, AppColors.onSurfaceMuted), cell(t.over15m, AppColors.onSurfaceMuted)),
-                listOf(cell("${s.sessOver1m}", bold = true), cell("${s.sessOver5m}", bold = true), cell("${s.sessOver15m}", bold = true)),
+                listOf(cell("${s.totalMode}", bold = true), cell("${s.aliveMode}", AppColors.green, bold = true), cell("${s.deadMode}", AppColors.gray, bold = true)),
             ),
             fontSize = 14,
         )
@@ -111,7 +170,7 @@ fun ScanContent(s: EngineState, onScanNow: () -> Unit) {
                 listOf(cell(t.subscriptions, AppColors.onSurfaceMuted, bold = true), cell(t.perMinute, AppColors.onSurfaceMuted), cell(t.perHour, AppColors.onSurfaceMuted)),
                 listOf(cell(t.downloaded), cell("${s.subsOkMin}", AppColors.green), cell("${s.subsOkHour}", AppColors.green)),
                 listOf(cell(t.failed), cell("${s.subsFailMin}", AppColors.red), cell("${s.subsFailHour}", AppColors.red)),
-                listOf(cell(t.scanTraffic), cell(s.scanBytesMin, bold = true), cell(s.scanBytesHour, bold = true)),
+                listOf(cell(t.subTraffic), cell(s.subBytesMin, bold = true), cell(s.subBytesHour, bold = true)),
             ),
             weights = listOf(1.3f, 1f, 1f),
             fontSize = 14,

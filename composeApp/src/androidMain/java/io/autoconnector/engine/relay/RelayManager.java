@@ -140,6 +140,7 @@ public final class RelayManager {
             // about. Telegram drops what it no longer needs on its own.
         }
         lastActivePort = port;
+        io.autoconnector.engine.traffic.ConnectBuffer.INSTANCE.noteInbound(port);
     }
 
     /**
@@ -180,6 +181,7 @@ public final class RelayManager {
     /** Confirms the upstream a connection actually settled on for a port. */
     public void setUpstream(int port, ProxyEntry p) {
         ref(port).set(p);
+        io.autoconnector.engine.traffic.ConnectBuffer.INSTANCE.noteOutbound(port);
     }
 
     /** A connection failed to use this upstream — penalise and drop it.

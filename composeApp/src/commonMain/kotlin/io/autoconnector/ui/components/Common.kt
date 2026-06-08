@@ -46,10 +46,13 @@ fun blinkAlpha(periodMs: Int = 2000, min: Float = 0.25f): Float {
     return a
 }
 
-/** Big filled circle whose opacity pulses — the connection indicator. */
+/** Big filled circle — the connection indicator. Pulses only while [pulse] is
+ *  true (i.e. actively connecting); otherwise it's STATIC. A non-stop infinite
+ *  transition redraws at 60 fps and, under software rendering, burns CPU at idle
+ *  — so we don't animate unless something is genuinely happening. */
 @Composable
-fun PulseCircle(color: Color, sizeDp: Int, modifier: Modifier = Modifier) {
-    val a = blinkAlpha(min = 0.3f)
+fun PulseCircle(color: Color, sizeDp: Int, modifier: Modifier = Modifier, pulse: Boolean = true) {
+    val a = if (pulse) blinkAlpha(min = 0.3f) else 1f
     Canvas(modifier.size(sizeDp.dp)) {
         drawCircle(color.copy(alpha = 0.18f * a))
         drawCircle(color.copy(alpha = a), radius = size.minDimension / 2f * 0.62f)
@@ -62,7 +65,7 @@ fun Caption(text: String, modifier: Modifier = Modifier) {
         text,
         modifier = modifier,
         color = AppColors.onSurfaceMuted,
-        fontSize = 14.sp,
+        fontSize = 11.sp,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
     )

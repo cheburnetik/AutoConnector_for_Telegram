@@ -47,6 +47,9 @@ kotlin {
                 implementation(project(":engineDesktop"))
                 // Swing dispatcher for Compose Desktop's event loop.
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.8.1")
+                // Global (system-wide) hotkeys for the desktop hotkeys page.
+                // Self-extracts per-OS native libs from this jar at runtime.
+                implementation("com.github.kwhat:jnativehook:2.2.2")
             }
         }
         val androidMain by getting {
@@ -87,8 +90,8 @@ android {
         applicationId = "io.autoconnector"
         minSdk = 24
         targetSdk = 34
-        versionCode = 15
-        versionName = "1.0.19"
+        versionCode = 57
+        versionName = "1.0.61"
         buildConfigField("String", "BUILD_DATE", "\"$buildDate\"")
     }
 
@@ -158,6 +161,7 @@ compose.desktop {
             packageName = "AutoConnector"
             packageVersion = "1.0.0"
             description = "AutoConnector for Telegram"
+            modules("java.sql", "jdk.unsupported")
         }
     }
 }

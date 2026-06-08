@@ -511,15 +511,55 @@ public class ProxyStore extends SQLiteOpenHelper {
      * off, instead of hammering a thousand permanently-dead RU IPs.
      */
     public List<ProxyEntry> dueForCheck(int limit) {
-        long cutoff = System.currentTimeMillis() - 86_400_000L;
-        return query("SELECT * FROM " + T
+        return dueForCheck(limit, 0L);
+    }
+
+    /**
+     * As {@link #dueForCheck(int)}, but with an anti-flood floor: a host whose
+     * last check is NEWER than {@code now - minAgeMs} is EXCLUDED so the same
+     * host isn't re-probed too often. Never-checked hosts ({@code last_check=0})
+     * always stay eligible. {@code minAgeMs <= 0} disables the floor.
+     */
+    public List<ProxyEntry> dueForCheck(int limit, long minAgeMs) {
+        long now = System.currentTimeMillis();
+        long cutoff = now - 86_400_000L;
+        java.util.ArrayList<String> args = new java.util.ArrayList<>();
+        java.util.ArrayList<String> conds = new java.util.ArrayList<>();
+        if (minAgeMs > 0) {
+            conds.add("(last_check=0 OR last_check<=?)");
+            args.add(String.valueOf(now - minAgeMs));
+        }
+        // Exclude hosts already being probed RIGHT NOW so two concurrent check
+        // passes (e.g. the fresh-start bootstrap loop + the mains loop) don't
+        // both grab the same overdue host — no duplicate probing.
+        String inflight = inFlightCsv();
+        if (inflight != null) conds.add("id NOT IN (" + inflight + ")");
+        String where = conds.isEmpty() ? "" : " WHERE " + String.join(" AND ", conds);
+        args.add(String.valueOf(cutoff));
+        args.add(String.valueOf(limit));
+        return query("SELECT * FROM " + T + where
                         + " ORDER BY"
                         + " CASE WHEN last_check=0 THEN 0"
                         + "      WHEN alive=1 THEN 1"
                         + "      WHEN last_ok>? THEN 2"
                         + "      ELSE 3 END ASC,"
                         + " last_check ASC LIMIT ?",
-                new String[]{String.valueOf(cutoff), String.valueOf(limit)});
+                args.toArray(new String[0]));
+    }
+
+    /** Comma-separated ids of hosts being probed right now (or null if none) —
+     *  used to keep concurrent {@code dueForCheck} passes from picking the same
+     *  host. Ids come from our own DB, so inlining them is injection-safe. */
+    private static String inFlightCsv() {
+        java.util.Set<Long> p = io.autoconnector.engine.core.ScanState.probing;
+        if (p.isEmpty()) return null;
+        StringBuilder sb = new StringBuilder();
+        for (Long id : p) {
+            if (id == null) continue;
+            if (sb.length() > 0) sb.append(',');
+            sb.append(id.longValue());
+        }
+        return sb.length() == 0 ? null : sb.toString();
     }
 
     /** Fetches the given proxy ids. Order is not guaranteed. */
@@ -677,11 +717,27 @@ public class ProxyStore extends SQLiteOpenHelper {
                 new Object[]{System.currentTimeMillis(), id});
     }
 
+    /**
+     * Forgets every subscription's download history — last-refresh time, found
+     * count, byte size, error and the backoff counter — so the UI shows
+     * "downloaded: never / zeros" and the next pass re-downloads them all from
+     * scratch. The {@code sources} rows themselves (url / enabled) survive.
+     */
+    public void resetSourceStats() {
+        getWritableDatabase().execSQL("UPDATE " + S + " SET "
+                + "last_refresh_at=0, last_check_at=0, last_check_started_at=0, "
+                + "last_found_count=0, last_bytes=0, last_error=NULL, "
+                + "consecutive_failures=0");
+    }
+
     /** URLs of every enabled source, in display order. */
     public List<String> enabledSourceUrls() {
         List<String> out = new ArrayList<>();
+        // Only http(s) sources are real subscriptions to download. Sources whose
+        // url is a sentinel (e.g. "manual:fixed") hold manually-pasted proxies —
+        // a fixed list that must NOT be fetched.
         Cursor c = getReadableDatabase().rawQuery(
-                "SELECT url FROM " + S + " WHERE enabled=1 ORDER BY order_index ASC, id ASC",
+                "SELECT url FROM " + S + " WHERE enabled=1 AND url LIKE 'http%' ORDER BY order_index ASC, id ASC",
                 null);
         try {
             while (c.moveToNext()) out.add(c.getString(0));
@@ -800,6 +856,53 @@ public class ProxyStore extends SQLiteOpenHelper {
         return out;
     }
 
+    // ---- backup export / import -------------------------------------------
+
+    /** Hosts that are alive in at least one network mode — what a "catalog of
+     *  live hosts" backup exports. */
+    public List<ProxyEntry> aliveHostsAnyMode() {
+        return query("SELECT DISTINCT p.* FROM " + T + " p"
+                + " JOIN " + PMS + " m ON m.proxy_id=p.id"
+                + " WHERE m.alive=1 AND m.last_check>0", null);
+    }
+
+    /** Insert (or find existing, by dedup key) a host on import; returns its id. */
+    public long importHost(ProxyEntry p) {
+        SQLiteDatabase db = getWritableDatabase();
+        ContentValues v = new ContentValues();
+        v.put("dedup_key", p.dedupKey());
+        v.put("type", p.type.name());
+        v.put("host", p.host);
+        v.put("port", p.port);
+        v.put("secret", p.secret);
+        v.put("source", p.source);
+        v.put("added_at", p.addedAt > 0 ? p.addedAt : System.currentTimeMillis());
+        long id = db.insertWithOnConflict(T, null, v, SQLiteDatabase.CONFLICT_IGNORE);
+        if (id == -1) id = lookupId(db, "SELECT id FROM " + T + " WHERE dedup_key=?", p.dedupKey());
+        return id;
+    }
+
+    /** Upsert one per-mode stats row on import (replaces any existing row). */
+    public void importModeStats(long proxyId, String modeCode, boolean alive, int rttMs,
+                                double score, int successes, int failures,
+                                long lastCheck, long lastOk, long tgConnections,
+                                long totalSessionMs, long bytesRelayed) {
+        ContentValues v = new ContentValues();
+        v.put("proxy_id", proxyId);
+        v.put("mode", modeCode);
+        v.put("last_check", lastCheck);
+        v.put("last_ok", lastOk);
+        v.put("alive", alive ? 1 : 0);
+        v.put("rtt_ms", rttMs);
+        v.put("successes", successes);
+        v.put("failures", failures);
+        v.put("score", score);
+        v.put("tg_connections", tgConnections);
+        v.put("total_session_ms", totalSessionMs);
+        v.put("bytes_relayed", bytesRelayed);
+        getWritableDatabase().insertWithOnConflict(PMS, null, v, SQLiteDatabase.CONFLICT_REPLACE);
+    }
+
     /** Folds one probe outcome into the per-mode row for the given proxy
      *  and recomputes its score in-place. */
     public void recordProbe(ProxyEntry p, NetworkMode mode, boolean ok,
@@ -882,10 +985,15 @@ public class ProxyStore extends SQLiteOpenHelper {
                 new String[]{mode.code, String.valueOf(limit)});
     }
 
+    /** Catalog view for one mode: every host probed at least once on this
+     *  network, alive ones first, then by rating. Unlike
+     *  {@link #topAliveForMode(NetworkMode, int)} this keeps probed-but-dead
+     *  hosts so the per-mode Catalog tab shows the full picture. */
     public List<ProxyEntry> topForMode(NetworkMode mode, int limit) {
         return joinedQuery(
                 "JOIN " + PMS + " m ON m.proxy_id=p.id AND m.mode=?"
-                        + " ORDER BY m.score DESC, m.rtt_ms ASC LIMIT ?",
+                        + " WHERE (m.last_check>0 OR m.alive=1)"
+                        + " ORDER BY m.alive DESC, m.score DESC, m.rtt_ms ASC LIMIT ?",
                 new String[]{mode.code, String.valueOf(limit)});
     }
 
@@ -898,24 +1006,96 @@ public class ProxyStore extends SQLiteOpenHelper {
     }
 
     public int aliveCountForMode(NetworkMode mode) {
-        return scalar("SELECT COUNT(*) FROM " + PMS
-                        + " WHERE mode=? AND alive=1 AND last_check>0",
+        // JOIN proxies so orphaned PMS rows (left by copy/clear) don't inflate
+        // the count — same host set the catalog (topForMode) actually shows.
+        return scalar("SELECT COUNT(*) FROM " + PMS + " m JOIN " + T + " p ON p.id=m.proxy_id"
+                        + " WHERE m.mode=? AND m.alive=1 AND m.last_check>0",
                 new String[]{mode.code});
+    }
+
+    /** Average RTT (ms) of the currently-alive proxies — a stable "pool ping"
+     *  for the Scan-tab graph, which would otherwise starve to 0 between sparse
+     *  probe passes once the pool is full. 0 when nothing is alive. */
+    public int avgAliveRtt() {
+        return scalar("SELECT CAST(AVG(rtt_ms) AS INT) FROM " + T
+                        + " WHERE alive=1 AND rtt_ms>0", null);
+    }
+
+    /** Per-mode counterpart of {@link #avgAliveRtt()}. */
+    public int avgAliveRttForMode(NetworkMode mode) {
+        return scalar("SELECT CAST(AVG(m.rtt_ms) AS INT) FROM " + PMS + " m"
+                        + " JOIN " + T + " p ON p.id=m.proxy_id"
+                        + " WHERE m.mode=? AND m.alive=1 AND m.rtt_ms>0",
+                new String[]{mode.code});
+    }
+
+    /** Zeroes every per-mode rating/tally for one network mode while keeping
+     *  the rows (and the hosts) in place, so the next scan re-rates this mode
+     *  from scratch. The global catalog stats are left untouched. */
+    public void resetModeStats(NetworkMode mode) {
+        getWritableDatabase().execSQL("UPDATE " + PMS + " SET "
+                        + "last_check=0,last_ok=0,rtt_ms=-1,successes=0,"
+                        + "failures=0,score=0,tg_connections=0,total_session_ms=0,"
+                        + "bytes_relayed=0 WHERE mode=?",
+                new Object[]{mode.code});
+    }
+
+    /** Forgets every per-mode row for one network mode, so the hosts have no
+     *  history on this network at all. The global catalog and the other modes'
+     *  rows survive. */
+    public void forgetModeHosts(NetworkMode mode) {
+        getWritableDatabase().execSQL("DELETE FROM " + PMS + " WHERE mode=?",
+                new Object[]{mode.code});
+    }
+
+    /** Replaces all per-mode rows of [to] with a copy of [from]'s rows, so the
+     *  target mode inherits the source mode's host ratings/alive verbatim. */
+    public void copyModeStats(NetworkMode from, NetworkMode to) {
+        SQLiteDatabase db = getWritableDatabase();
+        db.execSQL("DELETE FROM " + PMS + " WHERE mode=?", new Object[]{to.code});
+        db.execSQL("INSERT INTO " + PMS + " (proxy_id, mode, last_check, last_ok, alive, rtt_ms, successes, failures, score, tg_connections, total_session_ms, bytes_relayed) "
+            + "SELECT proxy_id, ?, last_check, last_ok, alive, rtt_ms, successes, failures, score, tg_connections, total_session_ms, bytes_relayed FROM " + PMS + " WHERE mode=?",
+            new Object[]{to.code, from.code});
     }
 
     /** Proxies most worth re-probing for the current mode. Mirrors the
      *  global {@link #dueForCheck(int)} tiering but against the per-mode row. */
     public List<ProxyEntry> dueForCheckForMode(NetworkMode mode, int limit) {
-        long cutoff = System.currentTimeMillis() - 86_400_000L;
+        return dueForCheckForMode(mode, limit, 0L);
+    }
+
+    /**
+     * As {@link #dueForCheckForMode(NetworkMode, int)}, but with an anti-flood
+     * floor on the per-mode {@code m.last_check}: a host probed on this mode
+     * NEWER than {@code now - minAgeMs} is EXCLUDED. Hosts never probed on this
+     * mode ({@code m.last_check} NULL / 0) always stay eligible. {@code minAgeMs
+     * <= 0} disables the floor.
+     */
+    public List<ProxyEntry> dueForCheckForMode(NetworkMode mode, int limit, long minAgeMs) {
+        long now = System.currentTimeMillis();
+        long cutoff = now - 86_400_000L;
+        java.util.ArrayList<String> args = new java.util.ArrayList<>();
+        args.add(mode.code);
+        java.util.ArrayList<String> conds = new java.util.ArrayList<>();
+        if (minAgeMs > 0) {
+            conds.add("(m.last_check IS NULL OR m.last_check=0 OR m.last_check<=?)");
+            args.add(String.valueOf(now - minAgeMs));
+        }
+        // Skip hosts already in flight on any concurrent pass (no duplicates).
+        String inflight = inFlightCsv();
+        if (inflight != null) conds.add("p.id NOT IN (" + inflight + ")");
+        String floor = conds.isEmpty() ? "" : " WHERE " + String.join(" AND ", conds);
+        args.add(String.valueOf(cutoff));
+        args.add(String.valueOf(limit));
         return joinedQuery(
-                "LEFT JOIN " + PMS + " m ON m.proxy_id=p.id AND m.mode=?"
+                "LEFT JOIN " + PMS + " m ON m.proxy_id=p.id AND m.mode=?" + floor
                         + " ORDER BY"
                         + " CASE WHEN m.last_check IS NULL OR m.last_check=0 THEN 0"
                         + "      WHEN m.alive=1 THEN 1"
                         + "      WHEN m.last_ok>? THEN 2"
                         + "      ELSE 3 END ASC,"
                         + " COALESCE(m.last_check, 0) ASC LIMIT ?",
-                new String[]{mode.code, String.valueOf(cutoff), String.valueOf(limit)});
+                args.toArray(new String[0]));
     }
 
     /** Aggregate counters for the «Стат» screen — three columns per metric. */
@@ -936,10 +1116,10 @@ public class ProxyStore extends SQLiteOpenHelper {
         a.total = scalar("SELECT COUNT(*) FROM " + T, null);
         Cursor c = getReadableDatabase().rawQuery(
                 "SELECT"
-                        + " SUM(CASE WHEN alive=1 AND last_check>0 THEN 1 ELSE 0 END),"
-                        + " SUM(CASE WHEN alive=0 AND last_check>0 THEN 1 ELSE 0 END),"
-                        + " SUM(tg_connections), SUM(total_session_ms), SUM(bytes_relayed)"
-                        + " FROM " + PMS + " WHERE mode=?",
+                        + " SUM(CASE WHEN m.alive=1 AND m.last_check>0 THEN 1 ELSE 0 END),"
+                        + " SUM(CASE WHEN m.alive=0 AND m.last_check>0 THEN 1 ELSE 0 END),"
+                        + " SUM(m.tg_connections), SUM(m.total_session_ms), SUM(m.bytes_relayed)"
+                        + " FROM " + PMS + " m JOIN " + T + " p ON p.id=m.proxy_id WHERE m.mode=?",
                 new String[]{mode.code});
         try {
             if (c.moveToFirst()) {

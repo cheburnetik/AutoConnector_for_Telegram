@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -25,6 +26,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material3.AlertDialog
@@ -32,6 +34,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -49,7 +52,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -65,11 +70,13 @@ import io.autoconnector.engine.HandshakeStatRow
 import io.autoconnector.engine.ScanParams
 import io.autoconnector.engine.SourceItem
 import io.autoconnector.i18n.LocalStrings
+import io.autoconnector.i18n.modeLabel
 import kotlin.math.log10
 import kotlin.math.pow
 import kotlin.math.roundToInt
 import io.autoconnector.i18n.Strings
 import io.autoconnector.ui.components.CardBox
+import io.autoconnector.ui.components.keyPageScroll
 import io.autoconnector.ui.components.Caption
 import io.autoconnector.ui.components.StatTable
 import io.autoconnector.ui.components.cell
@@ -77,13 +84,15 @@ import io.autoconnector.ui.theme.AppColors
 import io.autoconnector.ui.theme.monospaceFontFamily
 import io.autoconnector.ui.theme.sansFontFamily
 
-enum class MoreDest { SETTINGS, SOURCES, STATS, EXPORT, ABOUT }
+enum class MoreDest { SETTINGS, SOURCES, ADD_SOURCES, STATS, EXPORT, HOTKEYS, ABOUT }
 
 private fun titleFor(dest: MoreDest, t: Strings) = when (dest) {
     MoreDest.SETTINGS -> t.settings
     MoreDest.SOURCES -> t.subscriptions
+    MoreDest.ADD_SOURCES -> t.addSourcesTitle
     MoreDest.STATS -> t.statistics
     MoreDest.EXPORT -> t.export
+    MoreDest.HOTKEYS -> t.hotkeys
     MoreDest.ABOUT -> t.about
 }
 
@@ -98,23 +107,43 @@ class MoreCallbacks(
     val onUpdateSettings: (EngineSettings) -> Unit,
     val sources: List<SourceItem>,
     val onAddSource: (String) -> Unit,
+    val onAddSourcesBulk: (String) -> Int,
+    val onAddManualProxies: (String) -> Int,
     val onRemoveSource: (Long) -> Unit,
     val onToggleSource: (Long, Boolean) -> Unit,
+    val onRefreshSource: (Long) -> Unit,
+    val onOpenDest: (MoreDest) -> Unit,
     val state: EngineState,
     val exportLinks: () -> List<String>,
     val onExportToFile: () -> String?,
+    val onExportBackup: (Boolean, Boolean, Boolean) -> String,
+    val onImportBackup: (Boolean, Boolean, Boolean) -> String,
+    // Per-network-mode actions (wired in App.kt by these exact names).
+    val onSetScanMode: (String) -> Unit,
+    val onResetModeStats: (String) -> Unit,
+    val onForgetModeHosts: (String) -> Unit,
+    val onExportLinksForMode: (String) -> List<String>,
+    val onExportFileForMode: (String) -> String?,
     val onCopy: (String) -> Unit,
     val handshakeStats: () -> List<HandshakeStatRow>,
     val onResetStats: () -> Unit,
     val onResetCatalogStats: () -> Unit,
     val onClearHosts: () -> Unit,
+    val onFactoryReset: () -> Unit,
+    // Desktop global hotkeys (unused on Android — page is hidden there).
+    val hotkeyCopyLabel: String,
+    val hotkeyOpenLabel: String,
+    val hotkeysEnabled: Boolean,
+    val hotkeyLetter: String,
+    val onSetHotkeysEnabled: (Boolean) -> Unit,
+    val onSetHotkeyLetter: (String) -> Unit,
     val appInfo: AppInfo,
     val onOpenUrl: (String) -> Unit,
 )
 
 /** The "More" tab body — just the menu. */
 @Composable
-fun MoreScreen(onOpen: (MoreDest) -> Unit, onOpenGuide: () -> Unit) {
+fun MoreScreen(onOpen: (MoreDest) -> Unit, onOpenGuide: () -> Unit, hotkeysSupported: Boolean = false) {
     val t = LocalStrings.current
     Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         MenuEntry(t.setupPortsTitle, t.setupPortsSub, onOpenGuide)
@@ -122,6 +151,8 @@ fun MoreScreen(onOpen: (MoreDest) -> Unit, onOpenGuide: () -> Unit) {
         MenuEntry(t.subscriptions, t.subscriptionsSub) { onOpen(MoreDest.SOURCES) }
         MenuEntry(t.statistics, t.statisticsSub) { onOpen(MoreDest.STATS) }
         MenuEntry(t.export, t.exportSub) { onOpen(MoreDest.EXPORT) }
+        // Desktop-only: global hotkeys page (no such thing on Android).
+        if (hotkeysSupported) MenuEntry(t.hotkeys, t.hotkeysSub) { onOpen(MoreDest.HOTKEYS) }
         MenuEntry(t.about, t.aboutSub) { onOpen(MoreDest.ABOUT) }
     }
 }
@@ -136,8 +167,10 @@ fun MoreFullPage(dest: MoreDest, cb: MoreCallbacks, onBack: () -> Unit) {
             when (dest) {
                 MoreDest.SETTINGS -> SettingsPage(cb)
                 MoreDest.SOURCES -> SourcesPage(cb)
+                MoreDest.ADD_SOURCES -> AddSourcesPage(cb)
                 MoreDest.STATS -> StatsPage(cb)
                 MoreDest.EXPORT -> ExportPage(cb)
+                MoreDest.HOTKEYS -> HotkeysPage(cb)
                 MoreDest.ABOUT -> AboutPage(cb)
             }
         }
@@ -154,24 +187,34 @@ fun MoreFullPage(dest: MoreDest, cb: MoreCallbacks, onBack: () -> Unit) {
 fun QuickSettingsPage(cb: MoreCallbacks, onBack: () -> Unit) {
     val t = LocalStrings.current
     val s = cb.settings
+    var showHelp by remember { mutableStateOf(false) }
     androidx.compose.material3.Surface(Modifier.fillMaxSize(), color = AppColors.background) {
         Column(Modifier.fillMaxSize()) {
             TopBar(t.quickSwitchTitle, onBack)
+            val qScroll = rememberScrollState()
             Column(
-                Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
+                Modifier.fillMaxSize().keyPageScroll(qScroll).verticalScroll(qScroll).padding(12.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                // Intro: how to pick a block-bypass trick + the Telegram proxy error.
-                Text(
-                    t.quickSwitchIntro,
-                    color = AppColors.onSurfaceMuted, fontSize = 13.sp,
-                    modifier = Modifier.padding(bottom = 6.dp),
-                )
+                // Small toggle: collapsed by default (item names only); expand to
+                // show the page intro + a description under every option.
+                TextButton(onClick = { showHelp = !showHelp }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 4.dp)) {
+                    Icon(Icons.AutoMirrored.Filled.HelpOutline, null, tint = AppColors.accent, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (showHelp) t.helpHide else t.helpShow, color = AppColors.accent, fontSize = 14.sp)
+                }
+                if (showHelp) {
+                    Text(
+                        t.quickSwitchIntro,
+                        color = AppColors.onSurfaceMuted, fontSize = 13.sp,
+                        modifier = Modifier.padding(bottom = 6.dp),
+                    )
+                }
 
                 // 1) Дробление проксирования — socket wire shaping.
                 SubTitle(t.expEngineTitle)
                 cb.expEngineOptions.forEach { opt ->
-                    QuickChoice(opt.label, opt.description, s.expEngineMode == opt.code) {
+                    QuickChoice(opt.label, if (showHelp) opt.description else "", s.expEngineMode == opt.code) {
                         cb.onUpdateSettings(s.copy(expEngineMode = opt.code)); onBack()
                     }
                 }
@@ -181,7 +224,7 @@ fun QuickSettingsPage(cb: MoreCallbacks, onBack: () -> Unit) {
                 // 2) Движок коннекта — how the relay finds a working upstream.
                 SubTitle(t.expConnectTitle)
                 cb.connectEngineOptions.forEach { opt ->
-                    QuickChoice(opt.label, opt.description, s.relayConnectMode == opt.code) {
+                    QuickChoice(opt.label, if (showHelp) opt.description else "", s.relayConnectMode == opt.code) {
                         cb.onUpdateSettings(s.copy(relayConnectMode = opt.code)); onBack()
                     }
                 }
@@ -249,6 +292,7 @@ private fun MenuEntry(title: String, sub: String, onClick: () -> Unit) {
 
 // === Settings ===========================================================
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SettingsPage(cb: MoreCallbacks) {
     val t = LocalStrings.current
@@ -262,9 +306,20 @@ private fun SettingsPage(cb: MoreCallbacks) {
     var checkInt by remember { mutableStateOf(s.checkIntervalMin.toString()) }
     var batch by remember { mutableStateOf(s.checkBatch.toString()) }
     var conc by remember { mutableStateOf(s.checkConcurrency.toString()) }
+    var minRescan by remember { mutableStateOf(s.minRescanMin.toString()) }
     var spVpn by remember { mutableStateOf(s.speedVpn.toString()) }
     var spWifi by remember { mutableStateOf(s.speedWifi.toString()) }
     var spLte by remember { mutableStateOf(s.speedLte.toString()) }
+    var spEth by remember { mutableStateOf(s.speedEthernet.toString()) }
+    var spWp by remember { mutableStateOf(s.speedWp.toString()) }
+    var subVpn by remember { mutableStateOf(s.subIntervalVpn.toString()) }
+    var subWifi by remember { mutableStateOf(s.subIntervalWifi.toString()) }
+    var subLte by remember { mutableStateOf(s.subIntervalLte.toString()) }
+    var subEth by remember { mutableStateOf(s.subIntervalEthernet.toString()) }
+    var subWp by remember { mutableStateOf(s.subIntervalWp.toString()) }
+    // Scan-mode override: applied immediately via cb.onSetScanMode (NOT through
+    // save()), so it is not part of the EngineSettings copy below.
+    var scanMode by remember { mutableStateOf(s.scanMode) }
     var aliveThr by remember { mutableStateOf(s.adaptiveAliveThreshold.toString()) }
     var fastMul by remember { mutableStateOf(s.fastSpeedMultiplier.toString()) }
     var lazyThr by remember { mutableStateOf(s.lazyAliveThreshold.toString()) }
@@ -275,6 +330,7 @@ private fun SettingsPage(cb: MoreCallbacks) {
     var dpiRelay by remember { mutableStateOf(s.dpiApplyRelay) }
     var dpiProbes by remember { mutableStateOf(s.dpiApplyProbes) }
     var dpiDirect by remember { mutableStateOf(s.dpiApplyDirect) }
+    var linkHttp by remember { mutableStateOf(s.proxyLinkHttp) }
     var vpnMode by remember { mutableStateOf(s.proxyModeCode) }
     var lang by remember { mutableStateOf(s.langCode) }
     var expEngine by remember { mutableStateOf(s.expEngineMode) }
@@ -301,6 +357,13 @@ private fun SettingsPage(cb: MoreCallbacks) {
                 speedVpn = spVpn.toFloatOrNull() ?: s.speedVpn,
                 speedWifi = spWifi.toFloatOrNull() ?: s.speedWifi,
                 speedLte = spLte.toFloatOrNull() ?: s.speedLte,
+                speedEthernet = spEth.toFloatOrNull() ?: s.speedEthernet,
+                speedWp = spWp.toFloatOrNull() ?: s.speedWp,
+                subIntervalVpn = subVpn.toIntOrNull() ?: s.subIntervalVpn,
+                subIntervalWifi = subWifi.toIntOrNull() ?: s.subIntervalWifi,
+                subIntervalLte = subLte.toIntOrNull() ?: s.subIntervalLte,
+                subIntervalEthernet = subEth.toIntOrNull() ?: s.subIntervalEthernet,
+                subIntervalWp = subWp.toIntOrNull() ?: s.subIntervalWp,
                 adaptiveAliveThreshold = aliveThr.toIntOrNull() ?: s.adaptiveAliveThreshold,
                 fastSpeedMultiplier = fastMul.toFloatOrNull() ?: s.fastSpeedMultiplier,
                 lazyAliveThreshold = lazyThr.toIntOrNull() ?: s.lazyAliveThreshold,
@@ -311,10 +374,13 @@ private fun SettingsPage(cb: MoreCallbacks) {
                 dpiApplyRelay = dpiRelay,
                 dpiApplyProbes = dpiProbes,
                 dpiApplyDirect = dpiDirect,
+                proxyLinkHttp = linkHttp,
                 langCode = lang,
                 expEngineMode = expEngine,
                 netLogEnabled = netLog,
                 relayConnectMode = connEngine,
+                scanMode = scanMode,
+                minRescanMin = minRescan.toIntOrNull() ?: s.minRescanMin,
             )
         )
     }
@@ -325,12 +391,18 @@ private fun SettingsPage(cb: MoreCallbacks) {
             onDismissRequest = { help = null },
             confirmButton = { TextButton({ help = null }) { Text(t.gotIt) } },
             title = { Text(ht, fontWeight = FontWeight.Bold) },
-            text = { Text(hb, fontSize = 15.sp) },
+            text = {
+                // Long help bodies must scroll — several overflow a phone height.
+                Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                    Text(hb, fontSize = 15.sp)
+                }
+            },
         )
     }
 
+    val settingsScroll = rememberScrollState()
     Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
+        Modifier.fillMaxSize().keyPageScroll(settingsScroll).verticalScroll(settingsScroll).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         // Language.
@@ -358,6 +430,10 @@ private fun SettingsPage(cb: MoreCallbacks) {
         ChoiceRow(t.viaMtproto, t.viaMtprotoSub, selected = vpnMode != "vpn_only") { vpnMode = "use"; save() }
         ChoiceRow(t.directly, t.directlySub, selected = vpnMode == "vpn_only") { vpnMode = "vpn_only"; save() }
 
+        Section(t.linkFormat) { help = t.linkFormat to t.linkFormatHelp }
+        ChoiceRow(t.linkTg, t.linkTgSub, selected = !linkHttp) { linkHttp = false; save() }
+        ChoiceRow(t.linkHttp, t.linkHttpSub, selected = linkHttp) { linkHttp = true; save() }
+
         // Notifications.
         var showNotifInfo by remember { mutableStateOf(false) }
         if (showNotifInfo) {
@@ -381,42 +457,99 @@ private fun SettingsPage(cb: MoreCallbacks) {
             Text(t.notifPlea, color = AppColors.red, fontWeight = FontWeight.Bold, fontSize = 14.sp)
         }
 
-        Section(t.scanCheck) { help = t.scanCheck to t.scanCheckHelp }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            NumField(scanInt, { scanInt = it }, t.scanMin, Modifier.weight(1f))
-            NumField(checkInt, { checkInt = it }, t.checkMin, Modifier.weight(1f))
+        // Scan mode: Auto follows the detected transport, Manual pins a specific
+        // network mode (each keeps its own ratings + scan/sub intensity).
+        Section(t.modePickerTitle) { help = t.modePickerTitle to t.modeHelp }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FilterChip(
+                selected = scanMode == "auto",
+                onClick = { scanMode = "auto"; cb.onSetScanMode("auto") },
+                label = { Text(t.autoSelect, fontSize = 14.sp) },
+            )
+            FilterChip(
+                selected = scanMode != "auto",
+                onClick = {
+                    val m = if (scanMode == "auto") "vpn" else scanMode
+                    scanMode = m; cb.onSetScanMode(m)
+                },
+                label = { Text(t.manualSelect, fontSize = 14.sp) },
+            )
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            NumField(batch, { batch = it }, t.batchSize, Modifier.weight(1f))
-            NumField(conc, { conc = it }, t.parallel, Modifier.weight(1f))
+        // When Manual is active, a concrete mode can be picked below; hidden on Auto.
+        if (scanMode != "auto") {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf("vpn", "wifi", "lte", "ethernet", "wp").forEach { code ->
+                    FilterChip(
+                        selected = scanMode == code,
+                        onClick = { scanMode = code; cb.onSetScanMode(code) },
+                        label = { Text(modeLabel(code), fontSize = 14.sp) },
+                    )
+                }
+            }
         }
 
-        Section(t.speedByNet) { help = t.speedByNet to t.speedByNetHelp }
-        IntensitySlider("VPN", spVpn.toFloatOrNull() ?: 1f) { spVpn = fmtMult(it); save() }
-        IntensitySlider("Wi-Fi", spWifi.toFloatOrNull() ?: 1f) { spWifi = fmtMult(it); save() }
-        IntensitySlider("LTE", spLte.toFloatOrNull() ?: 1f) { spLte = fmtMult(it); save() }
+        // 1) Subscription re-download intensity — minutes, separately per mode.
+        Section(t.subIntensityTitle) { help = t.subIntensityTitle to t.subIntensityHint }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            LabeledNumField(subVpn, { subVpn = it; save() }, "${modeLabel("vpn")}, ${t.minShort}", Modifier.weight(1f))
+            LabeledNumField(subLte, { subLte = it; save() }, "${modeLabel("lte")}, ${t.minShort}", Modifier.weight(1f))
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            LabeledNumField(subWifi, { subWifi = it; save() }, "${modeLabel("wifi")}, ${t.minShort}", Modifier.weight(1f))
+            LabeledNumField(subEth, { subEth = it; save() }, "${modeLabel("ethernet")}, ${t.minShort}", Modifier.weight(1f))
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            LabeledNumField(subWp, { subWp = it; save() }, "${modeLabel("wp")}, ${t.minShort}", Modifier.weight(1f))
+            Spacer(Modifier.weight(1f))
+        }
 
+        // 2) Base scan speed — period, batch-per-thread, threads. Each row is a
+        // wrapping explanation on the left + a small number box on the right.
+        Section(t.baseScanTitle) { help = t.baseScanTitle to t.baseScanHelp }
+        LabeledNumField(checkInt, { checkInt = it; save() }, t.baseScanPeriod, Modifier.fillMaxWidth())
+        LabeledNumField(batch, { batch = it; save() }, t.baseScanBatch, Modifier.fillMaxWidth())
+        LabeledNumField(conc, { conc = it; save() }, t.baseScanThreads, Modifier.fillMaxWidth())
+        // Anti-flood floor: never re-scan the same host more often than this.
+        LabeledNumField(minRescan, { minRescan = it; save() }, t.minRescanLabel, Modifier.fillMaxWidth())
+
+        // 3) Adaptive speed — threshold (compact field) + acceleration log slider.
         Section(t.adaptiveSpeed) { help = t.adaptiveSpeed to t.adaptiveHelp }
-        // Threshold (compact field) + acceleration as a log slider, one per line.
-        // Below each: the FINAL effective numbers for that mode, computed live
-        // from the base trio above × this mode's multiplier (clamped to sanity).
+        Text(t.adaptiveDesc, color = AppColors.onSurfaceMuted, fontSize = 13.sp)
+        AdaptiveRow(aliveThr, { aliveThr = it; save() }, t.fewWord,
+            fastMul.toFloatOrNull() ?: 1f, slower = false) { fastMul = fmtMult(it); save() }
+        AdaptiveRow(lazyThr, { lazyThr = it; save() }, t.manyWord,
+            lazyMul.toFloatOrNull() ?: 1f, slower = true) { lazyMul = fmtMult(it); save() }
+
+        // 4) Speed by mode — per-mode intensity slider, with the FINAL effective
+        // numbers (base trio × this mode's speed × adaptive multiplier) below it.
+        Section(t.speedByModeTitle) { help = t.speedByModeTitle to t.speedByModeHelp }
         val baseMin = checkInt.toIntOrNull() ?: s.checkIntervalMin
         val baseBatch = batch.toIntOrNull() ?: s.checkBatch
         val baseConc = conc.toIntOrNull() ?: s.checkConcurrency
-        AdaptiveRow(aliveThr, { aliveThr = it; save() }, t.threshMany,
-            fastMul.toFloatOrNull() ?: 1f) { fastMul = fmtMult(it); save() }
-        ScanParamReadout(t.effForFew, cb.scanParamsFor(baseMin, baseBatch, baseConc, fastMul.toFloatOrNull() ?: 1f))
-        AdaptiveRow(lazyThr, { lazyThr = it; save() }, t.threshFew,
-            lazyMul.toFloatOrNull() ?: 1f) { lazyMul = fmtMult(it); save() }
-        ScanParamReadout(t.effForMany, cb.scanParamsFor(baseMin, baseBatch, baseConc, lazyMul.toFloatOrNull() ?: 1f))
+        val fewThr = aliveThr.toIntOrNull() ?: s.adaptiveAliveThreshold
+        val manyThr = lazyThr.toIntOrNull() ?: s.lazyAliveThreshold
+        val fastM = fastMul.toFloatOrNull() ?: 1f
+        val lazyM = lazyMul.toFloatOrNull() ?: 1f
+        SpeedModeRow("VPN", spVpn.toFloatOrNull() ?: 1f, { spVpn = fmtMult(it); save() },
+            fewThr, cb.scanParamsFor(baseMin, baseBatch, baseConc, (spVpn.toFloatOrNull() ?: 1f) * fastM),
+            manyThr, cb.scanParamsFor(baseMin, baseBatch, baseConc, (spVpn.toFloatOrNull() ?: 1f) * lazyM))
+        SpeedModeRow("LTE", spLte.toFloatOrNull() ?: 1f, { spLte = fmtMult(it); save() },
+            fewThr, cb.scanParamsFor(baseMin, baseBatch, baseConc, (spLte.toFloatOrNull() ?: 1f) * fastM),
+            manyThr, cb.scanParamsFor(baseMin, baseBatch, baseConc, (spLte.toFloatOrNull() ?: 1f) * lazyM))
+        SpeedModeRow("Wi-Fi", spWifi.toFloatOrNull() ?: 1f, { spWifi = fmtMult(it); save() },
+            fewThr, cb.scanParamsFor(baseMin, baseBatch, baseConc, (spWifi.toFloatOrNull() ?: 1f) * fastM),
+            manyThr, cb.scanParamsFor(baseMin, baseBatch, baseConc, (spWifi.toFloatOrNull() ?: 1f) * lazyM))
+        SpeedModeRow("Ethernet", spEth.toFloatOrNull() ?: 1f, { spEth = fmtMult(it); save() },
+            fewThr, cb.scanParamsFor(baseMin, baseBatch, baseConc, (spEth.toFloatOrNull() ?: 1f) * fastM),
+            manyThr, cb.scanParamsFor(baseMin, baseBatch, baseConc, (spEth.toFloatOrNull() ?: 1f) * lazyM))
+        SpeedModeRow("White", spWp.toFloatOrNull() ?: 1f, { spWp = fmtMult(it); save() },
+            fewThr, cb.scanParamsFor(baseMin, baseBatch, baseConc, (spWp.toFloatOrNull() ?: 1f) * fastM),
+            manyThr, cb.scanParamsFor(baseMin, baseBatch, baseConc, (spWp.toFloatOrNull() ?: 1f) * lazyM))
 
         Section(t.netBattery) { help = t.netBattery to t.netBatteryHelp }
         SwitchRow(t.onlyWifi, wifiOnly) { wifiOnly = it; save() }
         SwitchRow(t.onlyCharging, charging) { charging = it; save() }
         SwitchRow(t.skipLowBattery, skipLow) { skipLow = it; save() }
-
-        // --- Experimental ------------------------------------------------
-        Section(t.experimental) { help = t.experimental to t.experimentalHelp }
 
         // Connect engine — just the picker button; the description of the
         // selected engine (plus the experimental warning) lives in the ? dialog.
@@ -478,6 +611,91 @@ private fun SettingsPage(cb: MoreCallbacks) {
                 dismissButton = { TextButton({ confirmHosts = false }) { Text(t.doCancel) } },
                 title = { Text(t.clearHosts, fontWeight = FontWeight.Bold) },
                 text = { Text(t.clearHostsConfirm, fontSize = 15.sp) },
+            )
+        }
+
+        // --- Export / Import (universal JSON backup) --------------------
+        Section(t.backupTitle) { help = t.backupTitle to t.backupHelp }
+        var bkSettings by remember { mutableStateOf(true) }
+        var bkSubs by remember { mutableStateOf(true) }
+        var bkHosts by remember { mutableStateOf(true) }
+        var bkStatus by remember { mutableStateOf("") }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(checked = bkSettings, onCheckedChange = { bkSettings = it })
+            Text(t.backupSettings, fontSize = 14.sp)
+        }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(checked = bkSubs, onCheckedChange = { bkSubs = it })
+            Text(t.backupSubs, fontSize = 14.sp)
+        }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(checked = bkHosts, onCheckedChange = { bkHosts = it })
+            Text(t.backupHosts, fontSize = 14.sp)
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedButton(
+                onClick = { if (bkSettings || bkSubs || bkHosts) bkStatus = cb.onExportBackup(bkSettings, bkSubs, bkHosts) },
+                modifier = Modifier.weight(1f),
+            ) { Text(t.exportWord, fontSize = 15.sp) }
+            OutlinedButton(
+                onClick = { if (bkSettings || bkSubs || bkHosts) bkStatus = cb.onImportBackup(bkSettings, bkSubs, bkHosts) },
+                modifier = Modifier.weight(1f),
+            ) { Text(t.importWord, fontSize = 15.sp) }
+        }
+        if (bkStatus.isNotEmpty()) {
+            Text(bkStatus, color = AppColors.onSurfaceMuted, fontSize = 13.sp, modifier = Modifier.padding(top = 2.dp))
+        }
+        DarkRule()   // dark separator after the export/import controls
+
+        // Per-mode maintenance: zero a mode's host ratings, or forget a mode's
+        // host rows entirely (ratings are split per network mode in PMS).
+        var confirmModeReset by remember { mutableStateOf<String?>(null) }
+        var confirmModeForget by remember { mutableStateOf<String?>(null) }
+        listOf("vpn", "wifi", "lte", "ethernet", "wp").forEach { code ->
+            OutlinedButton(onClick = { confirmModeReset = code }, modifier = Modifier.fillMaxWidth()) {
+                Text("${t.resetModeRatings}: ${modeLabel(code)}", fontSize = 15.sp)
+            }
+        }
+        listOf("vpn", "wifi", "lte", "ethernet").forEach { code ->
+            OutlinedButton(onClick = { confirmModeForget = code }, modifier = Modifier.fillMaxWidth()) {
+                Text("${t.forgetModeHosts}: ${modeLabel(code)}", fontSize = 15.sp, color = AppColors.red)
+            }
+        }
+        confirmModeReset?.let { code ->
+            AlertDialog(
+                onDismissRequest = { confirmModeReset = null },
+                confirmButton = { TextButton({ cb.onResetModeStats(code); confirmModeReset = null }) { Text(t.doReset) } },
+                dismissButton = { TextButton({ confirmModeReset = null }) { Text(t.doCancel) } },
+                title = { Text("${t.resetModeRatings}: ${modeLabel(code)}", fontWeight = FontWeight.Bold) },
+                text = { Text(t.resetCatalogConfirm, fontSize = 15.sp) },
+            )
+        }
+        confirmModeForget?.let { code ->
+            AlertDialog(
+                onDismissRequest = { confirmModeForget = null },
+                confirmButton = { TextButton({ cb.onForgetModeHosts(code); confirmModeForget = null }) { Text(t.doReset) } },
+                dismissButton = { TextButton({ confirmModeForget = null }) { Text(t.doCancel) } },
+                title = { Text("${t.forgetModeHosts}: ${modeLabel(code)}", fontWeight = FontWeight.Bold) },
+                text = { Text(t.clearHostsConfirm, fontSize = 15.sp) },
+            )
+        }
+
+        // --- Bottom: wipe hosts / full factory reset -------------------
+        DarkRule()
+        var confirmFactory by remember { mutableStateOf(false) }
+        OutlinedButton(onClick = { confirmHosts = true }, modifier = Modifier.fillMaxWidth()) {
+            Text(t.eraseAllHosts, fontSize = 15.sp, color = AppColors.red)
+        }
+        OutlinedButton(onClick = { confirmFactory = true }, modifier = Modifier.fillMaxWidth()) {
+            Text(t.factoryReset, fontSize = 15.sp, color = AppColors.red)
+        }
+        if (confirmFactory) {
+            AlertDialog(
+                onDismissRequest = { confirmFactory = false },
+                confirmButton = { TextButton({ cb.onFactoryReset(); confirmFactory = false }) { Text(t.doReset) } },
+                dismissButton = { TextButton({ confirmFactory = false }) { Text(t.doCancel) } },
+                title = { Text(t.factoryReset, fontWeight = FontWeight.Bold) },
+                text = { Text(t.factoryResetConfirm, fontSize = 15.sp) },
             )
         }
 
@@ -568,14 +786,51 @@ private fun ExpEnginePicker(
     }
 }
 
+/** Full-window-width dark rule (escapes the 12.dp list padding like Section). */
+@Composable
+private fun DarkRule() {
+    Box(
+        Modifier
+            .padding(vertical = 6.dp)
+            .layout { measurable, constraints ->
+                val extra = 12.dp.roundToPx() * 2
+                val w = constraints.maxWidth + extra
+                val p = measurable.measure(constraints.copy(minWidth = w, maxWidth = w))
+                layout(p.width, p.height) { p.place(-12.dp.roundToPx(), 0) }
+            }
+            .height(2.dp)
+            .background(Color(0xFF222222)),
+    )
+}
+
 @Composable
 private fun Section(title: String, onHelp: (() -> Unit)? = null) {
-    Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(title, color = AppColors.accent, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-        if (onHelp != null) {
-            Spacer(Modifier.width(6.dp))
-            IconButton(onClick = onHelp, modifier = Modifier.size(26.dp)) {
-                Icon(Icons.AutoMirrored.Filled.HelpOutline, LocalStrings.current.whatIsThis, tint = AppColors.accent, modifier = Modifier.size(20.dp))
+    Column(Modifier.fillMaxWidth()) {
+        // A #777777 rule spanning the FULL window width before every section
+        // header (visual breathing room). The settings list is inset by 12.dp,
+        // so the line is stretched 12.dp past each edge to reach the window
+        // borders regardless of that padding.
+        Box(
+            Modifier
+                .padding(top = 8.dp)
+                .layout { measurable, constraints ->
+                    val extra = 12.dp.roundToPx() * 2
+                    val w = constraints.maxWidth + extra
+                    val placeable = measurable.measure(constraints.copy(minWidth = w, maxWidth = w))
+                    layout(placeable.width, placeable.height) {
+                        placeable.place(-12.dp.roundToPx(), 0)
+                    }
+                }
+                .height(1.dp)
+                .background(Color(0xFF777777)),
+        )
+        Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(title, color = AppColors.accent, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            if (onHelp != null) {
+                Spacer(Modifier.width(6.dp))
+                IconButton(onClick = onHelp, modifier = Modifier.size(26.dp)) {
+                    Icon(Icons.AutoMirrored.Filled.HelpOutline, LocalStrings.current.whatIsThis, tint = AppColors.accent, modifier = Modifier.size(20.dp))
+                }
             }
         }
     }
@@ -584,6 +839,12 @@ private fun Section(title: String, onHelp: (() -> Unit)? = null) {
 /** Formats a scan-speed multiplier compactly: integers without a trailing ".0". */
 private fun fmtMult(m: Float): String {
     val r = (m * 100f).roundToInt() / 100f
+    return if (r == r.toInt().toFloat()) r.toInt().toString() else r.toString()
+}
+
+/** Like [fmtMult] but rounded to a single decimal — for the "Nx faster/slower" hint. */
+private fun fmt1(v: Float): String {
+    val r = (v * 10f).roundToInt() / 10f
     return if (r == r.toInt().toFloat()) r.toInt().toString() else r.toString()
 }
 
@@ -632,44 +893,86 @@ private fun RowScope.MultSlider(mult: Float, onChange: (Float) -> Unit) {
 @Composable
 private fun IntensitySlider(label: String, mult: Float, onChange: (Float) -> Unit) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1,
+        Text(label, fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1,
             modifier = Modifier.width(52.dp))
         MultSlider(mult.coerceIn(0.01f, 100f), onChange)
     }
 }
 
-/** One adaptive-speed line: a compact threshold field + an acceleration slider. */
+/** One adaptive-speed line: a compact threshold field + an acceleration slider,
+ *  with an estimate of the effect below ("Nx faster"/"Nx slower", or "off" when
+ *  the multiplier is dialled to the slow extreme). */
 @Composable
 private fun AdaptiveRow(
     thr: String, onThr: (String) -> Unit, thrLabel: String,
-    mult: Float, onMult: (Float) -> Unit,
+    mult: Float, slower: Boolean, onMult: (Float) -> Unit,
 ) {
-    Row(
-        Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        NumField(thr, onThr, thrLabel, Modifier.width(104.dp))
-        MultSlider(mult.coerceIn(0.01f, 100f), onMult)
+    val t = LocalStrings.current
+    val m = mult.coerceIn(0.01f, 100f)
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            NumField(thr, onThr, thrLabel, Modifier.width(104.dp))
+            MultSlider(m, onMult)
+        }
+        // The "faster ×N / slower ×N" estimate is dropped here — the slider's own
+        // caption to the right already shows it. Only the meaningful "off" state
+        // (no analog on the right) is kept.
+        if (m >= 48f) {
+            Text(
+                t.disabledWord,
+                color = AppColors.accent, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(start = 4.dp),
+            )
+        }
     }
 }
 
-/** One-line readout of the effective scan numbers for a mode (live preview). */
+/** Compact text of effective scan params for one adaptive end (or "off"). */
+private fun fmtParams(p: ScanParams, t: Strings): String =
+    if (p.disabled) t.disabledWord
+    else "${t.periodWord} ${if (p.continuous) t.nonstopWord else "${p.intervalSec}${t.secShort}"}, " +
+        "${t.batchWord} ${p.batch}, ${t.threadsWord} ${p.concurrency}"
+
+/** One per-mode block: an intensity slider plus the two effective readouts, each
+ *  split into a "when alive ≷ N" header line and the resulting params below it. */
 @Composable
-private fun ScanParamReadout(label: String, p: ScanParams) {
+private fun SpeedModeRow(
+    label: String,
+    mult: Float,
+    onChange: (Float) -> Unit,
+    fewThreshold: Int,
+    paramsFew: ScanParams,
+    manyThreshold: Int,
+    paramsMany: ScanParams,
+) {
     val t = LocalStrings.current
-    val interval = when {
-        p.continuous -> t.effContinuous
-        p.intervalSec < 90 -> "${p.intervalSec} ${t.secShort}"
-        else -> "${p.intervalSec / 60} ${t.minShort}"
+    Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+        IntensitySlider(label, mult, onChange)
+        Text(
+            t.ifAliveLt(fewThreshold),
+            color = AppColors.onSurfaceMuted, fontSize = 12.sp,
+            modifier = Modifier.padding(start = 4.dp),
+        )
+        Text(
+            fmtParams(paramsFew, t),
+            color = AppColors.onSurfaceMuted, fontSize = 12.sp,
+            modifier = Modifier.padding(start = 14.dp),
+        )
+        Text(
+            t.ifAliveGt(manyThreshold),
+            color = AppColors.onSurfaceMuted, fontSize = 12.sp,
+            modifier = Modifier.padding(start = 4.dp),
+        )
+        Text(
+            fmtParams(paramsMany, t),
+            color = AppColors.onSurfaceMuted, fontSize = 12.sp,
+            modifier = Modifier.padding(start = 14.dp),
+        )
     }
-    Text(
-        "$label → ${t.effCheck} $interval · ${t.effBatch} ${p.batch} · ${t.effPar} ${p.concurrency}",
-        color = if (p.continuous) AppColors.accent else AppColors.onSurfaceMuted,
-        fontSize = 12.sp,
-        fontWeight = if (p.continuous) FontWeight.Bold else FontWeight.Normal,
-        modifier = Modifier.padding(start = 4.dp, bottom = 2.dp),
-    )
 }
 
 @Composable
@@ -686,6 +989,17 @@ private fun NumField(value: String, onChange: (String) -> Unit, label: String, m
         textStyle = androidx.compose.ui.text.TextStyle(fontSize = 16.sp, fontFamily = sansFontFamily()),
         singleLine = true,
     )
+}
+
+/** A wrapping explanation on the left (takes the remaining width, multi-line) plus
+ *  a small right-aligned numeric box — used by the scan-speed / subscription fields. */
+@Composable
+private fun LabeledNumField(value: String, onChange: (String) -> Unit, label: String, modifier: Modifier = Modifier) {
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+        Text(label, Modifier.weight(1f), fontSize = 14.sp, color = AppColors.onSurface)
+        Spacer(Modifier.width(8.dp))
+        NumField(value, onChange, "", Modifier.width(72.dp))
+    }
 }
 
 @Composable
@@ -716,66 +1030,145 @@ private fun ChoiceRow(title: String, desc: String, selected: Boolean, onSelect: 
 @Composable
 private fun SourcesPage(cb: MoreCallbacks) {
     val t = LocalStrings.current
-    var newUrl by remember { mutableStateOf("") }
-    Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(newUrl, { newUrl = it }, Modifier.weight(1f), label = { Text(t.sourceUrl, fontSize = 14.sp) }, singleLine = true)
-            Spacer(Modifier.width(8.dp))
-            Button({ if (newUrl.isNotBlank()) { cb.onAddSource(newUrl.trim()); newUrl = "" } }) { Text("+", fontSize = 16.sp) }
-        }
-        Column(
-            Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+    Column(Modifier.fillMaxSize()) {
+        // Header: a [+] opens the dedicated bulk-add page.
+        Row(
+            Modifier.fillMaxWidth().padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            for (src in cb.sources) {
+            Text(t.subscriptionsAddHint, Modifier.weight(1f), color = AppColors.onSurfaceMuted, fontSize = 13.sp)
+            Spacer(Modifier.width(8.dp))
+            Button({ cb.onOpenDest(MoreDest.ADD_SOURCES) }) { Text("+", fontSize = 18.sp) }
+        }
+        // Only real http(s) subscriptions appear here. Manually-pasted proxies
+        // (the "manual:fixed" sentinel source) are NOT subscriptions — they live
+        // in the catalog only. Tiles are full-bleed with an edge-to-edge divider.
+        val subs = cb.sources.filter { it.url.startsWith("http") }
+        Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState())) {
+            subs.forEachIndexed { i, src ->
+                if (i > 0) HorizontalDivider(thickness = 2.dp, color = AppColors.gray)
                 SourceTile(src, cb, t)
-                HorizontalDivider(color = AppColors.cardBorder)
             }
         }
     }
 }
 
-/** One subscription row: no card background, separated by dividers. */
+/** One subscription tile — all-white background, edge-to-edge gray divider between tiles. */
 @Composable
 private fun SourceTile(src: SourceItem, cb: MoreCallbacks, t: Strings) {
+    var confirmDelete by remember { mutableStateOf(false) }
     Column(
-        Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        Modifier.fillMaxWidth().background(AppColors.background).padding(horizontal = 8.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        // 1) Full URL, multi-line, in a read-only field (selectable/copyable).
+        // 1) Full URL in a read-only field: #DDDDDD background, bold mono text.
         OutlinedTextField(
             value = src.url,
             onValueChange = {},
             readOnly = true,
             modifier = Modifier.fillMaxWidth(),
             textStyle = androidx.compose.ui.text.TextStyle(
-                fontFamily = monospaceFontFamily(), fontSize = 13.sp,
+                fontFamily = monospaceFontFamily(), fontSize = 13.sp, fontWeight = FontWeight.Bold,
+            ),
+            colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                unfocusedContainerColor = Color(0xFFDDDDDD),
+                focusedContainerColor = Color(0xFFDDDDDD),
             ),
         )
-        // 2) Big green alive count + "живых, N мёртвых, N всего"; №seq on the right.
+        // 2) Action buttons directly under the URL field + black On/Off + toggle.
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            IconButton({ cb.onRefreshSource(src.id) }) { Icon(Icons.Filled.Download, t.dlNow, tint = AppColors.accent) }
+            IconButton({ cb.onOpenUrl(src.url) }) { Icon(Icons.Filled.OpenInNew, t.open, tint = AppColors.gray) }
+            IconButton({ cb.onCopy(src.url) }) { Icon(Icons.Filled.ContentCopy, t.copy, tint = AppColors.gray) }
+            IconButton({ confirmDelete = true }) { Icon(Icons.Filled.Delete, t.delete, tint = AppColors.gray) }
+            Spacer(Modifier.weight(1f))
+            Text(
+                if (src.enabled) "On" else "Off",
+                color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 12.sp,
+            )
+            Spacer(Modifier.width(2.dp))
+            Switch(
+                src.enabled, { cb.onToggleSource(src.id, it) },
+                modifier = Modifier.scale(0.72f),
+                colors = androidx.compose.material3.SwitchDefaults.colors(
+                    checkedThumbColor = Color.White, checkedTrackColor = AppColors.gray,
+                ),
+            )
+        }
+        // 3) Big green alive count + "N мёртвых, N всего"; №seq on the right.
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("${src.alive}", color = AppColors.green, fontWeight = FontWeight.Bold, fontSize = 22.sp)
             Text(t.sourceCounts(src.dead, src.total), color = AppColors.onSurfaceMuted, fontSize = 14.sp)
             Spacer(Modifier.weight(1f))
             Text("№${src.seq}", color = AppColors.onSurfaceMuted, fontWeight = FontWeight.Bold, fontSize = 14.sp)
         }
-        // 3) When downloaded, and either the size or the error.
-        val whenTxt = if (src.lastRefreshMinsAgo >= 0) t.agoFmt(fmtAgo(src.lastRefreshMinsAgo, t)) else t.notDownloaded
-        Row(Modifier.fillMaxWidth()) {
-            Text("$whenTxt · ", color = AppColors.onSurfaceMuted, fontSize = 13.sp)
-            if (src.lastError != null) {
-                Text(src.lastError, color = AppColors.red, fontSize = 13.sp)
-            } else {
-                Text(src.bytesHuman, color = AppColors.onSurfaceMuted, fontSize = 13.sp)
+        // 4) While a manual download runs: blue "Загружаю… Ns"; else when/size/error.
+        if (src.downloading) {
+            Text(t.downloadingFmt(src.downloadingSec), color = AppColors.blue, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+        } else {
+            val whenTxt = if (src.lastRefreshMinsAgo >= 0) t.agoFmt(fmtAgo(src.lastRefreshMinsAgo, t)) else t.notDownloaded
+            Row(Modifier.fillMaxWidth()) {
+                Text("$whenTxt · ", color = AppColors.onSurfaceMuted, fontSize = 13.sp)
+                if (src.lastError != null) {
+                    Text(src.lastError, color = AppColors.red, fontSize = 13.sp)
+                } else {
+                    Text(src.bytesHuman, color = AppColors.onSurfaceMuted, fontSize = 13.sp)
+                }
             }
         }
-        // 4) Gray icon actions + enabled toggle.
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            IconButton({ cb.onOpenUrl(src.url) }) { Icon(Icons.Filled.OpenInNew, t.open, tint = AppColors.gray) }
-            IconButton({ cb.onCopy(src.url) }) { Icon(Icons.Filled.ContentCopy, t.copy, tint = AppColors.gray) }
-            IconButton({ cb.onRemoveSource(src.id) }) { Icon(Icons.Filled.Delete, t.delete, tint = AppColors.gray) }
-            Spacer(Modifier.weight(1f))
-            Switch(src.enabled, { cb.onToggleSource(src.id, it) })
-        }
+    }
+    if (confirmDelete) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text(t.deleteConfirmTitle) },
+            text = { Text(src.url, fontSize = 13.sp, fontFamily = monospaceFontFamily()) },
+            confirmButton = {
+                TextButton({ confirmDelete = false; cb.onRemoveSource(src.id) }) { Text(t.delete, color = AppColors.red) }
+            },
+            dismissButton = { TextButton({ confirmDelete = false }) { Text(t.cancel) } },
+        )
+    }
+}
+
+/** Bulk-add page: paste many subscription URLs (one per line) and/or a batch of
+ *  ready proxy links (a fixed list that is never downloaded). */
+@Composable
+private fun AddSourcesPage(cb: MoreCallbacks) {
+    val t = LocalStrings.current
+    var subsText by remember { mutableStateOf("") }
+    var proxyText by remember { mutableStateOf("") }
+    var result by remember { mutableStateOf<String?>(null) }
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(t.addSubsLabel, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+        Text(t.addSubsHelp, color = AppColors.onSurfaceMuted, fontSize = 13.sp)
+        OutlinedTextField(
+            subsText, { subsText = it },
+            Modifier.fillMaxWidth().height(150.dp),
+            placeholder = { Text("https://…\nhttps://…", fontSize = 13.sp) },
+            textStyle = androidx.compose.ui.text.TextStyle(fontFamily = monospaceFontFamily(), fontSize = 13.sp),
+        )
+        HorizontalDivider(thickness = 1.dp, color = AppColors.gray)
+        Text(t.addProxiesLabel, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+        Text(t.addProxiesHelp, color = AppColors.onSurfaceMuted, fontSize = 13.sp)
+        OutlinedTextField(
+            proxyText, { proxyText = it },
+            Modifier.fillMaxWidth().height(150.dp),
+            placeholder = { Text("tg://proxy?server=…\nhttps://t.me/proxy?…", fontSize = 13.sp) },
+            textStyle = androidx.compose.ui.text.TextStyle(fontFamily = monospaceFontFamily(), fontSize = 13.sp),
+        )
+        Button(
+            {
+                val a = if (subsText.isNotBlank()) cb.onAddSourcesBulk(subsText) else 0
+                val b = if (proxyText.isNotBlank()) cb.onAddManualProxies(proxyText) else 0
+                result = t.addedFmt(a, b)
+                subsText = ""; proxyText = ""
+            },
+            Modifier.fillMaxWidth(),
+        ) { Text(t.addButton, fontSize = 16.sp) }
+        result?.let { Text(it, color = AppColors.green, fontWeight = FontWeight.Bold, fontSize = 14.sp) }
     }
 }
 
@@ -896,6 +1289,57 @@ private fun AboutPage(cb: MoreCallbacks) {
     }
 }
 
+// === Hotkeys (desktop only) =============================================
+
+@Composable
+private fun HotkeysPage(cb: MoreCallbacks) {
+    val t = LocalStrings.current
+    var enabled by remember { mutableStateOf(cb.hotkeysEnabled) }
+    var letter by remember { mutableStateOf(cb.hotkeyLetter) }
+    // Live chord text: take the saved label and swap its trailing letter.
+    fun withLetter(base: String) = if (letter.isEmpty()) base else base.trimEnd().dropLast(1) + letter
+
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text(t.hotkeysIntro, fontSize = 14.sp, color = AppColors.onSurface)
+
+        // Master on/off.
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(t.hotkeyEnable, Modifier.weight(1f), fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            Text(if (enabled) "ON" else "OFF", color = if (enabled) AppColors.green else AppColors.gray, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+            Spacer(Modifier.width(4.dp))
+            Switch(enabled, { enabled = it; cb.onSetHotkeysEnabled(it) })
+        }
+
+        // Currently-set chords (live with the letter field).
+        Text(t.hotkeyCopyTitle, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+        Text(withLetter(cb.hotkeyCopyLabel), fontFamily = monospaceFontFamily(), color = AppColors.accent, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+        Text(t.hotkeyCopyDesc, color = AppColors.onSurfaceMuted, fontSize = 13.sp)
+        Text(t.hotkeyOpenTitle, fontWeight = FontWeight.Bold, fontSize = 15.sp, modifier = Modifier.padding(top = 4.dp))
+        Text(withLetter(cb.hotkeyOpenLabel), fontFamily = monospaceFontFamily(), color = AppColors.accent, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+        Text(t.hotkeyOpenDesc, color = AppColors.onSurfaceMuted, fontSize = 13.sp)
+
+        // Letter field + set / reset.
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                letter,
+                { v -> letter = v.filter { it.isLetter() }.take(1).uppercase() },
+                Modifier.width(78.dp),
+                label = { Text(t.hotkeyLetterLabel, fontSize = 12.sp) },
+                singleLine = true,
+                textStyle = androidx.compose.ui.text.TextStyle(fontSize = 18.sp, fontFamily = sansFontFamily()),
+            )
+            Button(onClick = { if (letter.isNotEmpty()) cb.onSetHotkeyLetter(letter) }) { Text(t.hotkeySet, fontSize = 14.sp) }
+            OutlinedButton(onClick = { letter = "P"; cb.onSetHotkeyLetter("P") }) { Text(t.hotkeyReset, fontSize = 14.sp) }
+        }
+
+        Text(t.hotkeysNote, fontSize = 13.sp, color = AppColors.onSurfaceMuted)
+        Spacer(Modifier.height(16.dp))
+    }
+}
+
 // === Export =============================================================
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -905,52 +1349,63 @@ private fun ExportPage(cb: MoreCallbacks) {
     val links = remember { cb.exportLinks() }
     val allText = remember(links) { links.joinToString("\n") }
     var savedPath by remember { mutableStateOf<String?>(null) }
+    // Per-mode alive counts: pulled once (each call hits the DB).
+    val modeCounts = remember { listOf("vpn", "wifi", "lte", "ethernet", "wp").associateWith { cb.onExportLinksForMode(it).size } }
+    var modeSavedPath by remember { mutableStateOf<String?>(null) }
     fun copyN(n: Int) { if (links.isNotEmpty()) cb.onCopy(links.take(n).joinToString("\n")) }
     Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(t.aliveLinks(links.size), fontWeight = FontWeight.Bold, fontSize = 16.sp)
 
-        // Copy the first 1 / 10 / 30 / 100 / all links — each button spells out
-        // "copy"; they wrap to a second line on narrow screens.
-        FlowRow(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            CountCopyButton("${t.actCopy} 1", links.isNotEmpty()) { copyN(1) }
-            CountCopyButton("${t.actCopy} 10", links.isNotEmpty()) { copyN(10) }
-            CountCopyButton("${t.actCopy} 30", links.isNotEmpty()) { copyN(30) }
-            CountCopyButton("${t.actCopy} 100", links.isNotEmpty()) { copyN(100) }
-            CountCopyButton("${t.actCopy} ${t.allShort}", links.isNotEmpty()) { copyN(links.size) }
+        // Copy ТОП — narrow 1 / 10 / 100 / ВСЕ buttons in one row (not stretched).
+        Text(t.copyTop, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            CountCopyButton("1", links.isNotEmpty()) { copyN(1) }
+            CountCopyButton("10", links.isNotEmpty()) { copyN(10) }
+            CountCopyButton("100", links.isNotEmpty()) { copyN(100) }
+            CountCopyButton(t.allShort, links.isNotEmpty()) { copyN(links.size) }
         }
 
-        // Open / copy a random link from the list.
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(
-                onClick = { if (links.isNotEmpty()) cb.onOpenUrl(links.random()) },
-                enabled = links.isNotEmpty(), modifier = Modifier.weight(1f),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 8.dp),
-            ) {
-                Icon(Icons.Filled.OpenInNew, null, Modifier.size(16.dp))
-                Spacer(Modifier.width(6.dp)); Text(t.openRandom, fontSize = 13.sp, maxLines = 1)
+        // Random host + its 2 actions on one line.
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(t.randomHost, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            IconButton(onClick = { if (links.isNotEmpty()) cb.onCopy(links.random()) }, enabled = links.isNotEmpty()) {
+                Icon(Icons.Filled.ContentCopy, t.copyRandom, tint = AppColors.accent)
             }
-            OutlinedButton(
-                onClick = { if (links.isNotEmpty()) cb.onCopy(links.random()) },
-                enabled = links.isNotEmpty(), modifier = Modifier.weight(1f),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 8.dp),
-            ) {
-                Icon(Icons.Filled.ContentCopy, null, Modifier.size(16.dp))
-                Spacer(Modifier.width(6.dp)); Text(t.copyRandom, fontSize = 13.sp, maxLines = 1)
+            IconButton(onClick = { if (links.isNotEmpty()) cb.onOpenUrl(links.random()) }, enabled = links.isNotEmpty()) {
+                Icon(Icons.Filled.OpenInNew, t.openRandom, tint = AppColors.accent)
             }
         }
 
-        // Dump everything to a text file in the user's home / pull-able dir.
-        OutlinedButton(
-            onClick = { savedPath = cb.onExportToFile() },
-            enabled = links.isNotEmpty(), modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text(t.exportToFile, fontSize = 14.sp)
+        // Export to file: "Экспорт в файл:" + a mode dropdown (ВСЕ / per-mode,
+        // with counts) + an OK button, all on one line. "ВСЕ" = the global alive
+        // count shown in the header above; the per-mode counts are tracked
+        // separately PER TRANSPORT (so e.g. Wi-Fi can differ from the header).
+        val exportOptions = remember(modeCounts) {
+            listOf("all" to links.size) + listOf("vpn", "wifi", "lte", "ethernet", "wp").map { it to (modeCounts[it] ?: 0) }
         }
-        savedPath?.let {
+        var selMode by remember { mutableStateOf("all") }
+        var modeExpanded by remember { mutableStateOf(false) }
+        fun optLabel(code: String, cnt: Int) =
+            (if (code == "all") t.allShort else modeLabel(code)) + " " + t.pcs(cnt)
+        val selCount = if (selMode == "all") links.size else (modeCounts[selMode] ?: 0)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(t.exportToFile, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            Box(Modifier.weight(1f)) {
+                OutlinedButton(onClick = { modeExpanded = true }, modifier = Modifier.fillMaxWidth()) {
+                    Text(optLabel(selMode, selCount), fontSize = 14.sp, maxLines = 1)
+                }
+                DropdownMenu(modeExpanded, { modeExpanded = false }) {
+                    exportOptions.forEach { (code, cnt) ->
+                        DropdownMenuItem(text = { Text(optLabel(code, cnt)) }, onClick = { selMode = code; modeExpanded = false })
+                    }
+                }
+            }
+            Button(
+                onClick = { modeSavedPath = if (selMode == "all") cb.onExportToFile() else cb.onExportFileForMode(selMode) },
+                enabled = selCount > 0,
+            ) { Text("OK", fontSize = 14.sp) }
+        }
+        modeSavedPath?.let {
             Text(
                 "${t.exportSaved} $it",
                 color = AppColors.onSurfaceMuted, fontSize = 12.sp,
@@ -972,11 +1427,12 @@ private fun ExportPage(cb: MoreCallbacks) {
 
 /** A small button that copies a slice of the export list (label spells "copy N"). */
 @Composable
-private fun CountCopyButton(label: String, enabled: Boolean, onClick: () -> Unit) {
+private fun CountCopyButton(label: String, enabled: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     OutlinedButton(
         onClick = onClick,
         enabled = enabled,
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+        modifier = modifier,
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 8.dp),
     ) {
         Text(label, fontSize = 13.sp, maxLines = 1)
     }

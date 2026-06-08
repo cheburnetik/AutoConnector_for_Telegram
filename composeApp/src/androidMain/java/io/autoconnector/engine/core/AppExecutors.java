@@ -38,9 +38,12 @@ public final class AppExecutors {
     /** HTTP fetches for subscription pages. */
     public static final ThreadPoolExecutor SCAN = queueBacked("kbh-scan", 4, 64);
 
-    /** Outbound probe network work. 16 workers, large queue — capped
-     *  throughput, never threads-go-brrr. */
-    public static final ThreadPoolExecutor PROBE = queueBacked("kbh-probe", 16, 1024);
+    /** Outbound probe network work — capped throughput, large queue. 64 matches
+     *  {@link io.autoconnector.engine.core.Prefs#CONCURRENCY_CAP} so the Scan-tab
+     *  plan (threads) equals what actually runs. Was briefly 48; 100 had thrashed
+     *  a low-RAM VM into an OOM hang (paired with a heavy bootstrap, since
+     *  lightened). 64 is the balance: matches the planned ~63 at fresh start. */
+    public static final ThreadPoolExecutor PROBE = queueBacked("kbh-probe", 64, 4096);
 
     /** Incoming Telegram→upstream relays. {@code SynchronousQueue} +
      *  AbortPolicy: a stuck upstream causes new accepts to be rejected

@@ -45,6 +45,8 @@ fun StatTable(
     modifier: Modifier = Modifier,
     weights: List<Float>? = null,
     fontSize: Int = 14,
+    bg: Color = AppColors.card,
+    border: Color = AppColors.cardBorder,
 ) {
     if (rows.isEmpty()) return
     val cols = rows.maxOf { it.size }
@@ -53,15 +55,15 @@ fun StatTable(
     Box(
         modifier.fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
-            .background(AppColors.card)
-            .border(1.dp, AppColors.cardBorder, RoundedCornerShape(10.dp)),
+            .background(bg)
+            .border(1.dp, border, RoundedCornerShape(10.dp)),
     ) {
         Column {
             rows.forEachIndexed { ri, row ->
-                if (ri > 0) Box(Modifier.fillMaxWidth().height(1.dp).background(AppColors.cardBorder))
+                if (ri > 0) Box(Modifier.fillMaxWidth().height(1.dp).background(border))
                 Row(Modifier.fillMaxWidth().height(intrinsicRowHeight(fontSize))) {
                     for (ci in 0 until cols) {
-                        if (ci > 0) Box(Modifier.fillMaxHeight().width(1.dp).background(AppColors.cardBorder))
+                        if (ci > 0) Box(Modifier.fillMaxHeight().width(1.dp).background(border))
                         val c = row.getOrNull(ci) ?: Cell("")
                         Box(Modifier.weight(w.getOrElse(ci) { 1f }).fillMaxHeight().padding(horizontal = 8.dp, vertical = 6.dp)) {
                             Text(

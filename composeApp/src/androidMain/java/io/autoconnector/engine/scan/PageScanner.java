@@ -95,6 +95,8 @@ public final class PageScanner {
             "https://raw.githubusercontent.com/Grim1313/mtproto-for-telegram/master/all_proxies.txt",
             "https://raw.githubusercontent.com/SoliSpirit/mtproto/master/all_proxies.txt",
             "https://raw.githubusercontent.com/kort0881/telegram-proxy-collector/refs/heads/main/proxy_all.txt",
+            "https://raw.githubusercontent.com/kort0881/telegram-proxy-collector/main/proxy_eu.txt",
+            "https://t.me/s/tgmtproxylol",
             "https://raw.githubusercontent.com/Argh94/Proxy-List/refs/heads/main/MTProto.txt",
             "https://raw.githubusercontent.com/LoneKingCode/free-proxy-db/refs/heads/main/proxies/all.txt",
             "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/TELEGRAM_PROXY_SUB/refs/heads/main/telegram_proxy_no1.txt",
@@ -134,6 +136,7 @@ public final class PageScanner {
     /** Scans one page, trying mirrors until one works. */
     public ScanResult scanPage(String pageUrl) {
         ScanResult r = new ScanResult();
+        long startedAt = System.currentTimeMillis();
         // Honour the global stop switch — user can flip «Сканирование» off
         // while a parallelScanAll is in mid-stride; we must respect that
         // between mirror attempts so HTTP fetches stop too.
@@ -166,12 +169,14 @@ public final class PageScanner {
                     + ", последняя ошибка: "
                     + (lastWhy != null ? lastWhy : "неизвестная")
                     + "). Возможно блокировка или ссылка неверна.";
+            log.line("✗ " + shortUrl(pageUrl) + " — " + r.error);
             io.autoconnector.engine.traffic.ScanMetrics.INSTANCE.noteSub(false);
             return r;
         }
-        // Count the downloaded payload as scan traffic.
+        // Count the downloaded payload as SUBSCRIPTION traffic (separate channel
+        // from host-probe traffic, so the two Scan-tab graphs don't mix).
         r.bytes = body.length();
-        io.autoconnector.engine.traffic.ScanMetrics.INSTANCE.addBytes(body.length());
+        io.autoconnector.engine.traffic.ScanMetrics.INSTANCE.addSubBytes(body.length());
 
         // For Telegram channel previews, scroll up a few times so we collect
         // older posts too — the bare URL only carries the latest ~20.
@@ -195,8 +200,11 @@ public final class PageScanner {
         }
 
         r.added = store.addAll(list);
+        double secs = (System.currentTimeMillis() - startedAt) / 1000.0;
+        long kb = r.bytes / 1024;
         log.line("→ " + shortUrl(pageUrl) + ": найдено " + r.found
-                + ", новых " + r.added);
+                + ", новых " + r.added
+                + "  " + String.format("%.1f", secs) + "с · " + kb + "КБ");
         io.autoconnector.engine.traffic.ScanMetrics.INSTANCE.noteSub(true);
         return r;
     }
@@ -294,7 +302,7 @@ public final class PageScanner {
             try {
                 String b = fetch(url);
                 if (b.isEmpty()) break;
-                io.autoconnector.engine.traffic.ScanMetrics.INSTANCE.addBytes(b.length());
+                io.autoconnector.engine.traffic.ScanMetrics.INSTANCE.addSubBytes(b.length());
                 all.append('\n').append(b);
                 log.line("↓ 4pda: дочитал страницу st=" + targetSt + " (+" + b.length() + " Б)");
             } catch (Exception e) {
@@ -349,6 +357,11 @@ public final class PageScanner {
         new Fetcher("allorigins", "https://api.allorigins.win/raw?url=",       true),
         // Reader proxy — great for raw/text pages (GitHub lists, plain pages).
         new Fetcher("jina",       "https://r.jina.ai/",                        false),
+        // Extra public CORS/fetch proxies — more fallbacks so a retry pass over
+        // the sources that failed everywhere still has fresh routes to try.
+        new Fetcher("corsproxy",  "https://corsproxy.io/?url=",                true),
+        new Fetcher("thingproxy", "https://thingproxy.freeboard.io/fetch/",    false),
+        new Fetcher("isomorphic", "https://cors.isomorphic-git.org/",          false),
     };
 
     /**

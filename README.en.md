@@ -32,6 +32,18 @@ All builds are on the releases page: **[GitHub Releases (latest)](https://github
 | **Linux** x64 | `AutoConnector-for-Telegram-linux-x64.tar.gz` | extract → `./AutoConnector-for-Telegram/AutoConnector.sh` |
 | **macOS** 11+ (Apple Silicon/Intel) | `AutoConnector-for-Telegram-macos.tar.gz` | extract → `./AutoConnector.command` (if blocked — `xattr -dr com.apple.quarantine AutoConnector-for-Telegram`) |
 
+### 🔐 Authenticity (release 1.0.61)
+
+The APK is signed with a release certificate (apksigner, schemes v1+v2+v3). Before installing you can verify:
+
+- **Signing certificate (SHA-256):** `cb23a18c0cf8a23e43b5b63d199fc1440d3e4d6533e1309d3f92f273fe626a5a`
+  (CN=AutoConnector for Telegram) — this fingerprint is identical across all future releases.
+- **APK SHA-256:** `001456190f1a21cf594100a4a82420cfa466442052d8eb896a759976d94020fa`
+- **Windows zip SHA-256:** `afb08bd2c991ca3520ba94a620e3af5ffcc8274747c864a36265a7c93ecc9f2b`
+
+Verify with: `apksigner verify --print-certs AutoConnector_for_Telegram.apk` (certificate) and
+`sha256sum -c SHA256SUMS.txt` (file integrity; `SHA256SUMS.txt` is attached to the release).
+
 ## ✨ Features
 
 - **Auto proxy search** — scans dozens of open pages and subscriptions.

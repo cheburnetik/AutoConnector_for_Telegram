@@ -26,6 +26,7 @@ import io.autoconnector.engine.SourceItem
 import io.autoconnector.engine.check.CheckRunner
 import io.autoconnector.engine.core.Durations
 import io.autoconnector.engine.core.NetworkMode
+import io.autoconnector.engine.core.ScanGate
 import io.autoconnector.engine.core.ScanState
 import io.autoconnector.engine.core.NetworkMonitor
 import io.autoconnector.engine.core.Prefs
@@ -43,7 +44,9 @@ import io.autoconnector.engine.relay.RelayService
 import io.autoconnector.engine.relay.WireShaper
 import io.autoconnector.engine.relay.RelayStats
 import io.autoconnector.engine.scan.PageScanner
+import io.autoconnector.engine.scan.ProxyParser
 import io.autoconnector.engine.traffic.CheckRateBuffer
+import io.autoconnector.engine.traffic.ConnectBuffer
 import io.autoconnector.engine.traffic.LatencyBuffer
 import io.autoconnector.engine.traffic.ScanMetrics
 import io.autoconnector.engine.traffic.SparkBuffer
@@ -91,6 +94,9 @@ class AndroidEngine(context: Context) : Engine {
     private var prevDown = 0L
     private var lastDataAt = 0L
 
+    // source id -> epoch ms when a manual out-of-queue download started.
+    private val downloadingSince = java.util.concurrent.ConcurrentHashMap<Long, Long>()
+
     override fun start() {
         HandshakeStats.init(ctx)
         NetworkMonitor.init(ctx)
@@ -104,6 +110,13 @@ class AndroidEngine(context: Context) : Engine {
         Prefs(ctx).applyShippedDefaultsOnce()
         RelayLog.register { session, line -> appendLog(line, LogCat.TELEGRAM, session) }
         loadSettings()
+        // Apply the persisted scan-mode override on top of auto-detection and
+        // re-form the per-mode pool whenever the effective network changes.
+        val mc = Prefs(ctx).scanModeOverride()
+        NetworkMonitor.setManualMode(if (mc == "auto") null else NetworkMode.fromCode(mc))
+        NetworkMonitor.get()?.addListener { newMode ->
+            scope.launch(Dispatchers.IO) { onModeSwitched(newMode) }
+        }
         NetLog.setEnabled(Prefs(ctx).netLogEnabled())
         prevUp = RelayStats.bytesUp.get()
         prevDown = RelayStats.bytesDown.get()
@@ -127,7 +140,17 @@ class AndroidEngine(context: Context) : Engine {
 
     override fun setScanEnabled(on: Boolean) {
         Prefs(ctx).setScanEnabled(on)
-        appendLog(if (on) "✓ фоновое сканирование включено" else "⏸ фоновое сканирование отключено", LogCat.SCAN)
+        // Abort any in-flight subscription download / host probe immediately when
+        // scanning is turned off (CheckRunner + PageScanner poll ScanGate); clear
+        // it when turned back on.
+        ScanGate.setAborted(!on)
+        if (!on) {
+            // Clear the ping / threads gauges promptly so the graphs drop to 0
+            // instead of holding stale values after scanning stops.
+            io.autoconnector.engine.traffic.ScanPingBuffer.INSTANCE.reset()
+            io.autoconnector.engine.traffic.ThreadsBuffer.INSTANCE.reset()
+        }
+        appendLog(if (on) "✓ фоновое сканирование включено" else "⏸ фоновое сканирование отключено — останавливаю фоновые задачи", LogCat.SCAN)
         syncService()
         pushImmediate()
     }
@@ -153,9 +176,18 @@ class AndroidEngine(context: Context) : Engine {
             checkIntervalMin = p.checkIntervalMin(),
             checkBatch = p.checkBatch(),
             checkConcurrency = p.checkConcurrency(),
+            minRescanMin = p.minRescanMin(),
             speedVpn = p.speedMultiplier(NetworkMode.VPN),
             speedWifi = p.speedMultiplier(NetworkMode.WIFI),
             speedLte = p.speedMultiplier(NetworkMode.LTE),
+            speedEthernet = p.speedMultiplier(NetworkMode.ETHERNET),
+            speedWp = p.speedMultiplier(NetworkMode.WHITEPAGES),
+            subIntervalVpn = p.subIntervalMin(NetworkMode.VPN),
+            subIntervalWifi = p.subIntervalMin(NetworkMode.WIFI),
+            subIntervalLte = p.subIntervalMin(NetworkMode.LTE),
+            subIntervalEthernet = p.subIntervalMin(NetworkMode.ETHERNET),
+            subIntervalWp = p.subIntervalMin(NetworkMode.WHITEPAGES),
+            scanMode = p.scanModeOverride(),
             adaptiveAliveThreshold = p.adaptiveAliveThreshold(),
             fastSpeedMultiplier = p.fastSpeedMultiplier(),
             lazyAliveThreshold = p.lazyAliveThreshold(),
@@ -166,6 +198,7 @@ class AndroidEngine(context: Context) : Engine {
             dpiApplyRelay = p.dpiApplyRelay(),
             dpiApplyProbes = p.dpiApplyProbes(),
             dpiApplyDirect = p.dpiApplyDirect(),
+            proxyLinkHttp = p.proxyLinkHttp(),
             langCode = p.lang(),
             expEngineMode = p.expEngineMode(),
             netLogEnabled = p.netLogEnabled(),
@@ -175,6 +208,7 @@ class AndroidEngine(context: Context) : Engine {
 
     override fun updateSettings(s: EngineSettings) {
         val p = Prefs(ctx)
+        val oldScanMode = p.scanModeOverride()
         p.setRelayPortA(s.portA)
         p.setRelayPortB(s.portB)
         p.setHandshakeMode(s.handshakeMode)
@@ -185,9 +219,18 @@ class AndroidEngine(context: Context) : Engine {
         p.setCheckIntervalMin(s.checkIntervalMin)
         p.setCheckBatch(s.checkBatch)
         p.setCheckConcurrency(s.checkConcurrency)
+        p.setMinRescanMin(s.minRescanMin)
         p.setSpeedMultiplier(NetworkMode.VPN, s.speedVpn)
         p.setSpeedMultiplier(NetworkMode.WIFI, s.speedWifi)
         p.setSpeedMultiplier(NetworkMode.LTE, s.speedLte)
+        p.setSpeedMultiplier(NetworkMode.ETHERNET, s.speedEthernet)
+        p.setSpeedMultiplier(NetworkMode.WHITEPAGES, s.speedWp)
+        p.setSubIntervalMin(NetworkMode.VPN, s.subIntervalVpn)
+        p.setSubIntervalMin(NetworkMode.WIFI, s.subIntervalWifi)
+        p.setSubIntervalMin(NetworkMode.LTE, s.subIntervalLte)
+        p.setSubIntervalMin(NetworkMode.ETHERNET, s.subIntervalEthernet)
+        p.setSubIntervalMin(NetworkMode.WHITEPAGES, s.subIntervalWp)
+        p.setScanModeOverride(s.scanMode)
         p.setAdaptiveAliveThreshold(s.adaptiveAliveThreshold)
         p.setFastSpeedMultiplier(s.fastSpeedMultiplier)
         p.setLazyAliveThreshold(s.lazyAliveThreshold)
@@ -198,11 +241,17 @@ class AndroidEngine(context: Context) : Engine {
         p.setDpiApplyRelay(s.dpiApplyRelay)
         p.setDpiApplyProbes(s.dpiApplyProbes)
         p.setDpiApplyDirect(s.dpiApplyDirect)
+        p.setProxyLinkHttp(s.proxyLinkHttp)
         p.setLang(s.langCode)
         p.setExpEngineMode(s.expEngineMode)
         p.setNetLogEnabled(s.netLogEnabled)
         p.setRelayConnectMode(s.relayConnectMode)
         NetLog.setEnabled(s.netLogEnabled)
+        // Re-apply the override only when the mode picker actually changed, so a
+        // plain settings-save doesn't kick the network monitor.
+        if (s.scanMode != oldScanMode) {
+            NetworkMonitor.setManualMode(if (s.scanMode == "auto") null else NetworkMode.fromCode(s.scanMode))
+        }
         loadSettings()
         if (p.appEnabled() || p.scanEnabled()) RelayService.reconfigure(ctx)
         appendLog("⚙ настройки сохранены")
@@ -241,6 +290,7 @@ class AndroidEngine(context: Context) : Engine {
             batch = Prefs.effectiveBatch(batch, mult),
             concurrency = Prefs.effectiveConcurrency(concurrency, mult),
             continuous = sec <= 0,
+            disabled = Prefs.scanDisabledFor(mult),
         )
     }
 
@@ -289,7 +339,11 @@ class AndroidEngine(context: Context) : Engine {
 
     override fun clearDownloadedHosts() {
         store.clearDownloadedHosts()
-        appendLog("⚙ список скачанных хостов очищен (подписки сохранены)")
+        store.resetSourceStats()   // subscriptions back to "never / zeros"
+        appendLog("⚙ список скачанных хостов очищен — подписки обнулены, качаю заново")
+        refreshCatalog(); refreshSources()
+        // Pool is empty now — re-download + re-check instead of waiting.
+        scope.launch(Dispatchers.IO) { try { scanAndCheck() } catch (_: Throwable) {} }
     }
 
     override fun appInfo(): AppInfo = AppInfo(
@@ -309,8 +363,11 @@ class AndroidEngine(context: Context) : Engine {
         refreshCatalog()
     }
 
+    private fun fmtLink(tg: String): String =
+        if (Prefs(ctx).proxyLinkHttp()) tg.replaceFirst("tg://", "https://t.me/") else tg
+
     override fun tgLink(id: Long): String? =
-        store.proxiesByIds(listOf(id)).firstOrNull()?.tgLink()
+        store.proxiesByIds(listOf(id)).firstOrNull()?.tgLink()?.let { fmtLink(it) }
 
     override fun copyToClipboard(text: String) {
         val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
@@ -353,13 +410,50 @@ class AndroidEngine(context: Context) : Engine {
         refreshSources()
     }
 
+    override fun addSourcesBulk(urls: String): Int {
+        var n = 0
+        urls.lines().map { it.trim() }
+            .filter { it.startsWith("http://") || it.startsWith("https://") }
+            .forEach { store.upsertSource(it); n++ }
+        if (n > 0) { refreshSources(); appendLog("✓ добавлено подписок: $n", LogCat.SUBS) }
+        return n
+    }
+
+    override fun addManualProxies(text: String): Int {
+        val list = ProxyParser.parse(text, "manual:fixed", ProxyType.SOCKS5)
+        val added = store.addAll(list)
+        if (list.isNotEmpty()) {
+            refreshSources()
+            appendLog("✓ добавлено прокси (фикс-список): $added из ${list.size}", LogCat.SUBS)
+        }
+        return added
+    }
+
     override fun setSourceEnabled(id: Long, enabled: Boolean) {
         store.setSourceEnabled(id, enabled)
         refreshSources()
     }
 
+    override fun refreshSource(id: Long) {
+        scope.launch(Dispatchers.IO) {
+            val url = _sources.value.firstOrNull { it.id == id }?.url ?: return@launch
+            ScanGate.setAborted(false)
+            downloadingSince[id] = System.currentTimeMillis()
+            refreshSources()
+            appendLog("⤓ обновляю подписку: $url", LogCat.SUBS)
+            try {
+                val scanner = PageScanner(store) { line -> appendLog(line, LogCat.SUBS) }
+                val r = scanner.scanPage(url)
+                val sid = store.upsertSource(url)
+                if (sid > 0) { store.markSourceRefreshed(sid); store.setSourceScanResult(sid, r.found, r.bytes, r.error) }
+                appendLog("⤓ подписка обновлена: найдено ${r.found}" + (if (r.error != null) " (${r.error})" else ""), LogCat.SUBS)
+            } catch (t: Throwable) { appendLog("⚠ обновление подписки: ${t.message}", LogCat.SUBS) }
+            finally { downloadingSince.remove(id); refreshSources() }
+        }
+    }
+
     override fun exportAliveLinks(): List<String> =
-        store.topAlive(2000).map { it.tgLink() }
+        store.topAlive(2000).map { fmtLink(it.tgLink()) }
 
     override fun exportLinksToFile(): String? {
         val links = exportAliveLinks()
@@ -378,9 +472,177 @@ class AndroidEngine(context: Context) : Engine {
         }
     }
 
+    // Backup export/import is a desktop feature (file dialogs); Android stub.
+    override fun exportBackup(settings: Boolean, subs: Boolean, hosts: Boolean): String =
+        "Доступно в десктоп-версии"
+    override fun importBackup(settings: Boolean, subs: Boolean, hosts: Boolean): String =
+        "Доступно в десктоп-версии"
+
+    override fun factoryReset() {
+        scope.launch(Dispatchers.IO) {
+            try {
+                Prefs(ctx).clearAll()
+                Prefs(ctx).applyShippedDefaultsOnce()
+                store.clearDownloadedHosts()
+                for (s in store.listSources()) store.deleteSource(s.id)
+                store.ensureDefaultSources()
+                store.resetSourceStats()
+            } catch (_: Throwable) {}
+        }
+    }
+
     override fun refreshNow() {
         scope.launch(Dispatchers.IO) { scanAndCheck() }
     }
+
+    // === per-network-mode actions ========================================
+
+    override fun setScanMode(mode: String) {
+        Prefs(ctx).setScanModeOverride(mode)
+        NetworkMonitor.setManualMode(if (mode == "auto") null else NetworkMode.fromCode(mode))
+        loadSettings()
+        pushImmediate()
+        scope.launch(Dispatchers.IO) { onModeSwitched(NetworkMonitor.currentMode()) }
+    }
+
+    private val modeSwitchBusy = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** Re-forms the per-mode pool after the effective network changes. When the
+     *  new mode has too few alive hosts, runs an intensive seed scan: first the
+     *  best hosts known to work on the OTHER modes, then the due-for-check list
+     *  for this mode. Probes auto-record under the now-current mode. */
+    private fun onModeSwitched(mode: NetworkMode) {
+        if (mode == NetworkMode.UNKNOWN) return
+        if (!modeSwitchBusy.compareAndSet(false, true)) return
+        try {
+            if (store.aliveCountForMode(mode) < 20) {
+                ScanGate.setAborted(false)
+                appendLog("⟳ режим → ${mode.label}: формирую список (живых ${store.aliveCountForMode(mode)})", LogCat.SCAN)
+                // Seed with the top hosts from the OTHER reportable modes —
+                // good candidates that already work somewhere.
+                val seed = LinkedHashMap<Long, ProxyEntry>()
+                for (other in NetworkMode.reportable()) {
+                    if (other == mode) continue
+                    for (e in store.topAliveForMode(other, 80)) seed[e.id] = e
+                }
+                val p = Prefs(ctx)
+                val runner = CheckRunner(store, { line -> appendLog(line, LogCat.SCAN) }, 100)
+                runner.setProbeMode(if (p.dpiApplyProbes()) HandshakeMode.fromOrdinal(p.handshakeMode()) else HandshakeMode.NORMAL)
+                if (seed.isNotEmpty()) runner.runOn(ArrayList(seed.values), "mode-seed:${mode.code}")
+                runner.runOn(store.dueForCheckForMode(mode, 600), "mode-fill:${mode.code}")
+                appendLog("⟳ режим ${mode.label}: живых ${store.aliveCountForMode(mode)} / ${store.count()}", LogCat.SCAN)
+            }
+        } catch (t: Throwable) {
+            appendLog("⚠ смена режима: ${t.message}", LogCat.SCAN)
+        } finally {
+            modeSwitchBusy.set(false)
+            refreshCatalog()
+        }
+    }
+
+    override fun catalogForMode(modeCode: String): List<CatalogItem> {
+        val now = System.currentTimeMillis()
+        val mode = NetworkMode.fromCode(modeCode)
+        val nums = HashMap<Long, Int>()
+        var i = 1
+        for (s in store.listSources()) nums[s.id] = i++
+        val liveIds = HashSet<Long>()
+        for (c in RelayStats.liveConnections()) liveIds.add(c.upstreamProxyId)
+        val sticky = RelayManager.currentStickyProxyIds()
+        val pinnedId = RelayManager.currentPinnedId()
+
+        // auto / unknown → the global top-50 (same as the live catalog tab).
+        if (mode == NetworkMode.UNKNOWN) {
+            return store.top(50).map { p -> globalCatalogItem(p, now, nums, liveIds, sticky, pinnedId) }
+        }
+
+        return store.topForMode(mode, 50).map { p ->
+            val srcId = store.primarySourceId(p.id)
+            val tls = if (p.isFakeTls) FakeTlsClient.domainFromSecret(p.secret) else null
+            val ms = store.modeStatsOf(p.id, mode)
+            val alive = ms != null && ms.lastCheck > 0 && ms.alive
+            val score = ms?.score ?: 0.0
+            CatalogItem(
+                id = p.id,
+                host = hostLabel(p),
+                typeLabel = typeLabel(p),
+                rating = if (!alive || score <= 0.0) 0 else minOf(9, maxOf(1, (score / 10.0).toInt())),
+                alive = alive,
+                live = liveIds.contains(p.id),
+                pinned = pinnedId == p.id,
+                sticky = pinnedId != p.id && sticky.contains(p.id),
+                everServed = (ms?.tgConnections ?: 0L) > 0,
+                sourceNum = if (srcId > 0) nums[srcId] else null,
+                checkedMinsAgo = if (ms != null && ms.lastCheck > 0) (now - ms.lastCheck) / 60_000 else -1,
+                tgConnectMinsAgo = -1,
+                successes = ms?.successes ?: 0,
+                failures = ms?.failures ?: 0,
+                tgConnections = ms?.tgConnections ?: 0L,
+                bytesRelayed = ms?.bytesRelayed ?: 0L,
+                bytesRelayedHuman = TrafficMeter.human(ms?.bytesRelayed ?: 0L),
+                sessionTotalHuman = (ms?.totalSessionMs ?: 0L).let { if (it > 0) Durations.human(it / 1000) else "—" },
+                rttMs = ms?.rttMs ?: -1,
+                secret = p.secret,
+                tlsDomain = tls?.takeIf { it.isNotEmpty() },
+                port = p.port,
+                lastErrorShort = p.lastError?.takeIf { it.isNotBlank() }?.let { if (it.length > 40) it.substring(0, 39) + "…" else it },
+            )
+        }
+    }
+
+    override fun exportAliveLinksForMode(modeCode: String): List<String> {
+        val mode = NetworkMode.fromCode(modeCode)
+        val list = if (mode == NetworkMode.UNKNOWN) store.topAlive(2000)
+                   else store.topAliveForMode(mode, 2000)
+        return list.map { fmtLink(it.tgLink()) }
+    }
+
+    override fun exportLinksToFileForMode(modeCode: String): String? {
+        val links = exportAliveLinksForMode(modeCode)
+        if (links.isEmpty()) return null
+        return try {
+            val dir = ctx.getExternalFilesDir(null) ?: ctx.filesDir
+            val code = if (NetworkMode.fromCode(modeCode) == NetworkMode.UNKNOWN) "auto" else modeCode
+            val f = java.io.File(dir, "autoconnector_proxies_$code.txt")
+            f.writeText(links.joinToString("\n"))
+            appendLog("⤓ экспортировано ${links.size} ссылок ($code) → ${f.absolutePath}")
+            f.absolutePath
+        } catch (e: Throwable) {
+            appendLog("⚠ экспорт в файл не удался: ${e.message}")
+            null
+        }
+    }
+
+    override fun resetModeStats(modeCode: String) {
+        val mode = NetworkMode.fromCode(modeCode)
+        store.resetModeStats(mode)
+        refreshCatalog(); pushImmediate()
+        appendLog("⚙ рейтинг хостов обнулён: ${mode.label}")
+    }
+
+    override fun forgetModeHosts(modeCode: String) {
+        val mode = NetworkMode.fromCode(modeCode)
+        store.forgetModeHosts(mode)
+        refreshCatalog(); pushImmediate()
+        appendLog("⚙ хосты режима забыты: ${mode.label}")
+    }
+
+    override fun copyModeStats(fromCode: String, toCode: String) {
+        val from = NetworkMode.fromCode(fromCode)
+        val to = NetworkMode.fromCode(toCode)
+        store.copyModeStats(from, to)
+        refreshCatalog(); pushImmediate()
+        appendLog("⚙ режим ${to.label} ← копия рейтинга из ${from.label}")
+    }
+
+    // Global hotkeys are a desktop-only feature — no page/button on Android.
+    override fun hotkeysSupported() = false
+    override fun hotkeysEnabled() = false
+    override fun setHotkeysEnabled(on: Boolean) {}
+    override fun hotkeyLetter() = "P"
+    override fun setHotkeyLetter(letter: String) {}
+    override fun hotkeyCopyLabel() = ""
+    override fun hotkeyOpenLabel() = ""
 
     private val scanNowBusy = java.util.concurrent.atomic.AtomicBoolean(false)
 
@@ -393,6 +655,9 @@ class AndroidEngine(context: Context) : Engine {
         }
         scope.launch(Dispatchers.IO) {
             try {
+                // Manual scan runs regardless of the toggle — clear any abort flag
+                // that an earlier «scan off» may have left set.
+                ScanGate.setAborted(false)
                 val list = store.dueForCheck(500)
                 if (list.isEmpty()) {
                     appendLog("⚡ скан сейчас: в базе нет прокси — нечего проверять", LogCat.SCAN)
@@ -419,11 +684,11 @@ class AndroidEngine(context: Context) : Engine {
         while (true) {
             try {
                 pushState()
-                if (i % 3 == 0) { refreshCatalog(); refreshSources() }
+                if (i % 4 == 0) { refreshCatalog(); refreshSources() }
             } catch (_: Throwable) {
             }
             i++
-            delay(1500)
+            delay(2000)   // graph advances strictly once per 2 s
         }
     }
 
@@ -434,6 +699,13 @@ class AndroidEngine(context: Context) : Engine {
         val p = Prefs(ctx)
         val proxyOn = p.appEnabled()
         val scanOn = p.scanEnabled()
+
+        // Fallback per-poll sample of the live-proxy count so the "total live"
+        // graph fills even without a dedicated 1 s tick in RelayService. The
+        // buffer overwrites each second/minute bucket with the latest sample.
+        io.autoconnector.engine.traffic.AliveHistBuffer.INSTANCE.tick(store.aliveCount().toLong())
+        io.autoconnector.engine.traffic.ScanPingBuffer.INSTANCE.tick()
+        io.autoconnector.engine.traffic.ThreadsBuffer.INSTANCE.tick(ScanState.probing.size.toLong())
 
         val up = RelayStats.bytesUp.get()
         val down = RelayStats.bytesDown.get()
@@ -535,6 +807,19 @@ class AndroidEngine(context: Context) : Engine {
         val checkSums = store.sumCheckCounts()  // [successes, failures] all-time
         val sm = ScanMetrics.INSTANCE
 
+        // Per-mode pool counters for the ACTIVE network (falls back to the
+        // global pool when the mode can't be determined).
+        val curMode = NetworkMonitor.currentMode()
+        val aliveModeN: Int; val deadModeN: Int; val totalModeN: Int
+        if (curMode == NetworkMode.UNKNOWN) {
+            aliveModeN = alive; deadModeN = dead; totalModeN = total
+        } else {
+            val agg = store.aggregateForMode(curMode)
+            aliveModeN = agg.alive
+            deadModeN = agg.deadProbed
+            totalModeN = agg.alive + agg.deadProbed + agg.neverProbed
+        }
+
         // Subscription refresh activity.
         var srcMin = 0; var srcHour = 0; var srcTotal = 0
         for (src in store.listSources()) {
@@ -545,8 +830,23 @@ class AndroidEngine(context: Context) : Engine {
             if (age <= 3_600_000L) srcHour++
         }
 
+        val connA = ConnectBuffer.INSTANCE.secondsSnapshotA()
+        val connB = ConnectBuffer.INSTANCE.secondsSnapshotB()
+        val connAMin = ConnectBuffer.INSTANCE.minutesSnapshotA()
+        val connBMin = ConnectBuffer.INSTANCE.minutesSnapshotB()
         val cs = CheckRateBuffer.INSTANCE.secondsSnapshot()
         val cm = CheckRateBuffer.INSTANCE.minutesSnapshot()
+
+        // Scan plan (effective, intensity-scaled — the same maths the scheduler
+        // uses). When intensity disables scanning the plan reports the disabled
+        // sentinels (-1 interval / 0 conc / 0 batch).
+        val scNet = NetworkMonitor.currentMode()
+        val scAlive = if (scNet != NetworkMode.UNKNOWN) store.aliveCountForMode(scNet) else store.aliveCount()
+        val scMult = p.currentScanMult(scNet, scAlive)
+        val scanOff = Prefs.scanDisabledFor(scMult)
+        val planIntervalSec = Prefs.effectiveCheckSec(p.checkIntervalMin(), scMult)
+        val planConc = Prefs.effectiveConcurrency(p.checkConcurrency(), scMult)
+        val planBatch = Prefs.effectiveBatch(p.checkBatch(), scMult)
 
         val aLastA = p.lastTelegramConnectPortAMs() > 0
         val bLastB = p.lastTelegramConnectPortBMs() > 0
@@ -564,10 +864,20 @@ class AndroidEngine(context: Context) : Engine {
             proxyEnabled = proxyOn,
             scanEnabled = scanOn,
             scanRunning = ScanState.probing.isNotEmpty(),
+            netLabel = NetworkMonitor.currentMode().let { if (it == NetworkMode.UNKNOWN) "" else it.label },
+            activeMode = curMode.code,
+            scanModeManual = !NetworkMonitor.isAuto(),
+            aliveMode = aliveModeN,
+            deadMode = deadModeN,
+            totalMode = totalModeN,
             setupNeeded = setupNeeded,
             setupCta = cta,
             portA = p.relayPortA(),
             portB = p.relayPortB(),
+            connLiveA = conns.count { it.localPort == p.relayPortA() },
+            connLiveB = conns.count { it.localPort == p.relayPortB() },
+            connLiveOut = conns.size,
+            directOnVpnEnabled = p.proxyMode() == Prefs.ProxyMode.DISABLED_ON_VPN,
             connState = connState,
             statusText = statusText,
             statusSub = statusSub,
@@ -576,9 +886,9 @@ class AndroidEngine(context: Context) : Engine {
             directViaVpn = p.proxyMode() == Prefs.ProxyMode.DISABLED_ON_VPN
                     && NetworkMonitor.currentMode() == NetworkMode.VPN,
             directAntiDpi = p.dpiApplyDirect(),
-            aliveCount = alive,
+            aliveCount = aliveModeN,
             aliveWithin15 = alive15,
-            totalCount = total,
+            totalCount = totalModeN,
             speedDown = "↓ ${rate(deltaDown)}",
             speedUp = "↑ ${rate(deltaUp)}",
             totalDown = "↓ ${TrafficMeter.human(down)}",
@@ -590,7 +900,7 @@ class AndroidEngine(context: Context) : Engine {
             currentProxy = currentProxy,
             connCount = conns.size,
             connSeconds = sessionSec,
-            deadCount = dead,
+            deadCount = deadModeN,
             sourcesRefMin = srcMin,
             sourcesRefHour = srcHour,
             sourcesTotal = srcTotal,
@@ -603,6 +913,8 @@ class AndroidEngine(context: Context) : Engine {
             subsFailHour = sm.subsFailHour().toInt(),
             scanBytesMin = TrafficMeter.human(sm.bytesMinSum()),
             scanBytesHour = TrafficMeter.human(sm.bytesHourSum()),
+            subBytesMin = TrafficMeter.human(sm.subBytesMinSum()),
+            subBytesHour = TrafficMeter.human(sm.subBytesHourSum()),
             tgSessAll = HandshakeStats.tgSessionsAll(),
             tgSessOk = HandshakeStats.tgSessionsOk(),
             sessOver1m = HandshakeStats.sessionsOver1m(),
@@ -617,10 +929,36 @@ class AndroidEngine(context: Context) : Engine {
             trafficMin = SparkBuffer.INSTANCE.minutesSnapshot(),
             latencySec = LatencyBuffer.INSTANCE.secondsSnapshot(),
             latencyMin = LatencyBuffer.INSTANCE.minutesSnapshot(),
+            connectsASec = connA,
+            connectsBSec = connB,
+            connectsAMin = connAMin,
+            connectsBMin = connBMin,
+            connectsPortA = ConnectBuffer.INSTANCE.portA(),
+            connectsPortB = ConnectBuffer.INSTANCE.portB(),
+            nowSec = now / 1000L,
+            nowMin = now / 60000L,
             checkOkSec = cs.ok,
             checkFailSec = cs.fail,
             checkOkMin = cm.ok,
             checkFailMin = cm.fail,
+            scanTrafficSec = ScanMetrics.INSTANCE.bytesSecSnapshot(),
+            scanTrafficMin = ScanMetrics.INSTANCE.bytesMinSnapshot(),
+            subTrafficSec = ScanMetrics.INSTANCE.subBytesSecSnapshot(),
+            subTrafficMin = ScanMetrics.INSTANCE.subBytesMinSnapshot(),
+            aliveHistSec = io.autoconnector.engine.traffic.AliveHistBuffer.INSTANCE.secondsSnapshot(),
+            aliveHistMin = io.autoconnector.engine.traffic.AliveHistBuffer.INSTANCE.minutesSnapshot(),
+            scanPingSec = io.autoconnector.engine.traffic.ScanPingBuffer.INSTANCE.secondsSnapshot(),
+            scanPingMin = io.autoconnector.engine.traffic.ScanPingBuffer.INSTANCE.minutesSnapshot(),
+            threadsSec = io.autoconnector.engine.traffic.ThreadsBuffer.INSTANCE.secondsSnapshot(),
+            threadsMin = io.autoconnector.engine.traffic.ThreadsBuffer.INSTANCE.minutesSnapshot(),
+            scanPlanIntervalSec = if (scanOff) -1 else planIntervalSec,
+            scanPlanConcurrency = if (scanOff) 0 else planConc,
+            scanPlanBatch = if (scanOff) 0 else planBatch,
+            scanNowThreads = ScanState.probing.size,
+            scanNowBatch = io.autoconnector.engine.core.ScanProgress.currentBatch(),
+            scanNowSeconds = io.autoconnector.engine.core.ScanProgress.startedAtMs().let {
+                if (it > 0) ((now - it) / 1000L).coerceAtLeast(0L) else 0L
+            },
         )
     }
 
@@ -657,7 +995,24 @@ class AndroidEngine(context: Context) : Engine {
             tls = c.fakeTlsSni?.takeIf { it.isNotEmpty() },
             secret = secret,
             dpi = dpi,
+            obfEngine = obfEngineLabel(entry, c.upstreamMtproto, c.fakeTlsSni?.isNotEmpty() == true),
         )
+    }
+
+    /** Transport obfuscation engine actually carrying the traffic — distinct
+     *  from the anti-DPI TLS-fingerprint trick. ee→FakeTLS, dd→secure-padded,
+     *  bare MTProto, or none for SOCKS5. */
+    private fun obfEngineLabel(entry: ProxyEntry?, mtproto: Boolean, hasTls: Boolean): String {
+        if (entry != null) {
+            if (entry.type != ProxyType.MTPROTO) return "нет (SOCKS5)"
+            return when {
+                entry.isFakeTls -> "FakeTLS (ee)"
+                entry.isDdSecret -> "Secure (dd)"
+                else -> "MTProto (обычный)"
+            }
+        }
+        if (!mtproto) return "нет (SOCKS5)"
+        return if (hasTls) "FakeTLS (ee)" else "MTProto"
     }
 
     /** Proxy info for the "would-be relay" when no live socket exists yet. */
@@ -674,7 +1029,8 @@ class AndroidEngine(context: Context) : Engine {
                 "Авто" + (HandshakeStats.lastUsed()?.let { " → ${it.label}" } ?: "")
             else user.label
         } else "—"
-        return ProxyInfo(entry.host, entry.port, type, tls, secret, dpi)
+        val obf = obfEngineLabel(entry, entry.type == ProxyType.MTPROTO, tls != null)
+        return ProxyInfo(entry.host, entry.port, type, tls, secret, dpi, obf)
     }
 
     private fun portOf(hp: String?): Int {
@@ -709,34 +1065,44 @@ class AndroidEngine(context: Context) : Engine {
         val sticky = RelayManager.currentStickyProxyIds()
         val pinnedId = RelayManager.currentPinnedId()
         _catalog.value = list.map { p ->
-            val srcId = store.primarySourceId(p.id)
-            val tls = if (p.isFakeTls) FakeTlsClient.domainFromSecret(p.secret) else null
-            CatalogItem(
-                id = p.id,
-                host = hostLabel(p),
-                typeLabel = typeLabel(p),
-                rating = minOf(9, maxOf(0, (p.score / 10.0).toInt())),
-                alive = p.lastCheck > 0 && p.alive,
-                live = liveIds.contains(p.id),
-                pinned = pinnedId == p.id,
-                sticky = pinnedId != p.id && sticky.contains(p.id),
-                everServed = p.lastTgConnectAt > 0 || p.tgConnections > 0,
-                sourceNum = if (srcId > 0) nums[srcId] else null,
-                checkedMinsAgo = if (p.lastCheck > 0) (now - p.lastCheck) / 60_000 else -1,
-                tgConnectMinsAgo = if (p.lastTgConnectAt > 0) (now - p.lastTgConnectAt) / 60_000 else -1,
-                successes = p.successes,
-                failures = p.failures,
-                tgConnections = p.tgConnections,
-                bytesRelayed = p.bytesRelayed,
-                bytesRelayedHuman = TrafficMeter.human(p.bytesRelayed),
-                sessionTotalHuman = if (p.totalSessionMs > 0) Durations.human(p.totalSessionMs / 1000) else "—",
-                rttMs = p.rttMs,
-                secret = p.secret,
-                tlsDomain = tls?.takeIf { it.isNotEmpty() },
-                port = p.port,
-                lastErrorShort = p.lastError?.takeIf { it.isNotBlank() }?.let { if (it.length > 40) it.substring(0, 39) + "…" else it },
-            )
+            globalCatalogItem(p, now, nums, liveIds, sticky, pinnedId)
         }
+    }
+
+    /** Maps a global proxy row → [CatalogItem] using its global (mode-agnostic)
+     *  rating columns. Shared by [refreshCatalog] and the auto/unknown branch of
+     *  [catalogForMode]. */
+    private fun globalCatalogItem(
+        p: ProxyEntry, now: Long, nums: Map<Long, Int>,
+        liveIds: Set<Long>, sticky: Set<Long>, pinnedId: Long,
+    ): CatalogItem {
+        val srcId = store.primarySourceId(p.id)
+        val tls = if (p.isFakeTls) FakeTlsClient.domainFromSecret(p.secret) else null
+        return CatalogItem(
+            id = p.id,
+            host = hostLabel(p),
+            typeLabel = typeLabel(p),
+            rating = if (!p.alive || p.score <= 0.0) 0 else minOf(9, maxOf(1, (p.score / 10.0).toInt())),
+            alive = p.lastCheck > 0 && p.alive,
+            live = liveIds.contains(p.id),
+            pinned = pinnedId == p.id,
+            sticky = pinnedId != p.id && sticky.contains(p.id),
+            everServed = p.lastTgConnectAt > 0 || p.tgConnections > 0,
+            sourceNum = if (srcId > 0) nums[srcId] else null,
+            checkedMinsAgo = if (p.lastCheck > 0) (now - p.lastCheck) / 60_000 else -1,
+            tgConnectMinsAgo = if (p.lastTgConnectAt > 0) (now - p.lastTgConnectAt) / 60_000 else -1,
+            successes = p.successes,
+            failures = p.failures,
+            tgConnections = p.tgConnections,
+            bytesRelayed = p.bytesRelayed,
+            bytesRelayedHuman = TrafficMeter.human(p.bytesRelayed),
+            sessionTotalHuman = if (p.totalSessionMs > 0) Durations.human(p.totalSessionMs / 1000) else "—",
+            rttMs = p.rttMs,
+            secret = p.secret,
+            tlsDomain = tls?.takeIf { it.isNotEmpty() },
+            port = p.port,
+            lastErrorShort = p.lastError?.takeIf { it.isNotBlank() }?.let { if (it.length > 40) it.substring(0, 39) + "…" else it },
+        )
     }
 
     private fun refreshSources() {
@@ -753,6 +1119,8 @@ class AndroidEngine(context: Context) : Engine {
                 bytesHuman = if (s.lastBytes > 0) TrafficMeter.human(s.lastBytes) else "—",
                 lastRefreshMinsAgo = if (s.lastRefreshAt > 0) (now - s.lastRefreshAt) / 60000 else -1,
                 lastError = s.lastError?.takeIf { it.isNotBlank() },
+                downloading = downloadingSince.containsKey(s.id),
+                downloadingSec = downloadingSince[s.id]?.let { (now - it) / 1000 } ?: 0,
             )
         }
     }
@@ -842,7 +1210,7 @@ class AndroidEngine(context: Context) : Engine {
 
     @Synchronized
     private fun appendLog(line: String, cat: LogCat = LogCat.OTHER, session: String? = null) {
-        val entry = LogLine(line, classify(line), cat, session)
+        val entry = LogLine(line, classify(line), cat, session, ts = System.currentTimeMillis())
         val (dq, cap) = when (cat) {
             LogCat.SUBS -> subsLog to LOG_CAP_SUBS
             LogCat.SCAN -> scanLog to LOG_CAP_SCAN
