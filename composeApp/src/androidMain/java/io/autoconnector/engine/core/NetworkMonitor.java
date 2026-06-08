@@ -42,12 +42,45 @@ public final class NetworkMonitor {
 
     public static NetworkMode currentMode() {
         NetworkMonitor m = instance;
-        return m != null ? m.mode : NetworkMode.UNKNOWN;
+        return m != null ? m.effective() : NetworkMode.UNKNOWN;
+    }
+
+    /** Force a network mode regardless of detection ({@code null} = auto).
+     *  Persisting the choice is the engine's job, not done here. */
+    public static void setManualMode(NetworkMode m) {
+        NetworkMonitor i = instance;
+        if (i == null) return;
+        synchronized (i) {
+            NetworkMode before = i.effective();
+            i.manual = m;
+            NetworkMode now = i.effective();
+            if (now != before) i.notifyAll_(now);
+        }
+    }
+
+    /** Current user override, or {@code null} when in auto mode. */
+    public static NetworkMode manualMode() {
+        NetworkMonitor i = instance;
+        return i != null ? i.manual : null;
+    }
+
+    /** True when no manual override is active (mode follows detection). */
+    public static boolean isAuto() {
+        NetworkMonitor i = instance;
+        return i == null || i.manual == null;
+    }
+
+    /** Feed a detected transport from a platform without a
+     *  {@code ConnectivityManager} (desktop). Null-safe. */
+    public static void setDetectedMode(NetworkMode m) {
+        NetworkMonitor i = instance;
+        if (i != null) i.applyDetected(m);
     }
 
     private final Context ctx;
     private final List<Listener> listeners = new CopyOnWriteArrayList<>();
-    private volatile NetworkMode mode = NetworkMode.UNKNOWN;
+    private volatile NetworkMode detected = NetworkMode.UNKNOWN;
+    private volatile NetworkMode manual = null;
     private ConnectivityManager.NetworkCallback cb;
 
     private NetworkMonitor(Context ctx) {
@@ -111,11 +144,26 @@ public final class NetworkMonitor {
         else if (hasWifi) next = NetworkMode.WIFI;
         else if (hasCell) next = NetworkMode.LTE;
 
-        if (next != mode) {
-            mode = next;
-            for (Listener l : listeners) {
-                try { l.onModeChanged(next); } catch (Exception ignored) {}
-            }
+        applyDetected(next);
+    }
+
+    /** Store a freshly detected transport and notify only if the EFFECTIVE
+     *  mode (override-aware) actually changed. */
+    private synchronized void applyDetected(NetworkMode next) {
+        NetworkMode before = effective();
+        detected = next;
+        NetworkMode now = effective();
+        if (now != before) notifyAll_(now);
+    }
+
+    /** Effective mode: the manual override when set, else the detected one. */
+    private NetworkMode effective() {
+        return manual != null ? manual : detected;
+    }
+
+    private void notifyAll_(NetworkMode m) {
+        for (Listener l : listeners) {
+            try { l.onModeChanged(m); } catch (Exception ignored) {}
         }
     }
 }

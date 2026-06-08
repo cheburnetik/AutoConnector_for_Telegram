@@ -80,6 +80,15 @@ public final class CheckRunner {
             log.line("Нет прокси для проверки в " + label + ".");
             return;
         }
+        io.autoconnector.engine.core.ScanProgress.begin(list.size());
+        try {
+            runOnInner(list, label, pool);
+        } finally {
+            io.autoconnector.engine.core.ScanProgress.end();
+        }
+    }
+
+    private void runOnInner(List<ProxyEntry> list, String label, ExecutorService pool) {
         try { store.purgeOldChecks(); } catch (Exception ignored) {}
         log.line("— проверка " + list.size() + " прокси (" + label + ") —");
 
@@ -90,7 +99,7 @@ public final class CheckRunner {
         Semaphore inflight = new Semaphore(concurrency);
 
         for (ProxyEntry p : list) {
-            if (io.autoconnector.engine.core.ScanGate.isAborted()) break;
+            if (io.autoconnector.engine.core.ScanGate.isProbeAbort()) break;
             try {
                 inflight.acquire();
             } catch (InterruptedException ie) {
@@ -114,7 +123,7 @@ public final class CheckRunner {
         long deadline = System.nanoTime()
                 + TimeUnit.SECONDS.toNanos(60L + list.size() * 2L);
         for (Future<?> f : futures) {
-            if (io.autoconnector.engine.core.ScanGate.isAborted()) { f.cancel(true); continue; }
+            if (io.autoconnector.engine.core.ScanGate.isProbeAbort()) { f.cancel(true); continue; }
             long remain = deadline - System.nanoTime();
             if (remain <= 0) { f.cancel(true); continue; }
             try {
@@ -131,14 +140,26 @@ public final class CheckRunner {
                           AtomicInteger full, AtomicInteger stealth, AtomicInteger dead) {
         ScanState.probing.add(p.id);
         try {
+            long t0 = System.currentTimeMillis();
             HealthChecker.Result r = checker.check(p);
+            long durMs = System.currentTimeMillis() - t0;
             TrafficMeter.add(TrafficMeter.Cat.SERVICE, PROBE_BYTES_ESTIMATE);
             io.autoconnector.engine.traffic.ScanMetrics.INSTANCE.addBytes(PROBE_BYTES_ESTIMATE);
             io.autoconnector.engine.traffic.CheckRateBuffer.INSTANCE.onResult(r.ok());
+            // Ping = TCP-connect round-trip — a real network ping that EVERY
+            // reachable host yields (FULL and STEALTH alike), 0 only for dead
+            // hosts. This replaces the old handshake-elapsed which was either
+            // sparse (FULL-only) or a flat fake ~2.5 s (STEALTH read-timeout).
+            // We persist it as the proxy's rtt too, so the Scan-tab ping graph
+            // can read a STABLE pool ping each second (it would otherwise starve
+            // to 0 between sparse probe passes once the pool is full).
+            int pingMs = (r.connectMs > 0) ? r.connectMs : r.rttMs;
+            if (r.connectMs > 0)
+                io.autoconnector.engine.traffic.ScanPingBuffer.INSTANCE.note(r.connectMs);
             try {
                 // Aggregate (legacy) record — UI screens that haven't been
                 // mode-split yet still read these columns.
-                Rating.record(p, r.ok(), r.rttMs, r.detail);
+                Rating.record(p, r.ok(), pingMs, r.detail);
                 store.updateStats(p);
                 store.logCheck(p.id, r.ok());
                 // Per-mode record — what the relay actually uses to pick
@@ -146,7 +167,7 @@ public final class CheckRunner {
                 io.autoconnector.engine.core.NetworkMode mode =
                         io.autoconnector.engine.core.NetworkMonitor.currentMode();
                 if (mode != io.autoconnector.engine.core.NetworkMode.UNKNOWN) {
-                    store.recordProbe(p, mode, r.ok(), r.rttMs, r.detail);
+                    store.recordProbe(p, mode, r.ok(), pingMs, r.detail);
                 }
             } catch (Exception ignored) {}
             switch (r.grade) {
@@ -155,8 +176,8 @@ public final class CheckRunner {
                 default: dead.incrementAndGet(); break;
             }
             log.line(badge(r.grade) + " " + p.host + ":" + p.port
-                    + "  " + (r.rttMs >= 0 ? r.rttMs + "мс" : "—")
-                    + "  score=" + p.score + "  " + r.detail);
+                    + "  " + (r.ok() ? "успех" : "нет")
+                    + "  " + String.format("%.1f", durMs / 1000.0) + "с");
         } finally {
             ScanState.probing.remove(p.id);
         }

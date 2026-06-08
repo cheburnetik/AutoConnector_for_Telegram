@@ -56,7 +56,9 @@ import io.autoconnector.engine.EngineState
 import io.autoconnector.i18n.LocalStrings
 import io.autoconnector.i18n.stringsFor
 import io.autoconnector.ui.components.blinkAlpha
+import io.autoconnector.ui.components.keyPageScroll
 import io.autoconnector.ui.screens.CatalogDetailPage
+import io.autoconnector.ui.screens.CatalogModeManagePage
 import io.autoconnector.ui.screens.ConnectGuidePage
 import io.autoconnector.ui.screens.ConnectorContent
 import io.autoconnector.ui.screens.MoreCallbacks
@@ -65,7 +67,7 @@ import io.autoconnector.ui.screens.MoreFullPage
 import io.autoconnector.ui.screens.MoreScreen
 import io.autoconnector.ui.screens.QuickSettingsPage
 import io.autoconnector.ui.screens.ScanContent
-import io.autoconnector.ui.screens.catalogItems
+import io.autoconnector.ui.screens.CatalogContent
 import io.autoconnector.ui.screens.logsItems
 import io.autoconnector.ui.theme.AppColors
 import io.autoconnector.ui.theme.AppTheme
@@ -93,6 +95,7 @@ fun App(engine: Engine) {
         val expandedSessions = remember { androidx.compose.runtime.mutableStateListOf<String>() }
         var showGuide by remember { mutableStateOf(false) }
         var detail by remember { mutableStateOf<CatalogItem?>(null) }
+        var manageMode by remember { mutableStateOf<String?>(null) }
         var morePage by remember { mutableStateOf<MoreDest?>(null) }
         var quickSettings by remember { mutableStateOf(false) }
         var notifInfo by remember { mutableStateOf(false) }
@@ -127,16 +130,34 @@ fun App(engine: Engine) {
             onUpdateSettings = engine::updateSettings,
             sources = sources,
             onAddSource = engine::addSource,
+            onAddSourcesBulk = engine::addSourcesBulk,
+            onAddManualProxies = engine::addManualProxies,
             onRemoveSource = engine::removeSource,
             onToggleSource = engine::setSourceEnabled,
+            onRefreshSource = engine::refreshSource,
+            onOpenDest = { morePage = it },
             state = state,
             exportLinks = engine::exportAliveLinks,
             onExportToFile = engine::exportLinksToFile,
+            onExportBackup = { st, su, ho -> engine.exportBackup(st, su, ho) },
+            onImportBackup = { st, su, ho -> engine.importBackup(st, su, ho) },
+            onSetScanMode = { engine.setScanMode(it) },
+            onResetModeStats = { engine.resetModeStats(it) },
+            onForgetModeHosts = { engine.forgetModeHosts(it) },
+            onExportLinksForMode = { engine.exportAliveLinksForMode(it) },
+            onExportFileForMode = { engine.exportLinksToFileForMode(it) },
             onCopy = engine::copyToClipboard,
             handshakeStats = engine::handshakeStats,
             onResetStats = engine::resetStats,
             onResetCatalogStats = engine::resetCatalogStats,
             onClearHosts = engine::clearDownloadedHosts,
+            onFactoryReset = engine::factoryReset,
+            hotkeyCopyLabel = engine.hotkeyCopyLabel(),
+            hotkeyOpenLabel = engine.hotkeyOpenLabel(),
+            hotkeysEnabled = engine.hotkeysEnabled(),
+            hotkeyLetter = engine.hotkeyLetter(),
+            onSetHotkeysEnabled = engine::setHotkeysEnabled,
+            onSetHotkeyLetter = engine::setHotkeyLetter,
             appInfo = engine.appInfo(),
             onOpenUrl = engine::openLink,
         )
@@ -150,6 +171,19 @@ fun App(engine: Engine) {
                 onOpen = { engine.tgLink(detailItem.id)?.let(engine::openLink) },
                 onMakeRelay = { engine.pin(detailItem.id, true); detail = null },
                 onBack = { detail = null },
+            )
+            return@CompositionLocalProvider
+        }
+
+        val manageModeCode = manageMode
+        if (manageModeCode != null) {
+            PlatformBackHandler(true) { manageMode = null }
+            CatalogModeManagePage(
+                manageModeCode,
+                onBack = { manageMode = null },
+                onResetStats = { engine.resetModeStats(manageModeCode) },
+                onForget = { engine.forgetModeHosts(manageModeCode) },
+                onCopyFrom = { src -> engine.copyModeStats(src, manageModeCode) },
             )
             return@CompositionLocalProvider
         }
@@ -169,8 +203,10 @@ fun App(engine: Engine) {
         // Full-screen "Ещё" sub-pages.
         val mp = morePage
         if (mp != null) {
-            PlatformBackHandler(true) { morePage = null }
-            MoreFullPage(mp, moreCallbacks()) { morePage = null }
+            // Back from the bulk-add page returns to the subscriptions list, not the menu.
+            val back: () -> Unit = { morePage = if (mp == MoreDest.ADD_SOURCES) MoreDest.SOURCES else null }
+            PlatformBackHandler(true) { back() }
+            MoreFullPage(mp, moreCallbacks(), back)
             return@CompositionLocalProvider
         }
 
@@ -188,7 +224,7 @@ fun App(engine: Engine) {
         Surface(Modifier.fillMaxSize(), color = AppColors.background) {
             // One global scroll for the whole window; the tab bar sticks to the
             // top once the header scrolls past it.
-            LazyColumn(Modifier.fillMaxSize(), state = listState) {
+            LazyColumn(Modifier.fillMaxSize().keyPageScroll(listState), state = listState) {
                 item { TitleRow() }
                 if (state.setupNeeded && state.proxyEnabled) item { SetupLine(state) { showGuide = true } }
                 if (!state.notificationsOk) item {
@@ -208,8 +244,16 @@ fun App(engine: Engine) {
                     Tabs.CONNECTOR -> item {
                         ConnectorContent(state, onOpenGuide = { showGuide = true }, onOpenQuick = { quickSettings = true })
                     }
-                    Tabs.SCAN -> item { ScanContent(state, onScanNow = engine::scanNow) }
-                    Tabs.CATALOG -> catalogItems(catalog, onClick = { detail = it })
+                    Tabs.SCAN -> item { ScanContent(state, onScanNow = engine::scanNow, onSetScanMode = engine::setScanMode) }
+                    Tabs.CATALOG -> item {
+                        CatalogContent(
+                            items = catalog,
+                            activeMode = state.activeMode,
+                            catalogForMode = { code -> engine.catalogForMode(code) },
+                            onManageMode = { manageMode = it },
+                            onClick = { detail = it },
+                        )
+                    }
                     Tabs.LOGS -> logsItems(
                         logs = logs,
                         logTab = logTab,
@@ -221,7 +265,7 @@ fun App(engine: Engine) {
                         errorsOnly = logErrorsOnly,
                         onErrorsOnly = { logErrorsOnly = it },
                     )
-                    Tabs.MORE -> item { MoreScreen(onOpen = { morePage = it }, onOpenGuide = { showGuide = true }) }
+                    Tabs.MORE -> item { MoreScreen(onOpen = { morePage = it }, onOpenGuide = { showGuide = true }, hotkeysSupported = engine.hotkeysSupported()) }
                 }
             }
         }
@@ -250,7 +294,7 @@ private fun TitleRow() {
 /** Row 2 — single blinking line shown only while the relay isn't wired into Telegram. */
 @Composable
 private fun SetupLine(s: EngineState, onFix: () -> Unit) {
-    val a = blinkAlpha(periodMs = 4200)
+    val a = 1f  // static (was a non-stop blink that redrew at 60 fps → idle CPU)
     Row(
         Modifier.fillMaxWidth().clickable(onClick = onFix).padding(horizontal = 14.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -281,7 +325,7 @@ private fun SetupLine(s: EngineState, onFix: () -> Unit) {
 /** Notifications-off warning — blinking red line + a button to fix it. */
 @Composable
 private fun NotifLine(onInfo: () -> Unit, onFix: () -> Unit) {
-    val a = blinkAlpha(periodMs = 2000)
+    val a = 1f  // static (was a non-stop blink that redrew at 60 fps → idle CPU)
     Row(
         Modifier.fillMaxWidth().clickable(onClick = onInfo).padding(horizontal = 14.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -317,37 +361,44 @@ private fun ToggleRow(s: EngineState, engine: Engine) {
         horizontalArrangement = Arrangement.spacedBy(20.dp),
     ) {
         val tr = LocalStrings.current
-        BareSwitch("${tr.connector} ${tr.onOff(s.proxyEnabled)}", s.proxyEnabled, Modifier.weight(1f), alignEnd = false) { engine.setProxyEnabled(it) }
-        BareSwitch("${tr.scan} ${tr.onOff(s.scanEnabled)}", s.scanEnabled, Modifier.weight(1f), alignEnd = true) { engine.setScanEnabled(it) }
+        // Connector: switch on the LEFT, then label. Scan: label then switch (right).
+        // Connector gets 60% of the row width, Scan 40%.
+        BareSwitch("${tr.connector} ${tr.onOff(s.proxyEnabled)}", s.proxyEnabled, Modifier.weight(0.6f), switchFirst = true) { engine.setProxyEnabled(it) }
+        BareSwitch("${tr.scan} ${tr.onOff(s.scanEnabled)}", s.scanEnabled, Modifier.weight(0.4f), switchFirst = false) { engine.setScanEnabled(it) }
     }
 }
 
 private fun onOff(v: Boolean) = if (v) "ON" else "OFF"
 
 @Composable
-private fun BareSwitch(label: String, value: Boolean, modifier: Modifier, alignEnd: Boolean, onChange: (Boolean) -> Unit) {
-    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
-        if (alignEnd) Spacer(Modifier.weight(1f))
-        val labelMod = if (alignEnd) Modifier else Modifier.weight(1f)
-        Text(
-            label,
-            labelMod,
-            fontWeight = FontWeight.Bold,
-            fontSize = 16.sp,
-            color = if (value) AppColors.onSurface else AppColors.onSurfaceMuted,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Spacer(Modifier.size(6.dp))
+private fun BareSwitch(label: String, value: Boolean, modifier: Modifier, switchFirst: Boolean, onChange: (Boolean) -> Unit) {
+    val sw = @Composable {
         Switch(
             value,
             onChange,
-            Modifier.scale(1.1f),
+            Modifier.scale(1.05f),
             colors = SwitchDefaults.colors(
                 checkedThumbColor = Color.White,
                 checkedTrackColor = AppColors.accent,
             ),
         )
+    }
+    val lbl = @Composable { m: Modifier ->
+        Text(
+            label, m,
+            fontWeight = FontWeight.Bold,
+            fontSize = 14.sp,
+            color = if (value) AppColors.onSurface else AppColors.onSurfaceMuted,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+        if (switchFirst) {
+            sw(); Spacer(Modifier.size(8.dp)); lbl(Modifier.weight(1f))
+        } else {
+            Spacer(Modifier.weight(1f)); lbl(Modifier); Spacer(Modifier.size(8.dp)); sw()
+        }
     }
 }
 

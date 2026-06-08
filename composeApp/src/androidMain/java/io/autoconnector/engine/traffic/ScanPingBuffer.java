@@ -1,20 +1,20 @@
 package io.autoconnector.engine.traffic;
 
 /**
- * Wall-clock indexed buckets of relay latency (ms), reported as the REAL
- * per-second AVERAGE of the RTT samples that actually landed in that window.
+ * Wall-clock indexed buckets of scan-probe ping (ms), reported as the REAL
+ * per-second AVERAGE of the probes that actually completed in that window.
  *
- * <p>Samples come from {@link io.autoconnector.engine.relay.RelayConnection}:
- * the application-level request→response RTT (write toward the upstream paired
- * with the next read back) plus the one-shot upstream TCP-connect RTT recorded
- * at connection setup. Averaging per second — instead of holding a carry-forward
- * EMA — keeps the line moving with real traffic and reading 0 when Telegram
- * isn't actually talking, so it never sits frozen on a single fake number.
+ * <p>Earlier designs used a carry-forward EMA / a pool average, which produced
+ * a constant "held" number that looked frozen (and therefore fake) whenever the
+ * measurement rate dropped. This buffer instead simply averages the connect
+ * RTTs measured during each second / minute — so the line moves with real data
+ * and reads 0 only when nothing was actually probed in that window. Samples
+ * come from {@link io.autoconnector.engine.check.CheckRunner} (TCP-connect RTT).
  */
-public final class LatencyBuffer {
+public final class ScanPingBuffer {
 
     public static final int N = 60;
-    public static final LatencyBuffer INSTANCE = new LatencyBuffer();
+    public static final ScanPingBuffer INSTANCE = new ScanPingBuffer();
 
     private final long[] secSum = new long[N];
     private final int[]  secCnt = new int[N];
@@ -24,7 +24,7 @@ public final class LatencyBuffer {
     private long lastSec = 0;
     private long lastMin = 0;
 
-    private LatencyBuffer() {}
+    private ScanPingBuffer() {}
 
     public synchronized void reset() {
         for (int i = 0; i < N; i++) {
@@ -35,18 +35,18 @@ public final class LatencyBuffer {
         lastMin = 0;
     }
 
-    /** Record one real application-level RTT sample (ms). */
-    public synchronized void sample(long latencyMs) {
-        if (latencyMs <= 0 || latencyMs > 60_000) return;
+    /** Record one real probe RTT sample (ms) into the current second / minute. */
+    public synchronized void note(long ms) {
+        if (ms <= 0 || ms > 60_000) return;
         long now = System.currentTimeMillis();
         rollTo(now);
         int si = idx(now / 1000L);
         int mi = idx(now / 60_000L);
-        secSum[si] += latencyMs; secCnt[si]++;
-        minSum[mi] += latencyMs; minCnt[mi]++;
+        secSum[si] += ms; secCnt[si]++;
+        minSum[mi] += ms; minCnt[mi]++;
     }
 
-    /** Called once a second by the engine — rolls the aged buckets to 0. */
+    /** Called once a second by the engine — just rolls the aged buckets to 0. */
     public synchronized void tick() {
         rollTo(System.currentTimeMillis());
     }
@@ -73,6 +73,8 @@ public final class LatencyBuffer {
         }
     }
 
+    /** Snapshot ordered oldest→newest (newest at index 59); each value is the
+     *  average ping measured in that second, or 0 if no probe landed. */
     public synchronized long[] secondsSnapshot() {
         rollTo(System.currentTimeMillis());
         long now = System.currentTimeMillis() / 1000L;

@@ -17,8 +17,20 @@ public enum NetworkMode {
     WIFI("wifi", "📶 Wi-Fi"),
     /** Direct cellular (3G/4G/5G) without VPN. */
     LTE("lte", "📡 LTE"),
+    /** Direct wired connection (Ethernet). */
+    ETHERNET("ethernet", "🌐 Ethernet"),
+    /** Manual-only profile ("WhitePages"). Never auto-selected by
+     *  {@link NetworkMonitor}; the user forces it from Settings. Keeps its own
+     *  per-mode ratings, still downloads subscriptions and scans. */
+    WHITEPAGES("wp", "📋 White"),
     /** Fallback when the transport isn't yet determined. */
     UNKNOWN("unk", "?");
+
+    /** True for modes the auto-detector may pick (everything except the
+     *  manual-only WhitePages and the UNKNOWN placeholder). */
+    public boolean isAutoSelectable() {
+        return this == VPN || this == WIFI || this == LTE || this == ETHERNET;
+    }
 
     public final String code;
     public final String label;
@@ -36,9 +48,9 @@ public enum NetworkMode {
         return UNKNOWN;
     }
 
-    /** The three "real" modes — UNKNOWN is excluded so stats tables only
-     *  show meaningful columns. */
+    /** The four "real" modes (incl. manual WhitePages) — UNKNOWN excluded so
+     *  stats tables only show meaningful columns. */
     public static NetworkMode[] reportable() {
-        return new NetworkMode[]{VPN, WIFI, LTE};
+        return new NetworkMode[]{VPN, WIFI, LTE, ETHERNET, WHITEPAGES};
     }
 }

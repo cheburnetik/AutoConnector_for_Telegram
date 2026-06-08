@@ -34,16 +34,28 @@ public final class HealthChecker {
 
     public enum Grade { FULL, STEALTH, DEAD }
 
+    /** TCP-connect RTT (ms) of the LAST socket opened on THIS probe thread, set by
+     *  {@link #openSocket}/{@link #checkSocks5}; -1 until a connect succeeds. This
+     *  is the real, always-available network ping for any reachable host (FULL
+     *  and STEALTH alike) — unlike the full handshake elapsed (which for STEALTH
+     *  is merely the 2.5 s read timeout). Reset at the top of {@link #check}. */
+    private static final ThreadLocal<Integer> LAST_CONNECT_MS =
+            ThreadLocal.withInitial(() -> -1);
+
     /** Outcome of a single probe. */
     public static final class Result {
         public final Grade grade;
         public final int rttMs;
         public final String detail;
+        /** TCP-connect RTT (ms) of this probe, or -1 if the connect failed. */
+        public final int connectMs;
 
         Result(Grade grade, int rttMs, String detail) {
             this.grade = grade;
             this.rttMs = rttMs;
             this.detail = detail;
+            Integer c = LAST_CONNECT_MS.get();
+            this.connectMs = (c == null) ? -1 : c;
         }
 
         public boolean ok() {
@@ -67,6 +79,10 @@ public final class HealthChecker {
     }
 
     public Result check(ProxyEntry p) {
+        // Clear any connect-time left over from a previous probe on this pooled
+        // thread, so a host whose connect fails reports connectMs = -1 (no ping)
+        // instead of the previous host's time.
+        LAST_CONNECT_MS.set(-1);
         try {
             if (p.type == ProxyType.SOCKS5) return checkSocks5(p);
             if (p.isFakeTls()) return checkFakeTls(p);
@@ -135,6 +151,7 @@ public final class HealthChecker {
         long t0 = System.nanoTime();
         Socket s = Socks5.connect(p.host, p.port,
                 DcAddresses.ip(DcAddresses.DEFAULT_DC), DcAddresses.PORT, timeoutMs);
+        LAST_CONNECT_MS.set((int) ((System.nanoTime() - t0) / 1_000_000L));
         try {
             OutputStream out = s.getOutputStream();
             InputStream in = s.getInputStream();
@@ -195,7 +212,9 @@ public final class HealthChecker {
 
     private Socket openSocket(String host, int port) throws java.io.IOException {
         Socket s = new Socket();
+        long t0 = System.nanoTime();
         s.connect(new InetSocketAddress(host, port), timeoutMs);
+        LAST_CONNECT_MS.set((int) ((System.nanoTime() - t0) / 1_000_000L));
         s.setSoTimeout(timeoutMs);
         return s;
     }

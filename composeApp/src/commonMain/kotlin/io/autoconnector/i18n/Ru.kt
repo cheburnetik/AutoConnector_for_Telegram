@@ -14,7 +14,7 @@ object Ru : Strings {
     override val connector = "Коннектор"; override val scan = "Скан"
     override val notConfigured = "Не настроено! Исправить →"; override val howToSetup = "Как настроить"
     override val notifOff = "Уведомления выключены! Исправить →"; override val enable = "Включить"
-    override fun fewProxies(n: Int) = "Мало живых проксей: $n! Ищу… Ждите ~15 минут"
+    override fun fewProxies(n: Int) = "Живых проксей $n, ищу, ждите ~15 мин…"
     override fun alivePool(alive: Int, within: Int, total: Int) =
         "Живых прокси: $alive  (15 мин: $within) · всего: $total"
     override val notifWhyTitle = "Зачем уведомления?"
@@ -37,6 +37,7 @@ object Ru : Strings {
     override val connections = "Подключений"; override val sockets = "Сокеты"; override val speed = "Скорость"
     override val traffic = "Трафик"; override val latency = "Латенси"
     override fun pcs(n: Int) = "$n шт"
+    override fun netNow(label: String) = "Сеть: $label"
     override fun tgToConnector(n: Int) = "TG→ $n"
     override fun connectorToProxy(n: Int) = "прокси $n"
     override val trafficSec = "трафик · 60 секунд"; override val trafficMin = "трафик · 60 минут"
@@ -44,9 +45,11 @@ object Ru : Strings {
     override val sec60 = "60 секунд"; override val min60 = "60 минут"
     override val unitSec = "сек"; override val unitMin = "мин"; override val unitHour = "ч"; override val dash = "—"
     override val currentProxy = "Текущий прокси"; override val noActiveProxy = "нет активного прокси (Telegram не подключён)"
-    override val host = "Хост"; override val type = "Тип"; override val secret = "Секрет"; override val antiDpi = "Анти-DPI"
+    override val host = "Хост"; override val type = "Тип"; override val secret = "Секрет"; override val antiDpi = "Анти-DPI"; override val obfEngine = "Движок обфускации"
     override fun activeSockets(n: Int) = "Активные сокеты Telegram: $n"
     override val noConnections = "нет активных соединений"; override val colHost = "Хост"; override val colTime = "Время"
+    override val modeWord = "Режим"; override val directViaVpnLine = "Прямые запросы к Telegram из-за VPN"
+    override val connModeHelp = "Режимы (VPN, Wi-Fi, LTE, Ethernet, White) позволяют по-разному настроить интенсивность сканирования и ведут отдельные рейтинги/статистику хостов. Сетевая плата определяется автоматически; режим может быть задан вручную в настройках."
 
     override val scanOff = "Сканирование выключено"; override val proxiesInBase = "Прокси в базе"
     override val total = "всего"; override val alive = "живых"; override val dead = "мёртвых"
@@ -54,10 +57,10 @@ object Ru : Strings {
     override val socketsHeld = "Сколько держались сокеты"; override val over1m = ">1 мин"; override val over5m = ">5 мин"; override val over15m = ">15 мин"
     override val scanCountTitle = "Кол-во сканов прокси"; override val checked = "Проверено"
     override val forAllTime = "за всё время"; override val perMinute = "за минуту"; override val perHour = "за час"
-    override val subsCountTitle = "Кол-во загрузок подписок"; override val downloaded = "скачано"; override val failed = "неудачно"; override val scanTraffic = "трафик скана"
+    override val subsCountTitle = "Кол-во загрузок подписок"; override val downloaded = "скачано"; override val failed = "неудачно"; override val scanTraffic = "трафик скана"; override val subTraffic = "трафик подписок"; override val subTrafficGraph = "Трафик подписок"
     override val checksMtproto = "Проверки MTProto (↑ ok · ↓ fail)"
 
-    override val catalogEmpty = "Каталог пуст — идёт первичный сбор прокси…"
+    override fun catalogEmpty(mode: String) = "Каталог $mode пока пуст. Либо не нашли ни одного хоста, либо программа никогда не работала в этом режиме. Переключить режим можно из настроек. Режимы придуманы, чтобы вести раздельный сбор хостов для разных видов подключения к интернету."
     override val aliveShort = "✓ жив"; override val deadShort = "✗ мёртв"
     override val statusLabel = "Статус"; override val rating = "Рейтинг"; override val port = "Порт"
     override val rttPing = "RTT (пинг)"; override val checkedField = "Проверен"; override val okOfTotal = "Успешно / всего проверок"
@@ -67,6 +70,17 @@ object Ru : Strings {
     override val copyAsLink = "Скопировать как ссылку"; override val openInTelegram = "Открыть хост в Telegram"; override val makeNextRelay = "Сделать следующим релеем"
     override val actCopy = "Копировать"; override val actOpen = "Открыть"; override val actRelay = "В реле"
     override fun agoFmt(v: String) = "$v назад"
+    override val catalogTopFor = "Список/рейтинг проксей для"
+    override val catalogModeHelpTitle = "Режимы и рейтинги"
+    override val catalogModeHelp = "Программа считает живых хостов и их рейтинг РАЗДЕЛЬНО по каждому режиму сети (VPN, Wi-Fi, LTE, Ethernet и White). «White» — отдельный РУЧНОЙ режим для белых списков; авто на него никогда не переключается. Поэтому один и тот же хост может быть живым в одном режиме и мёртвым в другом."
+    override fun catalogInactiveWarn(section: String, active: String) =
+        "Сейчас вы смотрите неактивный раздел $section — вся статистика прямо сейчас собирается не сюда, а в $active."
+    override val manageModeTitle = "Управление режимом"
+    override val manageResetRating = "Обнулить рейтинг"
+    override fun manageResetHint(mode: String) = "Индивидуально для $mode можете обнулить рейтинг и статистику использования живых хостов. Это полезно, когда вы подключились к принципиально другому VPN или LTE, чтобы не влияла старая статистика. Либо для наблюдения, как быстро скан проксей проверит всё с нуля."
+    override val manageDeleteAll = "Удалить хосты в"
+    override fun manageDeleteHint(mode: String) = "Можно очистить и рейтинг, и сами хосты из $mode. Функция «Скан проксей» соберёт их заново. Это не обнуление подписок — можно нажимать, после чего ожидайте ~15 минут на повторный скан."
+    override fun manageCopyFrom(mode: String) = "Скопировать все хосты и рейтинги в этот режим ($mode) из другого режима:"
     override val live = "жив"; override val deadW = "мёртв"; override val unitMs = "мс"
     override val agoMin = "м"; override val agoHour = "ч"; override val agoDay = "д"
 
@@ -86,7 +100,10 @@ object Ru : Strings {
     override val variant3Body = "Вручную добавьте прокси типа SOCKS5: сервер localhost (127.0.0.1), " +
         "порт {A}. Затем второй прокси: localhost, порт {B}. Любые старые прокси удалите."
     override val whatNext = "А дальше что?"
-    override val whatNextBody = "Убедитесь, что все другие старые прокси удалены, кроме {A} и {B}. " +
+    override val whatNextBody = "В Telegram включите «автопереключение прокси» — 5 секунд. Вы можете " +
+        "помочь Telegram подключиться, если будете вручную кликать тот прокси (внутри Telegram), " +
+        "который НЕ активен или помечен «недоступен» — так Telegram сделает больше попыток " +
+        "подключиться.\n\nУбедитесь, что все другие старые прокси удалены, кроме {A} и {B}. " +
         "Нажмите в Telegram «Использовать прокси».\n\nПодождите, пока приложение найдёт и скачает " +
         "достаточно прокси (5–15 минут). Затем Telegram сам подключится к AutoConnector, который " +
         "будет каждый раз подключать Telegram к наиболее выгодным прокси: проверенным, живым и " +
@@ -104,6 +121,18 @@ object Ru : Strings {
     override val statistics = "Статистика"; override val statisticsSub = "База прокси + анти-DPI хитрости"
     override val export = "Экспорт"; override val exportSub = "tg:// ссылки живых прокси"
     override val about = "О программе"; override val aboutSub = "Версия, сборка, скачать, обратная связь"
+    override val hotkeys = "Горячие клавиши"
+    override val hotkeysSub = "Глобальные клавиши: копировать / открыть прокси"
+    override val hotkeysIntro = "Глобальные горячие клавиши срабатывают, даже когда окно приложения " +
+        "не в фокусе. Они берут случайную живую прокси-ссылку (tg://) из базы. Удобно быстро менять " +
+        "прокси, не открывая приложение."
+    override val hotkeysNote = "На macOS для перехвата клавиш может потребоваться разрешение " +
+        "«Универсальный доступ» (Системные настройки → Конфиденциальность и безопасность → Универсальный доступ)."
+    override val hotkeyCopyTitle = "Скопировать ссылку прокси"
+    override val hotkeyCopyDesc = "Кладёт случайную живую tg://-ссылку в буфер обмена."
+    override val hotkeyEnable = "Включить хоткеи"; override val hotkeyLetterLabel = "Буква"; override val hotkeySet = "Задать"; override val hotkeyReset = "Сброс"
+    override val hotkeyOpenTitle = "Открыть прокси в Telegram"
+    override val hotkeyOpenDesc = "Открывает случайную живую ссылку — Telegram перехватит её и предложит подключить прокси."
 
     override val relayPorts = "Порты релея"
     override val relayPortsHelp = "Локальные порты, которые слушает Коннектор. Именно их вы указываете " +
@@ -129,6 +158,10 @@ object Ru : Strings {
         "Telegram, как обычно, идёт через найденные прокси (поверх VPN).\n• Напрямую — Коннектор НЕ " +
         "использует прокси и соединяет Telegram напрямую с серверами Telegram: VPN уже даёт доступ, " +
         "лишний прокси-слой не нужен (быстрее и стабильнее). Без VPN прокси используются как обычно."
+    override val linkFormat = "Формат ссылок прокси"
+    override val linkFormatHelp = "Как копировать и открывать прокси. tg:// открывается сразу в Telegram (нужен установленный Telegram Desktop). http (t.me) открывается через браузер и предлагает открыть в Telegram — полезно, если tg:// не открывается."
+    override val linkTg = "tg:// (в Telegram напрямую)"; override val linkTgSub = "tg://proxy?… — открывает Telegram"
+    override val linkHttp = "http (t.me, через браузер)"; override val linkHttpSub = "https://t.me/proxy?… — открывает браузер"
     override val viaMtproto = "Проксировать через MTProto"; override val viaMtprotoSub = "даже при VPN трафик идёт через прокси"
     override val directly = "Проксировать напрямую"; override val directlySub = "при активном VPN — в обход прокси, прямо к Telegram"
     override val notifications = "Уведомления"
@@ -151,6 +184,22 @@ object Ru : Strings {
         "трафик и логи проверок, но сохраняет сами скачанные хосты и подписки (всё переоценится " +
         "при следующем скане).\n• «Очистить скачанные хосты» — удаляет весь пул прокси, но " +
         "оставляет подписки, чтобы скан набрал пул заново. Подписки не трогаются ни в одном случае."
+    override val backupTitle = "Экспорт / Импорт"
+    override val backupHelp = "Сохранить или восстановить данные приложения одним JSON-файлом. " +
+        "Отметь, что включить — любую комбинацию:\n• Настройки — все параметры приложения.\n" +
+        "• Подписки — список источников (URL + вкл/выкл).\n• Каталог живых хостов — все живые " +
+        "прокси с их оценками и статистикой ПО РЕЖИМАМ сети.\n\n«Экспорт» спросит, куда сохранить " +
+        "файл; «Импорт» — какой файл открыть, и применит только отмеченные разделы, что есть в файле. " +
+        "Импорт ДОБАВЛЯЕТ к текущим данным (не стирает)."
+    override val backupSettings = "Настройки"
+    override val backupSubs = "Подписки"
+    override val backupHosts = "Каталог живых хостов (по режимам)"
+    override val exportWord = "Экспорт"
+    override val importWord = "Импорт"
+    override val eraseAllHosts = "Стереть все хосты"
+    override val factoryReset = "Сбросить всё (как при первом запуске)"
+    override val factoryResetConfirm = "Полностью сбросить приложение к заводскому виду? Будут стёрты " +
+        "ВСЕ настройки и весь каталог хостов, подписки вернутся к стандартным. Это как первый запуск."
     override val resetCatalog = "Сбросить каталог и статистику"
     override val resetCatalogConfirm = "Обнулить оценки, счётчики и логи проверок? " +
         "Скачанные хосты и подписки сохранятся, всё переоценится при следующем скане."
@@ -174,6 +223,39 @@ object Ru : Strings {
         "— Отключить адаптацию: оба множителя = 1.\n\n" +
         "По умолчанию: Порог мало 20, Ускорение 0.5, Порог много 50, Замедление 4."
     override val threshMany = "Порог «мало»"; override val threshFew = "Порог «много»"; override val mulFast = "Ускорение ×"; override val mulLazy = "Замедление ×"
+    override val subIntensityTitle = "Интенсивность подписок"
+    override val subIntensityHint = "Пауза между скачиваниями подписок: раз в сколько минут заново скачивать списки прокси (отдельно для каждого режима сети)."
+    override val baseScanTitle = "Базовая скорость скана"
+    override val baseScanHelp = "Опорная скорость проверки прокси на живость. От неё считаются " +
+        "«Адаптивная скорость» и множители в «Скорость по режимам».\n\n" +
+        "• Раз в сколько мин. запускать — период между проходами проверки.\n" +
+        "• Пачка на поток, шт хостов — сколько хостов проверяет каждый поток за один проход.\n" +
+        "• Кол-во потоков — сколько проверок идёт одновременно. За проход проверяется " +
+        "«пачка × потоки» хостов.\n" +
+        "• Не сканировать хост чаще, чем раз в N мин — защита от флуда: недавно проверенный хост " +
+        "в проход не попадёт.\n\n" +
+        "Больше потоков и пачка = быстрее набор пула, но выше нагрузка на сеть и батарею."
+    override val baseScanPeriod = "Раз в сколько мин. запускать"
+    override val baseScanBatch = "Пачка на поток, шт хостов"; override val baseScanThreads = "Кол-во потоков"
+    override val adaptiveDesc = "Если живых проксей меньше «мало» или больше «много» — включить свой дополнительный коэффициент."
+    override val fewWord = "Мало"; override val manyWord = "Много"
+    override fun fasterX(x: String) = "быстрее в $x раз"
+    override fun slowerX(x: String) = "медленнее в $x раз"
+    override fun ifAliveLt(n: Int) = "Если живых проксей < $n шт, то:"
+    override fun ifAliveGt(n: Int) = "Если живых проксей > $n шт, то:"
+    override val disabledWord = "отключено"
+    override val speedByModeTitle = "Скорость по режимам"
+    override val speedByModeHelp = "Множитель скорости скана для каждого режима сети, поверх " +
+        "базовой скорости. «Стандарт» (×1) = базовый интервал. Вправо — реже (медленнее, бережнее " +
+        "к трафику/батарее), влево — чаще (быстрее, агрессивнее). Шкала логарифмическая, до ×100 в " +
+        "каждую сторону.\n\n" +
+        "Под каждым ползунком — итоговые параметры прохода с учётом адаптивной скорости: отдельно " +
+        "для случая «живых мало» (× «Ускорение») и «живых много» (× «Замедление»).\n\n" +
+        "Режимы:\n• VPN — активен внешний VPN.\n• LTE — мобильная сеть.\n• Wi-Fi — сеть Wi-Fi.\n" +
+        "• Ethernet — проводное подключение.\n• White — ручной режим «белых» прокси."
+    override val aliveLt = "живых <"; override val aliveGt = "живых >"
+    override val periodWord = "период"; override val nonstopWord = "постоянно"
+    override val batchWord = "пачка"; override val threadsWord = "потоков"; override val scanModeOff = "скан выключен"
     override val netBattery = "Сеть и батарея"
     override val netBatteryHelp = "• Только по Wi-Fi — не сканировать в мобильной сети (экономия трафика).\n" +
         "• Только при зарядке — работать, лишь когда телефон на зарядке.\n• Пропускать при низком " +
@@ -193,7 +275,8 @@ object Ru : Strings {
     override val netLogSub = "Пишет в файл КТО-КОМУ-КОГДА и размеры пакетов (БЕЗ содержимого данных) — " +
         "чтобы сравнить характер обмена с VPN и без него."
     override val openLogFolder = "Открыть папку лога"; override val copyPath = "Скопировать путь"
-    override val quickSwitchTitle = "Быстрое переключение"; override val quickSwitchSub = "Дробление, коннект, анти-DPI"
+    override val quickSwitchTitle = "Обход блокировок"; override val quickSwitchSub = "Дробление, коннект, анти-DPI"
+    override val helpShow = "Справка"; override val helpHide = "Скрыть справку"
     override val quickSwitchIntro = "Здесь вы можете подобрать трюки обхода блокировок. Если телеграм " +
         "выдаёт ошибку «The proxy you are using is not configured correctly and will be disabled. " +
         "Please find another one», подбирайте экспериментально, какой из видов обфускации трафика " +
@@ -220,10 +303,35 @@ object Ru : Strings {
 
     override fun aliveLinks(n: Int) = "Живых ссылок: $n"
     override val copyAll = "Скопировать все"
-    override val openRandom = "Открыть случайный"; override val copyRandom = "Копировать случайный"; override val allShort = "Все"
+    override val openRandom = "Открыть случайный"; override val copyRandom = "Копировать случайный"; override val allShort = "ВСЕ"
+    override val copyTop = "Копировать TOP"; override val randomHost = "Случайный хост"
     override val exportToFile = "Экспорт в файл"; override val exportSaved = "Сохранено в файл:"
+    override val dlNow = "Скачать сейчас"
+    override fun downloadingFmt(sec: Long) = "Загружаю… $sec с"
+    override val cancel = "Отмена"
+    override val deleteConfirmTitle = "Удалить подписку?"
+    override val subscriptionsAddHint = "Добавить подписки или прокси-ссылки →"
+    override val addSourcesTitle = "Добавить"
+    override val addSubsLabel = "Подписки (URL, по одной в строке)"
+    override val addSubsHelp = "Каждая строка с корректным URL станет отдельной подпиской и будет скачиваться периодически."
+    override val addProxiesLabel = "Готовые прокси-ссылки (фикс-список)"
+    override val addProxiesHelp = "Вставь пачку ссылок на конкретные прокси (tg://proxy, https://t.me/proxy, …). Это НЕ подписка — список не скачивается, прокси просто добавляются в каталог."
+    override val addButton = "Добавить"
+    override fun addedFmt(subs: Int, proxies: Int) = "Добавлено: подписок $subs, прокси $proxies"
+    override val perSecond = "за сек"
+    override val graphSpeed = "Скорость"
+    override val graphVolume = "Объём"
+    override val graphLatency = "Ping"
+    override val graphConnects = "Коннекты"
     override val scanNow = "Сканировать сейчас"; override val scanOnShort = "Скан включён"
-    override val scanRunning = "Скан идёт"; override val scanIdle = "Скан idle"
+    override val scanRunning = "Скан идёт"; override val scanIdle = "Скан idle"; override val scanOffState = "Скан OFF"; override val scanBatchPerThread = "Пачка/поток"; override val scanPassHosts = "Хостов в проходе"; override val minRescanLabel = "Не сканировать хост чаще, чем раз в N мин"
+    override val scanPlanTitle = "План"; override val scanNowTitle = "Сейчас"; override val currentScheduleTitle = "Текущее расписание"
+    override val scheduleWord = "Расписание"; override val unitPcsPerSec = "шт/с"
+    override val scanNowThreadsLabel = "Сейчас запущено потоков"; override val scanNowPerThreadLabel = "Проверок на 1 поток (план)"; override val scanNowElapsedLabel = "Время работы"
+    override val scanOkGraph = "Успешные сканы"; override val scanFailGraph = "Неуспешные сканы"; override val scanTrafficGraph = "Трафик скана"; override val scanAliveGraph = "Живых прокси всего"; override val scanPingGraph = "Пинг"; override val threadsGraph = "Потоки"
+    override val scanEvery = "Период"; override val scanNextRun = "След. запуск"
+    override val scanThreads = "Потоков"; override val scanBatch = "В пачке"
+    override val scanElapsed = "Работает"; override val scanIdleNow = "—"
     override val effForFew = "При «мало»"; override val effForMany = "При «много»"
     override val effCheck = "Проверка"; override val effBatch = "Пачка"; override val effPar = "Параллельно"
     override val effContinuous = "непрерывно"; override val secShort = "с"; override val minShort = "мин"
@@ -235,4 +343,18 @@ object Ru : Strings {
     override val feedbackBugs = "Обратная связь и баг-репорты"; override val writeTelegram = "Написать в Telegram"
 
     override val language = "Язык"; override val langAuto = "Авто (как в системе)"; override val langRu = "Русский"; override val langEn = "English"
+
+    override val scanModeTitle = "Режим сети"; override val scanModeAuto = "Авто"; override val scanModeManualLabel = "Вручную"
+    override val activeModeLabel = "Активный режим"; override val formingListLabel = "Формирую список"; override val catalogModeTabs = "Режим"
+    override val resetModeRatings = "Обнулить рейтинг хостов"; override val forgetModeHosts = "Забыть хосты режима"
+    override val exportModeTitle = "Экспорт по режимам"; override val modePickerTitle = "Режим"
+    override val modeHelp = "В каждом режиме сети — отдельный рейтинг прокси и своя интенсивность сканирования и скачивания подписок. «Авто» определяет режим по активной сети. «Ручной» — вы задаёте режим сами (включая White, который авто никогда не выбирает)."
+    override val autoSelect = "Авто выбор"; override val manualSelect = "Ручной выбор"
+    override val connStatsTitle = "Соединения сейчас"; override val connOnPort = "Соединений на порту"; override val outgoingConns = "Исходящих соединений"
+    override val modeChoice = "Выбор режима"; override val autoChoice = "авто выбор"; override val manualChoice = "ручной фиксированный"
+    override val directOnVpn = "Прямой коннект к TG при VPN"; override val onWord = "вкл"; override val offWord = "выкл"
+    override val directStateActive = "активно"; override val directStateOff = "выключено в настройках"; override val directStateIdle = "включено в настройках, но не активно"
+    override val wpHintTitle = "Что такое White?"
+    override val wpHint = "White — WhitePages: ручной режим сети. Включается только вручную (авто-выбор его не ставит). " +
+        "Ведёт отдельный рейтинг хостов, качает подписки и сканирует независимо от VPN/Wi-Fi/LTE."
 }

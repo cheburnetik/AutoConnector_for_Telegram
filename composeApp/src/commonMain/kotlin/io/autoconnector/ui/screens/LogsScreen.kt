@@ -18,9 +18,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.autoconnector.engine.LogCat
@@ -56,8 +60,10 @@ private class Sess(val key: String, val lines: List<LogLine>) {
  * Logs tab — Telegram / Subscriptions / Scan. Telegram opens many short
  * connections at once, so each session is shown as a single compact, status-
  * coloured row (id · port + a one-line summary). Tap to expand the full per-
- * session log; an "errors only" filter narrows it to the connections that
- * actually failed — which is what you want when chasing a dropped proxy.
+ * session log. Every rendered line is prefixed with its HH:MM:SS timestamp.
+ *
+ * `errorsOnly` / `onErrorsOnly` are retained only for caller compatibility —
+ * the "errors only" filter was removed; Telegram logs always show all sessions.
  */
 fun LazyListScope.logsItems(
     logs: List<LogLine>,
@@ -73,7 +79,7 @@ fun LazyListScope.logsItems(
     when (logTab) {
         LogTab.SUBS -> flat(logs.filter { it.cat == LogCat.SUBS })
         LogTab.SCAN -> flat(logs.filter { it.cat == LogCat.SCAN })
-        LogTab.TELEGRAM -> telegram(logs, expanded, onToggleSession, errorsOnly, onErrorsOnly)
+        LogTab.TELEGRAM -> telegram(logs, expanded, onToggleSession)
     }
 }
 
@@ -81,8 +87,6 @@ private fun LazyListScope.telegram(
     logs: List<LogLine>,
     expanded: Set<String>,
     onToggleSession: (String) -> Unit,
-    errorsOnly: Boolean,
-    onErrorsOnly: (Boolean) -> Unit,
 ) {
     val tele = logs.filter { it.cat == LogCat.TELEGRAM || it.cat == LogCat.OTHER }
     // Build session groups (newest first) + a "general" (null-session) bucket.
@@ -99,17 +103,13 @@ private fun LazyListScope.telegram(
 
     if (tele.isEmpty()) { item { EmptyHint() }; return }
 
-    item { SessionsBar(sessions.size, failed, errorsOnly, onErrorsOnly) }
+    item { SessionsBar(sessions.size, failed) }
 
     // General relay/app lines (port open/close, errors) — always on top.
     if (general.isNotEmpty()) items(general) { LogText(it) }
 
-    val shown = if (errorsOnly) sessions.filter { it.failed } else sessions
-    if (shown.isEmpty()) {
-        item { EmptyHint(if (errorsOnly) LocalStrings.current.logNoErrors else LocalStrings.current.logEmpty) }
-        return
-    }
-    for (s in shown) {
+    // All sessions, newest first. Tap a row to expand its full per-line log.
+    for (s in sessions) {
         val open = s.key in expanded
         item { SessionRow(s, open) { onToggleSession(s.key) } }
         if (open) items(s.lines.asReversed()) { LogText(it, indent = true) }
@@ -149,26 +149,24 @@ private fun androidx.compose.foundation.layout.RowScope.SubTab(label: String, on
     )
 }
 
-/** Header: session count + an "errors only" toggle chip. */
+/** Header: total session count + a muted failed-session count (no filter). */
 @Composable
-private fun SessionsBar(total: Int, failed: Int, errorsOnly: Boolean, onErrorsOnly: (Boolean) -> Unit) {
+private fun SessionsBar(total: Int, failed: Int) {
     val t = LocalStrings.current
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text("${t.logSessions}: $total", color = AppColors.onSurfaceMuted, fontSize = 13.sp)
-        Spacer(Modifier.weight(1f))
-        Text(
-            "${t.logErrorsOnly} ($failed)",
-            color = if (errorsOnly) Color.White else AppColors.red,
-            fontWeight = FontWeight.Bold,
-            fontSize = 13.sp,
-            modifier = Modifier
-                .background(if (errorsOnly) AppColors.red else AppColors.card, RoundedCornerShape(8.dp))
-                .clickable { onErrorsOnly(!errorsOnly) }
-                .padding(horizontal = 10.dp, vertical = 5.dp),
-        )
+        if (failed > 0) {
+            Spacer(Modifier.weight(1f))
+            Text(
+                "${t.failed}: $failed",
+                color = AppColors.red,
+                fontWeight = FontWeight.Bold,
+                fontSize = 13.sp,
+            )
+        }
     }
 }
 
@@ -203,14 +201,38 @@ private fun SessionRow(s: Sess, open: Boolean, onClick: () -> Unit) {
 
 @Composable
 private fun LogText(line: LogLine, indent: Boolean = false) {
+    val ts = hms(line.ts)
+    val text = buildAnnotatedString {
+        if (ts.isNotEmpty()) {
+            // Timestamp a touch smaller than the message and in a narrower
+            // proportional sans (vs. the wide monospace), tightened a touch.
+            withStyle(SpanStyle(
+                color = AppColors.onSurfaceMuted,
+                fontSize = 12.3.sp,
+                fontFamily = FontFamily.SansSerif,
+                letterSpacing = (-0.3).sp,
+            )) { append(ts) }
+            append(" ")
+        }
+        withStyle(SpanStyle(color = colorFor(line.level))) { append(line.text) }
+    }
     Text(
-        line.text,
-        color = colorFor(line.level),
+        text,
         fontFamily = monospaceFontFamily(),
         fontSize = 14.sp,
         lineHeight = 18.sp,
         modifier = Modifier.padding(start = if (indent) 22.dp else 12.dp, end = 12.dp),
     )
+}
+
+/** Format an epoch-ms timestamp as UTC-of-day "HH:MM:SS" (empty when unset).
+ *  Local-offset conversion isn't reliably available in commonMain, so the
+ *  time-of-day is derived straight from the epoch with plain arithmetic. */
+private fun hms(ts: Long): String {
+    if (ts <= 0L) return ""
+    val s = (ts / 1000) % 86400
+    fun p(n: Long): String = if (n < 10) "0$n" else "$n"
+    return "${p(s / 3600)}:${p((s % 3600) / 60)}:${p(s % 60)}"
 }
 
 @Composable

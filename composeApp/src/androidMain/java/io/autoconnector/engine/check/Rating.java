@@ -41,7 +41,11 @@ public final class Rating {
         double rttFactor = rttMs <= 0
                 ? 0.5
                 : Math.max(0, Math.min(1, 1.0 - rttMs / 3000.0));
-        double confidence = Math.min(1.0, total / 5.0);
+        // Confidence reaches full after ~3 probes (was 5): with huge pools a host
+        // is rarely re-probed, so /5 pinned almost every alive host to score ~18 →
+        // the catalogue rating showed "1" for all of them. /3 lets a single good
+        // probe earn a meaningful rating while still ranking tested hosts higher.
+        double confidence = Math.min(1.0, total / 3.0);
         double base = ratio * 70 + rttFactor * 25;
         double freshness = alive ? 1.0 : 0.1;
         return Math.round(base * confidence * freshness * 10) / 10.0;

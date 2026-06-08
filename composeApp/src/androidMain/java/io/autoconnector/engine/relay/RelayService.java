@@ -102,6 +102,7 @@ public final class RelayService extends Service {
                 io.autoconnector.engine.traffic.SparkBuffer.INSTANCE.tickFromRelay();
                 io.autoconnector.engine.traffic.LatencyBuffer.INSTANCE.tick();
                 io.autoconnector.engine.traffic.CheckRateBuffer.INSTANCE.tick();
+                io.autoconnector.engine.traffic.ConnectBuffer.INSTANCE.tick();
             } catch (Throwable ignored) {}
             if (running) svc.postDelayed(this, SPARK_TICK_MS);
         }

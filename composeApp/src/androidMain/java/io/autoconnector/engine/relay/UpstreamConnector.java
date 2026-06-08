@@ -30,6 +30,8 @@ public final class UpstreamConnector {
         public ProxyEntry proxy;
         /** Which handshake-mode actually got applied (after AUTO_RANDOM resolves). */
         public HandshakeMode handshakeMode = HandshakeMode.NORMAL;
+        /** TCP-connect RTT (ms) to the upstream — a real ping for the relay tab. */
+        public int connectMs = -1;
 
         Channel(Socket socket, InputStream in, OutputStream out, Obfuscated2 obf) {
             this.socket = socket;
@@ -98,7 +100,9 @@ public final class UpstreamConnector {
             host = DcAddresses.ip(dcId);
             port = DcAddresses.PORT;
         }
+        long connT0 = System.nanoTime();
         Socket s = Socks5.connect(p.host, p.port, host, port, timeoutMs);
+        int connMs = (int) ((System.nanoTime() - connT0) / 1_000_000L);
         try {
             WireShaper.applySocketOptions(s, exp);
             // No FakeTLS layer here, so the experimental shaping applies to the
@@ -107,7 +111,9 @@ public final class UpstreamConnector {
                     WireShaper.wrapRaw(s.getOutputStream(), exp), exp, false);
             Obfuscated2 obf = new Obfuscated2();
             obf.perform(out, null, tag, dcId);
-            return new Channel(s, s.getInputStream(), out, obf);
+            Channel c = new Channel(s, s.getInputStream(), out, obf);
+            c.connectMs = connMs;
+            return c;
         } catch (Exception e) {
             closeQuietly(s);
             throw e;
@@ -122,7 +128,9 @@ public final class UpstreamConnector {
         byte[] secret = HealthChecker.secretBytes(p.secret);
         Socket s = new Socket();
         try {
+            long connT0 = System.nanoTime();
             s.connect(new InetSocketAddress(p.host, p.port), timeoutMs);
+            int connMs = (int) ((System.nanoTime() - connT0) / 1_000_000L);
             s.setSoTimeout(timeoutMs);
             WireShaper.applySocketOptions(s, exp);
 
@@ -151,7 +159,9 @@ public final class UpstreamConnector {
 
             Obfuscated2 obf = new Obfuscated2();
             obf.perform(out, secret, tag, dcId);
-            return new Channel(s, in, out, obf);
+            Channel c = new Channel(s, in, out, obf);
+            c.connectMs = connMs;
+            return c;
         } catch (Exception e) {
             closeQuietly(s);
             throw e;

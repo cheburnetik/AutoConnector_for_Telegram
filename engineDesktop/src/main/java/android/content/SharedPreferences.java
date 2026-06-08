@@ -14,6 +14,10 @@ public interface SharedPreferences {
     boolean getBoolean(String key, boolean defValue);
     String getString(String key, String defValue);
 
+    /** All stored entries (used by the settings backup export). Mirrors the real
+     *  Android API. The desktop impl stores everything as strings. */
+    java.util.Map<String, ?> getAll();
+
     Editor edit();
 
     interface Editor {
