@@ -108,7 +108,16 @@ class AndroidEngine(context: Context) : Engine {
         // stalls / instant "broken proxy" on phones). Desktop keeps coalescing.
         Prefs.SHIPPED_EXP_ENGINE = 0
         Prefs(ctx).applyShippedDefaultsOnce()
-        RelayLog.register { session, line -> appendLog(line, LogCat.TELEGRAM, session) }
+        RelayLog.register { session, line ->
+            // RelayService tags subscription-download / scan lines with these
+            // sentinel "sessions" so they land in the right log tab instead of
+            // the Telegram tab.
+            when (session) {
+                "@subs" -> appendLog(line, LogCat.SUBS)
+                "@scan" -> appendLog(line, LogCat.SCAN)
+                else -> appendLog(line, LogCat.TELEGRAM, session)
+            }
+        }
         loadSettings()
         // Apply the persisted scan-mode override on top of auto-detection and
         // re-form the per-mode pool whenever the effective network changes.
@@ -1155,18 +1164,13 @@ class AndroidEngine(context: Context) : Engine {
             // Idempotent (CONFLICT_IGNORE on the unique url) — runs every start so
             // newly-shipped default subscriptions reach existing installs too.
             store.ensureDefaultSources()
-            val known = store.count()
-            // Only a real success marks a source "refreshed" now, so neverDownloaded
-            // stays true until a subscription actually delivers hosts — a fresh
-            // install / post-reset / empty pool keeps hammering the downloads.
-            val neverDownloaded = store.listSources().none { it.lastRefreshAt > 0 }
-            if (neverDownloaded || known < 50) {
-                appendLog("— ПЕРВЫЙ ЗАПУСК: интенсивный bootstrap ($known прокси) —", LogCat.SCAN)
-                bootstrapIntensive()
-            } else {
-                appendLog("— автозапуск: скан и проверка —", LogCat.SCAN)
-                scanAndCheck()
-            }
+            refreshSources(); refreshCatalog()
+            // Subscription downloading + mass-checking are owned by RelayService
+            // now (RelayService.subsRefillTask) so they run in the background too
+            // and refill automatically whenever the pool is thin (<1000 hosts or
+            // <10 alive). The service is already (re)started by syncService(), so
+            // there's nothing to pull here — just make sure it's running.
+            if (Prefs(ctx).appEnabled() || Prefs(ctx).scanEnabled()) RelayService.reconfigure(ctx)
         } catch (t: Throwable) {
             appendLog("⚠ bootstrap: ${t.message}", LogCat.SCAN)
         }
