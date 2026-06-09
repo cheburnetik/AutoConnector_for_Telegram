@@ -445,7 +445,10 @@ class AndroidEngine(context: Context) : Engine {
                 val scanner = PageScanner(store) { line -> appendLog(line, LogCat.SUBS) }
                 val r = scanner.scanPage(url)
                 val sid = store.upsertSource(url)
-                if (sid > 0) { store.markSourceRefreshed(sid); store.setSourceScanResult(sid, r.found, r.bytes, r.error) }
+                if (sid > 0) {
+                    store.setSourceScanResult(sid, r.found, r.bytes, r.error)
+                    if (r.found > 0 && r.error == null) store.markSourceRefreshed(sid)
+                }
                 appendLog("⤓ подписка обновлена: найдено ${r.found}" + (if (r.error != null) " (${r.error})" else ""), LogCat.SUBS)
             } catch (t: Throwable) { appendLog("⚠ обновление подписки: ${t.message}", LogCat.SUBS) }
             finally { downloadingSince.remove(id); refreshSources() }
@@ -481,13 +484,19 @@ class AndroidEngine(context: Context) : Engine {
     override fun factoryReset() {
         scope.launch(Dispatchers.IO) {
             try {
+                ScanGate.setAborted(true)
                 Prefs(ctx).clearAll()
                 Prefs(ctx).applyShippedDefaultsOnce()
                 store.clearDownloadedHosts()
                 for (s in store.listSources()) store.deleteSource(s.id)
                 store.ensureDefaultSources()
                 store.resetSourceStats()
+                ScanGate.setAborted(false)
+                refreshCatalog(); refreshSources()
+                // Empty pool now — re-pull the subscriptions hard, like a fresh install.
+                if (Prefs(ctx).scanEnabled()) bootstrapIntensive()
             } catch (_: Throwable) {}
+            finally { refreshCatalog(); refreshSources() }
         }
     }
 
@@ -1147,7 +1156,11 @@ class AndroidEngine(context: Context) : Engine {
             // newly-shipped default subscriptions reach existing installs too.
             store.ensureDefaultSources()
             val known = store.count()
-            if (known < 50) {
+            // Only a real success marks a source "refreshed" now, so neverDownloaded
+            // stays true until a subscription actually delivers hosts — a fresh
+            // install / post-reset / empty pool keeps hammering the downloads.
+            val neverDownloaded = store.listSources().none { it.lastRefreshAt > 0 }
+            if (neverDownloaded || known < 50) {
                 appendLog("— ПЕРВЫЙ ЗАПУСК: интенсивный bootstrap ($known прокси) —", LogCat.SCAN)
                 bootstrapIntensive()
             } else {
@@ -1159,16 +1172,70 @@ class AndroidEngine(context: Context) : Engine {
         }
     }
 
-    private fun scanAndCheck() {
+    /** Downloads the given subscription URLs CONCURRENTLY through PageScanner's
+     *  direct→anonymizer cascade. Marks a source "refreshed" ONLY on a real
+     *  success. Returns the URLs that yielded nothing, for a retry pass. */
+    private fun downloadSourcesParallel(urls: List<String>, threads: Int): List<String> {
+        if (urls.isEmpty()) return emptyList()
         val scanner = PageScanner(store) { line -> appendLog(line, LogCat.SUBS) }
-        for (url in store.enabledSourceUrls()) {
-            val r = scanner.scanPage(url)
-            val id = store.upsertSource(url)
-            if (id > 0) {
-                store.markSourceRefreshed(id)
-                store.setSourceScanResult(id, r.found, r.bytes, r.error)
+        val failed = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(threads.coerceIn(1, 24))
+        try {
+            val futures = urls.map { url ->
+                pool.submit(Runnable {
+                    if (ScanGate.isAborted()) { failed.add(url) }
+                    else try {
+                        val r = scanner.scanPage(url)
+                        val id = store.upsertSource(url)
+                        if (id > 0) {
+                            store.setSourceScanResult(id, r.found, r.bytes, r.error)
+                            if (r.found > 0 && r.error == null) store.markSourceRefreshed(id)
+                        }
+                        if (r.found == 0 || r.error != null) failed.add(url)
+                    } catch (t: Throwable) {
+                        appendLog("⚠ $url — ${t.message}", LogCat.SUBS)
+                        failed.add(url)
+                    }
+                })
+            }
+            futures.forEach { runCatching { it.get() } }
+        } finally { pool.shutdownNow() }
+        return failed.toList()
+    }
+
+    /** Keeps re-downloading the subscriptions that have NOT yet yielded anything,
+     *  round after round, many threads at a time, through every anonymizer —
+     *  until they all land, scanning is off, the pass aborts, or the round cap
+     *  is hit. Short escalating backoff between rounds. */
+    private fun downloadAllSourcesPersistently() {
+        var pending = store.enabledSourceUrls()
+        var round = 0
+        val maxRounds = 12
+        while (pending.isNotEmpty() && Prefs(ctx).scanEnabled()
+                && !ScanGate.isAborted() && round < maxRounds) {
+            round++
+            val threads = if (round == 1) 12 else minOf(16, pending.size)
+            appendLog("⇣ закачка подписок, проход $round: ${pending.size} шт × $threads потоков", LogCat.SUBS)
+            pending = downloadSourcesParallel(pending, threads)
+            appendLog("⇣ проход $round: в базе ${store.count()} прокси, не скачано ${pending.size} подписок", LogCat.SUBS)
+            if (pending.isEmpty()) break
+            val backoff = minOf(15_000L, 1500L * round)
+            var slept = 0L
+            while (slept < backoff && !ScanGate.isAborted() && Prefs(ctx).scanEnabled()) {
+                Thread.sleep(500); slept += 500
             }
         }
+        if (pending.isNotEmpty())
+            appendLog("✗ после $round проходов не скачано ${pending.size} подписок — повторю при следующем обновлении", LogCat.SUBS)
+    }
+
+    private fun scanAndCheck() {
+        val failed = downloadSourcesParallel(store.enabledSourceUrls(), 6)
+        if (failed.isNotEmpty() && !ScanGate.isAborted()) {
+            appendLog("↻ повтор ${failed.size} подписок через анонимайзеры", LogCat.SUBS)
+            downloadSourcesParallel(failed, minOf(6, failed.size))
+        }
+        refreshSources()
         val p = Prefs(ctx)
         val runner = CheckRunner(store, { line -> appendLog(line, LogCat.SCAN) }, p.checkConcurrency())
         runner.setProbeMode(if (p.dpiApplyProbes()) HandshakeMode.fromOrdinal(p.handshakeMode()) else HandshakeMode.NORMAL)
@@ -1177,26 +1244,24 @@ class AndroidEngine(context: Context) : Engine {
     }
 
     private fun bootstrapIntensive() {
-        val scanner = PageScanner(store) { line -> appendLog(line, LogCat.SUBS) }
-        for (url in store.enabledSourceUrls()) {
-            try {
-                val r = scanner.scanPage(url)
-                val id = store.upsertSource(url)
-                if (id > 0) {
-                    store.markSourceRefreshed(id)
-                    store.setSourceScanResult(id, r.found, r.bytes, r.error)
-                }
-            } catch (t: Throwable) {
-                appendLog("⚠ $url — ${t.message}", LogCat.SUBS)
-            }
-        }
+        downloadAllSourcesPersistently()
+        refreshSources()
         val afterScan = store.count()
         appendLog("— bootstrap: собрано $afterScan прокси, массовая проверка —", LogCat.SCAN)
-        val conc = maxOf(16, minOf(32, afterScan / 10))
-        val runner = CheckRunner(store, { line -> appendLog(line, LogCat.SCAN) }, conc)
+        if (afterScan == 0) { appendLog("— bootstrap: база пуста, проверять нечего —", LogCat.SCAN); return }
         val pp = Prefs(ctx)
-        runner.setProbeMode(if (pp.dpiApplyProbes()) HandshakeMode.fromOrdinal(pp.handshakeMode()) else HandshakeMode.NORMAL)
-        runner.runBatch(minOf(afterScan, 600))
+        val target = pp.adaptiveAliveThreshold()
+        val conc = maxOf(16, minOf(Prefs.CONCURRENCY_CAP, afterScan / 10))
+        val probeMode = if (pp.dpiApplyProbes()) HandshakeMode.fromOrdinal(pp.handshakeMode()) else HandshakeMode.NORMAL
+        var round = 0
+        while (round < 8 && Prefs(ctx).scanEnabled() && !ScanGate.isAborted()
+                && store.countAlive() < target && store.count() > 0) {
+            val runner = CheckRunner(store, { line -> appendLog(line, LogCat.SCAN) }, conc)
+            runner.setProbeMode(probeMode)
+            runner.runBatch(minOf(store.count(), 600))
+            round++
+            appendLog("— bootstrap раунд $round: живых ${store.countAlive()} / ${store.count()} —", LogCat.SCAN)
+        }
         appendLog("— bootstrap готов: живых ${store.countAlive()} / ${store.count()} —", LogCat.SCAN)
     }
 
