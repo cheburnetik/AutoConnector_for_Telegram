@@ -40,6 +40,8 @@ The APK is signed with a release certificate (apksigner, schemes v1+v2+v3). Befo
   (CN=AutoConnector for Telegram) — this fingerprint is identical across all future releases.
 - **APK SHA-256:** `001456190f1a21cf594100a4a82420cfa466442052d8eb896a759976d94020fa`
 - **Windows zip SHA-256:** `afb08bd2c991ca3520ba94a620e3af5ffcc8274747c864a36265a7c93ecc9f2b`
+- **Linux tar.gz SHA-256:** `2a329a0a9e9b7892da9dd3437d5764e6ed209ce3d3acd6c69ff6dc6cd23f8354`
+- **macOS tar.gz SHA-256:** `f96ca244eea22834ca6ea8e19b1c377f80efaf6c9857f8f8cdb0d405933f938a`
 
 Verify with: `apksigner verify --print-certs AutoConnector_for_Telegram.apk` (certificate) and
 `sha256sum -c SHA256SUMS.txt` (file integrity; `SHA256SUMS.txt` is attached to the release).
