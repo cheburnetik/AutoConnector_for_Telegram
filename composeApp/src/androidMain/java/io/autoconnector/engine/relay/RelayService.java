@@ -20,6 +20,7 @@ import io.autoconnector.engine.check.CheckRunner;
 import io.autoconnector.engine.core.Prefs;
 import io.autoconnector.engine.db.ProxyStore;
 import io.autoconnector.engine.model.ProxyEntry;
+import io.autoconnector.engine.scan.PageScanner;
 import io.autoconnector.MainActivity;
 
 import java.io.IOException;
@@ -107,6 +108,143 @@ public final class RelayService extends Service {
             if (running) svc.postDelayed(this, SPARK_TICK_MS);
         }
     };
+
+    /**
+     * Subscription refill driver. checkMains() only re-CHECKS existing hosts —
+     * nothing in the service ever DOWNLOADED subscriptions, so a thin/empty pool
+     * never refilled itself (downloads happened once at UI start only). This task
+     * runs every 30 s and, whenever the pool is thin (<1000 hosts OR <10 alive),
+     * pulls every subscription HARD: many threads, the full direct→anonymizer
+     * cascade, round after round until they land — then a big mass-check. Logs go
+     * to the Subscriptions / Scan tabs (via the "@subs"/"@scan" session tags). */
+    private static final long SUBS_TICK_MS = 30_000L;
+    private long lastSubsRun = 0;
+    private volatile boolean subsRunning = false;
+    private final Runnable subsRefillTask = new Runnable() {
+        @Override
+        public void run() {
+            try { maybeRefillPool(); } catch (Throwable ignored) {}
+            if (running) svc.postDelayed(this, SUBS_TICK_MS);
+        }
+    };
+
+    private void maybeRefillPool() {
+        if (subsRunning) return;
+        if (!new Prefs(this).scanEnabled()) return;
+        ProxyStore store = ProxyStore.get(this);
+        int total = store.count();
+        int alive = store.aliveCount();
+        if (total >= 1000 && alive >= 10) return;            // healthy enough
+        long now = System.currentTimeMillis();
+        // Empty pool → retry fast; merely thin → back off so we don't hammer the
+        // anonymizers every tick once some hosts are already in.
+        long cooldown = (total == 0) ? 45_000L : 5 * 60_000L;
+        if (lastSubsRun != 0 && now - lastSubsRun < cooldown) return;
+        lastSubsRun = now;
+        subsRunning = true;
+        // Dedicated thread (not AppExecutors.SERVICE, which checkMains uses) so a
+        // long download never starves the relay's health checks.
+        new Thread(() -> {
+            try {
+                RelayLog.emit("@subs", "⇣ мало прокси (в базе " + total
+                        + ", живых " + alive + ") — интенсивная закачка подписок");
+                intensiveDownload(store);
+                intensiveMassCheck(store);
+            } catch (Throwable t) {
+                RelayLog.emit("@subs", "⚠ закачка подписок: " + t.getMessage());
+            } finally {
+                subsRunning = false;
+                if (manager != null) try { manager.refreshStickies(); } catch (Throwable ignored) {}
+            }
+        }, "subs-refill").start();
+    }
+
+    /** Re-download every subscription that hasn't yielded anything yet, round
+     *  after round, many threads at a time, through the whole anonymizer chain. */
+    private void intensiveDownload(ProxyStore store) {
+        PageScanner scanner = new PageScanner(store, line -> RelayLog.emit("@subs", line));
+        List<String> pending = store.enabledSourceUrls();
+        int round = 0, maxRounds = 12;
+        while (!pending.isEmpty() && round < maxRounds
+                && new Prefs(this).scanEnabled()
+                && !io.autoconnector.engine.core.ScanGate.isAborted()) {
+            round++;
+            int threads = (round == 1) ? 12 : Math.min(16, pending.size());
+            RelayLog.emit("@subs", "⇣ проход " + round + ": " + pending.size()
+                    + " подписок × " + threads + " потоков");
+            pending = downloadSourcesParallel(scanner, store, pending, threads);
+            RelayLog.emit("@subs", "⇣ проход " + round + " готов: в базе "
+                    + store.count() + " прокси, не скачано " + pending.size());
+            if (pending.isEmpty()) break;
+            long backoff = Math.min(15_000L, 1500L * round), slept = 0;
+            while (slept < backoff && !io.autoconnector.engine.core.ScanGate.isAborted()
+                    && new Prefs(this).scanEnabled()) {
+                try { Thread.sleep(500); } catch (InterruptedException e) { return; }
+                slept += 500;
+            }
+        }
+        if (!pending.isEmpty())
+            RelayLog.emit("@subs", "✗ после " + round + " проходов не скачано "
+                    + pending.size() + " подписок — повторю позже");
+    }
+
+    private List<String> downloadSourcesParallel(PageScanner scanner, ProxyStore store,
+            List<String> urls, int threads) {
+        java.util.concurrent.CopyOnWriteArrayList<String> failed =
+                new java.util.concurrent.CopyOnWriteArrayList<>();
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors
+                .newFixedThreadPool(Math.max(1, Math.min(24, threads)));
+        try {
+            List<java.util.concurrent.Future<?>> fs = new java.util.ArrayList<>();
+            for (String url : urls) {
+                final String u = url;
+                fs.add(pool.submit(() -> {
+                    if (io.autoconnector.engine.core.ScanGate.isAborted()) { failed.add(u); return; }
+                    try {
+                        PageScanner.ScanResult r = scanner.scanPage(u);
+                        long id = store.upsertSource(u);
+                        if (id > 0) {
+                            store.setSourceScanResult(id, r.found, r.bytes, r.error);
+                            if (r.found > 0 && r.error == null) store.markSourceRefreshed(id);
+                        }
+                        if (r.found == 0 || r.error != null) failed.add(u);
+                    } catch (Throwable t) {
+                        RelayLog.emit("@subs", "⚠ " + u + " — " + t.getMessage());
+                        failed.add(u);
+                    }
+                }));
+            }
+            for (java.util.concurrent.Future<?> f : fs) { try { f.get(); } catch (Exception ignored) {} }
+        } finally {
+            pool.shutdownNow();
+        }
+        return new java.util.ArrayList<>(failed);
+    }
+
+    /** Sustained mass-check of the freshly-downloaded pool until enough are alive. */
+    private void intensiveMassCheck(ProxyStore store) {
+        int total = store.count();
+        if (total == 0) { RelayLog.emit("@scan", "— база пуста, проверять нечего —"); return; }
+        Prefs pp = new Prefs(this);
+        int target = pp.adaptiveAliveThreshold();
+        int conc = Math.max(16, Math.min(Prefs.CONCURRENCY_CAP, total / 10));
+        io.autoconnector.engine.net.HandshakeMode probe = pp.dpiApplyProbes()
+                ? io.autoconnector.engine.net.HandshakeMode.fromOrdinal(pp.handshakeMode())
+                : io.autoconnector.engine.net.HandshakeMode.NORMAL;
+        RelayLog.emit("@scan", "— собрано " + total + " прокси, массовая проверка —");
+        int round = 0;
+        while (round < 8 && new Prefs(this).scanEnabled()
+                && !io.autoconnector.engine.core.ScanGate.isAborted()
+                && store.countAlive() < target && store.count() > 0) {
+            CheckRunner runner = new CheckRunner(store, line -> RelayLog.emit("@scan", line), conc);
+            runner.setProbeMode(probe);
+            runner.runBatch(Math.min(store.count(), 600));
+            round++;
+            RelayLog.emit("@scan", "— раунд " + round + ": живых "
+                    + store.countAlive() + " / " + store.count() + " —");
+        }
+        RelayLog.emit("@scan", "— готово: живых " + store.countAlive() + " / " + store.count() + " —");
+    }
 
     /** Coalesces notification updates so a burst of relay events
      *  doesn't fire dozens of NotificationManager IPCs per second. */
@@ -263,7 +401,8 @@ public final class RelayService extends Service {
         // --- background scanning ---
         svc.removeCallbacks(mainsCheckTask);
         svc.removeCallbacks(sparkTick);
-        if (scanOn) svc.post(mainsCheckTask);
+        svc.removeCallbacks(subsRefillTask);
+        if (scanOn) { svc.post(mainsCheckTask); svc.post(subsRefillTask); }
         // Spark ingest also runs in proxy-only mode so the traffic graph keeps
         // filling even when background scanning is off.
         if (scanOn || proxyOn) svc.post(sparkTick);
