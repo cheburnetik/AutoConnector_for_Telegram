@@ -113,7 +113,7 @@ public final class PageScanner {
             "data-post=\"[^/\"]+/(\\d+)\"");
     private static final int TME_SCROLL_PAGES = 8;
     /** Inter-page delay when walking ?before=N so we don't hammer t.me. */
-    private static final long TME_SCROLL_DELAY_MS = 1200;
+    private static final long TME_SCROLL_DELAY_MS = 400;
     private static final int MAX_BODY = 8 * 1024 * 1024;
 
     /** 4pda forum topic (paginated via &st=offset). */
@@ -123,7 +123,7 @@ public final class PageScanner {
     private static final Pattern ST_OFFSET = Pattern.compile("(?:&amp;|&|\\?)st=(\\d+)");
     /** How many of the last forum pages to walk (incl. the last one). */
     private static final int FORUM_LAST_PAGES = 5;
-    private static final long FORUM_PAGE_DELAY_MS = 1200;
+    private static final long FORUM_PAGE_DELAY_MS = 400;
 
     private final ProxyStore store;
     private final Log log;
@@ -391,8 +391,8 @@ public final class PageScanner {
 
     private static String fetchDirect(String urlStr) throws Exception {
         HttpURLConnection c = (HttpURLConnection) new URL(urlStr).openConnection();
-        c.setConnectTimeout(15000);
-        c.setReadTimeout(20000);
+        c.setConnectTimeout(8000);
+        c.setReadTimeout(12000);
         c.setInstanceFollowRedirects(true);
         c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 "
                 + "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36");

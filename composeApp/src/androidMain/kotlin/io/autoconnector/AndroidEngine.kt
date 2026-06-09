@@ -1183,7 +1183,7 @@ class AndroidEngine(context: Context) : Engine {
         if (urls.isEmpty()) return emptyList()
         val scanner = PageScanner(store) { line -> appendLog(line, LogCat.SUBS) }
         val failed = java.util.concurrent.CopyOnWriteArrayList<String>()
-        val pool = java.util.concurrent.Executors.newFixedThreadPool(threads.coerceIn(1, 24))
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(threads.coerceIn(1, 48))
         try {
             val futures = urls.map { url ->
                 pool.submit(Runnable {
@@ -1214,11 +1214,11 @@ class AndroidEngine(context: Context) : Engine {
     private fun downloadAllSourcesPersistently() {
         var pending = store.enabledSourceUrls()
         var round = 0
-        val maxRounds = 12
+        val maxRounds = 24
         while (pending.isNotEmpty() && Prefs(ctx).scanEnabled()
                 && !ScanGate.isAborted() && round < maxRounds) {
             round++
-            val threads = if (round == 1) 12 else minOf(16, pending.size)
+            val threads = minOf(32, maxOf(16, pending.size))
             appendLog("⇣ закачка подписок, проход $round: ${pending.size} шт × $threads потоков", LogCat.SUBS)
             pending = downloadSourcesParallel(pending, threads)
             appendLog("⇣ проход $round: в базе ${store.count()} прокси, не скачано ${pending.size} подписок", LogCat.SUBS)
@@ -1255,7 +1255,7 @@ class AndroidEngine(context: Context) : Engine {
         if (afterScan == 0) { appendLog("— bootstrap: база пуста, проверять нечего —", LogCat.SCAN); return }
         val pp = Prefs(ctx)
         val target = pp.adaptiveAliveThreshold()
-        val conc = maxOf(16, minOf(Prefs.CONCURRENCY_CAP, afterScan / 10))
+        val conc = maxOf(32, minOf(Prefs.CONCURRENCY_CAP, afterScan / 3))
         val probeMode = if (pp.dpiApplyProbes()) HandshakeMode.fromOrdinal(pp.handshakeMode()) else HandshakeMode.NORMAL
         var round = 0
         while (round < 8 && Prefs(ctx).scanEnabled() && !ScanGate.isAborted()

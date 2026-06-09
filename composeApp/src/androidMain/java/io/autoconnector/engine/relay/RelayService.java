@@ -134,11 +134,12 @@ public final class RelayService extends Service {
         ProxyStore store = ProxyStore.get(this);
         int total = store.count();
         int alive = store.aliveCount();
-        if (total >= 1000 && alive >= 10) return;            // healthy enough
+        if (total >= 2000 && alive >= 20) return;            // genuinely healthy
         long now = System.currentTimeMillis();
-        // Empty pool → retry fast; merely thin → back off so we don't hammer the
-        // anonymizers every tick once some hosts are already in.
-        long cooldown = (total == 0) ? 45_000L : 5 * 60_000L;
+        // Keep hammering while the pool is thin: empty → almost immediately,
+        // merely thin → every ~30 s (NOT the old 5 min, which made it look idle
+        // and plateau at the first ~100 hosts that happened to come through).
+        long cooldown = (total == 0) ? 15_000L : 30_000L;
         if (lastSubsRun != 0 && now - lastSubsRun < cooldown) return;
         lastSubsRun = now;
         subsRunning = true;
@@ -164,12 +165,13 @@ public final class RelayService extends Service {
     private void intensiveDownload(ProxyStore store) {
         PageScanner scanner = new PageScanner(store, line -> RelayLog.emit("@subs", line));
         List<String> pending = store.enabledSourceUrls();
-        int round = 0, maxRounds = 12;
+        int round = 0, maxRounds = 24;
         while (!pending.isEmpty() && round < maxRounds
                 && new Prefs(this).scanEnabled()
                 && !io.autoconnector.engine.core.ScanGate.isAborted()) {
             round++;
-            int threads = (round == 1) ? 12 : Math.min(16, pending.size());
+            // Always many threads — pull (almost) every pending source at once.
+            int threads = Math.min(32, Math.max(16, pending.size()));
             RelayLog.emit("@subs", "⇣ проход " + round + ": " + pending.size()
                     + " подписок × " + threads + " потоков");
             pending = downloadSourcesParallel(scanner, store, pending, threads);
@@ -193,7 +195,7 @@ public final class RelayService extends Service {
         java.util.concurrent.CopyOnWriteArrayList<String> failed =
                 new java.util.concurrent.CopyOnWriteArrayList<>();
         java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors
-                .newFixedThreadPool(Math.max(1, Math.min(24, threads)));
+                .newFixedThreadPool(Math.max(1, Math.min(48, threads)));
         try {
             List<java.util.concurrent.Future<?>> fs = new java.util.ArrayList<>();
             for (String url : urls) {
@@ -227,7 +229,7 @@ public final class RelayService extends Service {
         if (total == 0) { RelayLog.emit("@scan", "— база пуста, проверять нечего —"); return; }
         Prefs pp = new Prefs(this);
         int target = pp.adaptiveAliveThreshold();
-        int conc = Math.max(16, Math.min(Prefs.CONCURRENCY_CAP, total / 10));
+        int conc = Math.max(32, Math.min(Prefs.CONCURRENCY_CAP, total / 3));
         io.autoconnector.engine.net.HandshakeMode probe = pp.dpiApplyProbes()
                 ? io.autoconnector.engine.net.HandshakeMode.fromOrdinal(pp.handshakeMode())
                 : io.autoconnector.engine.net.HandshakeMode.NORMAL;
