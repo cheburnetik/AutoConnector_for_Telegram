@@ -37,7 +37,7 @@ APK подписан release-сертификатом (apksigner, схемы v1+
 
 - **Сертификат подписи (SHA-256):** `cb23a18c0cf8a23e43b5b63d199fc1440d3e4d6533e1309d3f92f273fe626a5a`
   (CN=AutoConnector for Telegram) — этот отпечаток одинаков для всех будущих релизов.
-- **APK SHA-256:** `001456190f1a21cf594100a4a82420cfa466442052d8eb896a759976d94020fa`
+- **APK SHA-256:** `dc544605f6883a6e908d2ceb3f6fd4eb52718f33f33b59be4735b46033872592`
 - **Windows zip SHA-256:** `afb08bd2c991ca3520ba94a620e3af5ffcc8274747c864a36265a7c93ecc9f2b`
 - **Linux tar.gz SHA-256:** `2a329a0a9e9b7892da9dd3437d5764e6ed209ce3d3acd6c69ff6dc6cd23f8354`
 - **macOS tar.gz SHA-256:** `f96ca244eea22834ca6ea8e19b1c377f80efaf6c9857f8f8cdb0d405933f938a`

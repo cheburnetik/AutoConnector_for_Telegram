@@ -785,7 +785,6 @@ class DesktopEngine(private val dataDir: File) : Engine {
                 for (s in store.listSources()) store.deleteSource(s.id)
                 store.ensureDefaultSources()
                 store.resetSourceStats()
-                seedBundledHosts()
                 // 3) reset live graph buffers
                 io.autoconnector.engine.traffic.ScanPingBuffer.INSTANCE.reset()
                 io.autoconnector.engine.traffic.LatencyBuffer.INSTANCE.reset()
@@ -1191,8 +1190,12 @@ class DesktopEngine(private val dataDir: File) : Engine {
                         val r = scanner.scanPage(url)
                         val id = store.upsertSource(url)
                         if (id > 0) {
-                            store.markSourceRefreshed(id)
                             store.setSourceScanResult(id, r.found, r.bytes, r.error)
+                            // Mark "refreshed" ONLY on a real success. Marking it on a
+                            // failed/empty download poisoned the never-downloaded flag,
+                            // so a fresh install whose first pull failed was treated as
+                            // "already fetched" and never re-attempted aggressively.
+                            if (r.found > 0 && r.error == null) store.markSourceRefreshed(id)
                         }
                         if (r.found == 0 || r.error != null) failed.add(url)
                     } catch (t: Throwable) {
@@ -1206,6 +1209,35 @@ class DesktopEngine(private val dataDir: File) : Engine {
             pool.shutdownNow()
         }
         return failed.toList()
+    }
+
+    /** Keeps re-downloading the subscriptions that have NOT yet yielded anything,
+     *  round after round, many threads at a time, through the whole
+     *  direct→anonymizer cascade — until they all land, scanning is turned off,
+     *  the pass is aborted, or we hit the round cap. A short escalating backoff
+     *  between rounds avoids spinning a dead network / rate-limiting anonymizers. */
+    private fun downloadAllSourcesPersistently() {
+        var pending = store.enabledSourceUrls()
+        var round = 0
+        val maxRounds = 12
+        while (pending.isNotEmpty()
+                && Prefs(ctx).scanEnabled()
+                && !io.autoconnector.engine.core.ScanGate.isAborted()
+                && round < maxRounds) {
+            round++
+            val threads = if (round == 1) 12 else minOf(16, pending.size)
+            appendLog("⇣ закачка подписок, проход $round: ${pending.size} шт × $threads потоков", LogCat.SUBS)
+            pending = downloadSourcesParallel(pending, threads)
+            appendLog("⇣ проход $round: в базе ${store.count()} прокси, не скачано ${pending.size} подписок", LogCat.SUBS)
+            if (pending.isEmpty()) break
+            val backoff = minOf(15_000L, 1500L * round)
+            var slept = 0L
+            while (slept < backoff
+                    && !io.autoconnector.engine.core.ScanGate.isAborted()
+                    && Prefs(ctx).scanEnabled()) { Thread.sleep(500); slept += 500 }
+        }
+        if (pending.isNotEmpty())
+            appendLog("✗ после $round проходов не скачано ${pending.size} подписок — повторю при следующем запуске", LogCat.SUBS)
     }
 
     /** Downloads every enabled subscription, in parallel, then retries the ones
@@ -1666,36 +1698,19 @@ class DesktopEngine(private val dataDir: File) : Engine {
 
     // === bootstrap =======================================================
 
-    /** Seeds the host pool from the bundled `seed_hosts.txt` (tg:// links) so a
-     *  clean install isn't empty — these get verified by the bootstrap check
-     *  that follows, so dead ones are never handed to Telegram. */
-    private fun seedBundledHosts() {
-        try {
-            val stream = javaClass.getResourceAsStream("/seed_hosts.txt")
-                ?: javaClass.classLoader?.getResourceAsStream("seed_hosts.txt")
-                ?: return
-            val text = stream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-            val list = io.autoconnector.engine.scan.ProxyParser.parse(text, "seed", ProxyType.SOCKS5)
-            val added = store.addAll(list)
-            appendLog("⤓ начальный пул: добавлено $added хостов из встроенной базы", LogCat.SCAN)
-        } catch (t: Throwable) {
-            appendLog("⚠ начальный пул: ${t.message}", LogCat.SCAN)
-        }
-    }
-
     private fun autoRefreshOnce() {
         try {
             // Idempotent (CONFLICT_IGNORE on the unique url) — runs every start so
             // newly-shipped default subscriptions reach existing installs too.
             store.ensureDefaultSources()
             val hostBase = store.count()
-            // "Never downloaded" = no enabled source carries a refresh timestamp.
-            // Combined with a thin host base, that's a clean first run / post-reset
-            // start — pull the subscriptions HARD instead of trickling them in.
+            // "Never downloaded" = no enabled source has EVER delivered hosts (only
+            // a real success sets the refresh timestamp now). A clean install, a
+            // post-reset start, or an empty pool → pull the subscriptions HARD and
+            // keep retrying through every anonymizer instead of trickling them in.
             val neverDownloaded = store.listSources().none { it.lastRefreshAt > 0 }
-            if (neverDownloaded && hostBase < 2000) {
+            if (neverDownloaded || hostBase < 500) {
                 appendLog("— ПЕРВЫЙ ЗАПУСК: агрессивная закачка подписок (хостов в базе $hostBase) —", LogCat.SCAN)
-                seedBundledHosts()   // immediate starting pool from the bundled list
                 aggressiveBootstrap()
             } else {
                 appendLog("— автозапуск: скан и проверка —", LogCat.SCAN)
@@ -1725,15 +1740,13 @@ class DesktopEngine(private val dataDir: File) : Engine {
      *  anonymizer chain, then mass-check whatever landed — so a clean install /
      *  post-reset fills the pool in seconds instead of minutes. */
     private fun aggressiveBootstrap() {
-        val urls = store.enabledSourceUrls()
-        // Gentler than before (was 20 dl + 40 check + 800 batch): that load,
-        // stacked on the relay/probe pools, hung a low-RAM VM. Still fills fast.
-        val failed = downloadSourcesParallel(urls, 10)
-        if (failed.isNotEmpty() && !io.autoconnector.engine.core.ScanGate.isAborted()) {
-            appendLog("↻ повтор ${failed.size} неудачных подписок через анонимайзеры", LogCat.SUBS)
-            val still = downloadSourcesParallel(failed, minOf(8, failed.size))
-            if (still.isNotEmpty()) appendLog("✗ не удалось скачать ${still.size} подписок", LogCat.SUBS)
-        }
+        // Persistent, multi-threaded download: keep retrying whatever STILL hasn't
+        // yielded anything — through the full direct→anonymizer cascade — round
+        // after round, with a short escalating backoff, until every subscription
+        // lands or we run out of rounds. A single retry pass (the old behaviour)
+        // gave up after one failure, so a fresh install on a flaky/blocked network
+        // ended up with 0 hosts and "silence". This hammers instead.
+        downloadAllSourcesPersistently()
         refreshSources()
         val pp = Prefs(ctx)
         val afterScan = store.count()
