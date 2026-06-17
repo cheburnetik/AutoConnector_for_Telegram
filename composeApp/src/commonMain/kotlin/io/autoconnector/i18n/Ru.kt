@@ -195,17 +195,29 @@ object Ru : Strings {
         "при следующем скане).\n• «Очистить скачанные хосты» — удаляет весь пул прокси, но " +
         "оставляет подписки, чтобы скан набрал пул заново. Подписки не трогаются ни в одном случае."
     override val backupTitle = "Экспорт / Импорт"
-    override val backupHelp = "Сохранить или восстановить данные приложения одним JSON-файлом. " +
+    override val backupHelp = "Сохранить или восстановить данные приложения как JSON. " +
         "Отметь, что включить — любую комбинацию:\n• Настройки — все параметры приложения.\n" +
         "• Подписки — список источников (URL + вкл/выкл).\n• Каталог живых хостов — все живые " +
-        "прокси с их оценками и статистикой ПО РЕЖИМАМ сети.\n\n«Экспорт» спросит, куда сохранить " +
-        "файл; «Импорт» — какой файл открыть, и применит только отмеченные разделы, что есть в файле. " +
-        "Импорт ДОБАВЛЯЕТ к текущим данным (не стирает)."
+        "прокси с их оценками и статистикой ПО РЕЖИМАМ сети.\n\n«Экспорт» открывает страницу с " +
+        "готовым JSON — скопируй его или сохрани в файл. «Импорт» — вставь JSON (или загрузи файл), " +
+        "применятся только отмеченные разделы, что есть в тексте. Импорт ДОБАВЛЯЕТ к текущим данным " +
+        "(не стирает)."
     override val backupSettings = "Настройки"
     override val backupSubs = "Подписки"
     override val backupHosts = "Каталог живых хостов (по режимам)"
     override val exportWord = "Экспорт"
     override val importWord = "Импорт"
+    override val backupExportTitle = "Экспорт данных"
+    override val backupImportTitle = "Импорт данных"
+    override val backupSelectExport = "Что экспортировать:"
+    override val backupSelectImport = "Что импортировать:"
+    override val backupCopyBtn = "Скопировать"
+    override val backupSaveFile = "Сохранить в файл"
+    override val backupLoadFile = "Загрузить из файла"
+    override val backupDoImport = "Импортировать"
+    override val backupPasteLabel = "Вставьте сюда JSON бэкапа"
+    override val backupJsonLabel = "JSON бэкапа"
+    override val backupAndroidFileNote = "Файлы здесь недоступны — используйте Копировать / Вставить."
     override val eraseAllHosts = "Стереть все хосты"
     override val factoryReset = "Сбросить всё (как при первом запуске)"
     override val factoryResetConfirm = "Полностью сбросить приложение к заводскому виду? Будут стёрты " +

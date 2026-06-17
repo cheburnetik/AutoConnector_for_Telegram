@@ -423,14 +423,25 @@ interface Engine {
     fun exportLinksToFile(): String?
 
     // --- Backup: settings / subscriptions / live-hosts-by-mode (universal JSON) --
-    /** Exports any combination of settings, subscriptions and the live-hosts
-     *  catalog (per mode) to a single JSON file the user picks. Returns a short
-     *  human-readable status line for the UI. */
-    fun exportBackup(settings: Boolean, subs: Boolean, hosts: Boolean): String
+    /** Builds the universal backup JSON for the selected sections. Pure — no file
+     *  I/O — so the UI can show it in a text field to copy or save. */
+    fun buildBackupJson(settings: Boolean, subs: Boolean, hosts: Boolean): String
 
-    /** Imports a JSON backup file the user picks, applying only the requested
-     *  sections that are actually present in the file. Returns a status line. */
-    fun importBackup(settings: Boolean, subs: Boolean, hosts: Boolean): String
+    /** Applies a backup pasted/loaded as JSON text, importing only the requested
+     *  sections that are actually present. Returns a status line. */
+    fun importBackupText(text: String, settings: Boolean, subs: Boolean, hosts: Boolean): String
+
+    /** Writes [text] to a file the user picks (desktop). Returns a status line;
+     *  on platforms without file dialogs returns an "unsupported" message. */
+    fun saveTextToFile(suggestedName: String, text: String): String
+
+    /** Opens a file the user picks and returns its text, or null when cancelled
+     *  or unsupported (e.g. Android, where there is no disk file dialog). */
+    fun pickTextFile(): String?
+
+    /** True on platforms with native file save/open dialogs (desktop), false on
+     *  Android — the UI hides the file buttons and keeps copy/paste only. */
+    fun fileIoSupported(): Boolean
 
     /** Full factory reset — wipes all settings AND the host pool, restores the
      *  default subscriptions and re-bootstraps. Same end state as a clean first

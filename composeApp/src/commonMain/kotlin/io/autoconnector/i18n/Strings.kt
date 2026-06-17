@@ -143,6 +143,19 @@ interface Strings {
     val backupTitle: String; val backupHelp: String
     val backupSettings: String; val backupSubs: String; val backupHosts: String
     val exportWord: String; val importWord: String
+    // New backup-page strings: English defaults so untranslated locales still
+    // compile; Ru/En override them. Translate in other locales as needed.
+    val backupExportTitle: String get() = "Export data"
+    val backupImportTitle: String get() = "Import data"
+    val backupSelectExport: String get() = "What to export:"
+    val backupSelectImport: String get() = "What to import:"
+    val backupCopyBtn: String get() = "Copy"
+    val backupSaveFile: String get() = "Save to file"
+    val backupLoadFile: String get() = "Load from file"
+    val backupDoImport: String get() = "Import"
+    val backupPasteLabel: String get() = "Paste backup JSON here"
+    val backupJsonLabel: String get() = "Backup JSON"
+    val backupAndroidFileNote: String get() = "Files aren't available here — use Copy / Paste."
     val eraseAllHosts: String; val factoryReset: String; val factoryResetConfirm: String
     // Shown after a factory reset. Default English; languages may override.
     val factoryResetDone: String get() = "Everything has been reset. Please close the app and open it again."

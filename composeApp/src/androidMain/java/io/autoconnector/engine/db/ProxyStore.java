@@ -80,6 +80,19 @@ public class ProxyStore extends SQLiteOpenHelper {
     }
 
     @Override
+    public void onConfigure(SQLiteDatabase db) {
+        // Keep the working set in memory and flush to disk rarely (battery / wear).
+        // NORMAL is durable under WAL (a crash loses only the last txn); the proxy
+        // DB is a re-derivable cache anyway. The big cache holds it in RAM, and the
+        // raised checkpoint threshold lets the many repeated stat updates coalesce
+        // in the WAL instead of constantly rewriting the main DB.
+        try { db.execSQL("PRAGMA synchronous=NORMAL"); } catch (Exception ignored) {}
+        try { db.execSQL("PRAGMA cache_size=-8000"); } catch (Exception ignored) {}
+        try { db.execSQL("PRAGMA wal_autocheckpoint=4000"); } catch (Exception ignored) {}
+        try { db.execSQL("PRAGMA journal_size_limit=16777216"); } catch (Exception ignored) {}
+    }
+
+    @Override
     public void onCreate(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE " + T + " ("
                 + "id INTEGER PRIMARY KEY AUTOINCREMENT,"
@@ -382,6 +395,12 @@ public class ProxyStore extends SQLiteOpenHelper {
      * with its individual timings/bytes, then prunes the host's log down to
      * the most recent 50 rows. Never throws to the caller.
      */
+    /** Rotating counter so attempt_log is pruned only occasionally, not on every
+     *  insert — the per-insert DELETE-subquery was a heavy disk offender under
+     *  continuous scanning (hundreds of probes/sec). */
+    private static final java.util.concurrent.atomic.AtomicLong AL_INSERTS =
+            new java.util.concurrent.atomic.AtomicLong();
+
     public void logAttempt(long proxyId, int kind, boolean success, int tcpMs,
                            int tlsMs, int totalMs, long bytesIn, long bytesOut) {
         try {
@@ -392,10 +411,14 @@ public class ProxyStore extends SQLiteOpenHelper {
                             + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     new Object[]{proxyId, System.currentTimeMillis(), kind,
                             success ? 1 : 0, tcpMs, tlsMs, totalMs, bytesIn, bytesOut});
-            db.execSQL("DELETE FROM " + AL + " WHERE proxy_id=? AND id NOT IN"
-                            + " (SELECT id FROM " + AL + " WHERE proxy_id=?"
-                            + " ORDER BY ts DESC, id DESC LIMIT 50)",
-                    new Object[]{proxyId, proxyId});
+            // Trim this proxy's history (keep ~50) only every 16th insert overall:
+            // the table stays bounded while the expensive subquery runs 16x less.
+            if ((AL_INSERTS.incrementAndGet() & 0xF) == 0L) {
+                db.execSQL("DELETE FROM " + AL + " WHERE proxy_id=? AND id NOT IN"
+                                + " (SELECT id FROM " + AL + " WHERE proxy_id=?"
+                                + " ORDER BY ts DESC, id DESC LIMIT 50)",
+                        new Object[]{proxyId, proxyId});
+            }
         } catch (Exception ignored) {
             // history logging is best-effort — never break the caller
         }
