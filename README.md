@@ -55,7 +55,7 @@ AutoConnector for Telegram — приложение само находит в 
 > - **Экспорт/импорт** настроек, хостов и подписок + полный сброс к заводскому виду.
 > - **Быстрый холодный старт** — агрессивная многопоточная загрузка подписок через
 >   несколько анонимайзеров.
-> - **12 языков** интерфейса с автоопределением (+RTL).
+> - **26 языков** интерфейса с автоопределением (+RTL).
 
 # При первом запуске важно:
 
@@ -124,16 +124,22 @@ APK подписан release-сертификатом (apksigner, схемы v1+
 
 <table>
 <tr>
-<td align="center"><img src="docs/screenshots/connector.png" width="200"><br><sub>Коннектор</sub></td>
-<td align="center"><img src="docs/screenshots/scan.png" width="200"><br><sub>Скан и статистика</sub></td>
-<td align="center"><img src="docs/screenshots/catalog.png" width="200"><br><sub>Каталог прокси</sub></td>
-<td align="center"><img src="docs/screenshots/logs.png" width="200"><br><sub>Логи релея</sub></td>
+<td align="center"><img src="docs/screenshots/connector.png" width="200"><br><sub>Коннектор — активная сессия</sub></td>
+<td align="center"><img src="docs/screenshots/scan.png" width="200"><br><sub>Скан и графики</sub></td>
+<td align="center"><img src="docs/screenshots/catalog.png" width="200"><br><sub>Каталог прокси (по режимам)</sub></td>
+<td align="center"><img src="docs/screenshots/host-card.png" width="200"><br><sub>Карточка хоста + история</sub></td>
 </tr>
 <tr>
+<td align="center"><img src="docs/screenshots/logs.png" width="200"><br><sub>Логи релея</sub></td>
 <td align="center"><img src="docs/screenshots/settings.png" width="200"><br><sub>Настройки</sub></td>
-<td align="center"><img src="docs/screenshots/subscriptions.png" width="200"><br><sub>Подписки (источники)</sub></td>
 <td align="center"><img src="docs/screenshots/export.png" width="200"><br><sub>Экспорт tg://-ссылок</sub></td>
-<td align="center"><img src="docs/screenshots/connector-active.png" width="200"><br><sub>Коннектор — активная сессия</sub></td>
+<td align="center"><img src="docs/screenshots/hotkeys.png" width="200"><br><sub>Горячие клавиши</sub></td>
+</tr>
+<tr>
+<td align="center"><img src="docs/screenshots/guide.png" width="200"><br><sub>Гайд подключения</sub></td>
+<td align="center"><img src="docs/screenshots/connector-ru.png" width="200"><br><sub>Коннектор · русский UI</sub></td>
+<td align="center"><img src="docs/screenshots/scan-ru.png" width="200"><br><sub>Скан · русский UI</sub></td>
+<td align="center"><sub>26 языков интерфейса<br>с автоопределением</sub></td>
 </tr>
 </table>
 
