@@ -67,13 +67,26 @@ Verify with: `apksigner verify --print-certs AutoConnector_for_Telegram.apk` (ce
   connects).
 - **12 UI languages** with auto-detection and RTL support.
 
-> ### What's new in 1.1.0
-> Cross-platform app logo & icon; lower desktop memory use (~350 MB instead of
-> ~1 GB); global hotkeys on by default; "Factory reset" now truly wipes the whole
-> data directory; the catalog shows a Telegram-connect counter and per-host
-> attempt history; "selection breadth" and "connect timeout" sliders; the host
-> pool auto-widens when Telegram bounces between ports; default language is now
-> auto (follows the system).
+> ### What's new since 1.0.19
+> - **Separate host pools and ratings per network type** — VPN / Wi-Fi / LTE /
+>   Ethernet / White: each connection type keeps its own pool of live proxies, so
+>   Telegram is never handed a host that only works under a VPN.
+> - **Upstream race** — several connects in parallel, the fastest live one wins; a
+>   "selection breadth" slider (from best-proven to as-wide-as-possible) with the
+>   pool auto-widening when Telegram bounces between relay ports; a configurable
+>   connect timeout (100 ms…15 s).
+> - **Host catalog with a detailed card** — "Telegram connects / successful / total
+>   checks" plus the last 25 attempts per host (TCP/TLS time, total connect
+>   duration, bytes received/sent).
+> - **Live graphs** of speed, ping and port activity (per second and per minute)
+>   plus scan graphs.
+> - **Anti-DPI and proxying engines** — a set of masking tricks with an
+>   "Auto-rotate" mode, an obfuscation engine, and experimental engines
+>   (split/coalescing) to match a specific block.
+> - **Export/import** of settings, hosts and subscriptions + a full factory reset.
+> - **Fast cold start** — aggressive multi-threaded subscription download through
+>   several anonymizers.
+> - **12 UI languages** with auto-detection (+RTL).
 
 ## 📸 Screenshots
 
