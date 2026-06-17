@@ -162,6 +162,9 @@ public final class CheckRunner {
                 Rating.record(p, r.ok(), pingMs, r.detail);
                 store.updateStats(p);
                 store.logCheck(p.id, r.ok());
+                try {
+                    store.logAttempt(p.id, 0, r.ok(), -1, -1, r.ok() ? pingMs : -1, 0, 0);
+                } catch (Exception ignored) {}
                 // Per-mode record — what the relay actually uses to pick
                 // an upstream on the current network.
                 io.autoconnector.engine.core.NetworkMode mode =

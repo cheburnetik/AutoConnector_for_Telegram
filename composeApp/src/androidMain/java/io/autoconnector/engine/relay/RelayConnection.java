@@ -158,7 +158,8 @@ public final class RelayConnection implements Runnable {
             if (dcId < 1 || dcId > 5) dcId = DcAddresses.dcIdForIp(dst.host);
 
             // 3. Acquire an upstream, with connect-time failover.
-            up = acquireUpstream(tag, dcId, dst, handshakeMode, onlyFakeTls, expEngine, connMode);
+            up = acquireUpstream(tag, dcId, dst, handshakeMode, onlyFakeTls, expEngine, connMode,
+                    prefs.relayRaceWidth(), prefs.relayBreadth(), prefs.relayConnectTimeoutMs());
             if (up == null) {
                 listener.event("порт " + localPort + ": нет рабочего апстрима (DC" + dcId + ")");
                 return;
@@ -282,6 +283,18 @@ public final class RelayConnection implements Runnable {
                     if (net != io.autoconnector.engine.core.NetworkMode.UNKNOWN) {
                         store.modeRecordSession(upstreamProxy.id, net, dur, sessBytes);
                     }
+                } catch (Exception ignored) {}
+                // Per-host attempt-history row for the detail card (last-25 list):
+                // a successful Telegram connect with its connect timings and the
+                // bytes carried this session.
+                try {
+                    long inB = (liveConnRef != null) ? liveConnRef.bytesDown.get() : 0;
+                    long outB = (liveConnRef != null) ? liveConnRef.bytesUp.get() : 0;
+                    store.logAttempt(upstreamProxy.id, 1, true,
+                            up != null ? up.connectMs : -1,
+                            up != null ? up.tlsMs : -1,
+                            up != null ? up.totalMs : -1,
+                            inB, outB);
                 } catch (Exception ignored) {}
                 // Anti-DPI bookkeeping. "active" window = first real byte
                 // after handshake → end-of-session; "duration" = whole pipe
@@ -472,55 +485,71 @@ public final class RelayConnection implements Runnable {
                                                       HandshakeMode mode,
                                                       boolean onlyFakeTls,
                                                       WireShaper.Mode exp,
-                                                      RelayConnectMode connMode) {
+                                                      RelayConnectMode connMode,
+                                                      int raceWidth,
+                                                      int breadth,
+                                                      int connectTimeoutMs) {
         List<ProxyEntry> candidates = new ArrayList<>();
-        ProxyEntry sticky = manager.stickyUpstream(localPort);
-        if (sticky != null && (!onlyFakeTls || sticky.isFakeTls())) {
-            candidates.add(sticky);
-        }
-        int wantTop = 15;
-        int wantRandom = 15;
         int multi = onlyFakeTls ? 4 : 1;
         io.autoconnector.engine.core.NetworkMode net =
                 io.autoconnector.engine.core.NetworkMonitor.currentMode();
         boolean usePerMode = net != io.autoconnector.engine.core.NetworkMode.UNKNOWN;
-
-        // 1. Top alive for THIS network — VPN/WiFi/LTE are graded separately
-        //    so we don't try VPN-only winners on bare LTE.
         final io.autoconnector.engine.core.NetworkMode fnet = net;
-        java.util.List<ProxyEntry> topAlive = safeList(() -> usePerMode
+
+        // If Telegram keeps bouncing between relay ports it can't hold a link —
+        // widen the search HARD regardless of the user's breadth knob so the
+        // hundreds of other alive hosts get a turn (the «stuck on 4 hosts» bug).
+        boolean bouncing = manager.isPortBouncing();
+        int b = bouncing ? Math.max(breadth, 80) : Math.max(0, Math.min(100, breadth));
+
+        // Breadth shapes the pool: narrow (0) → mostly top-rated proven hosts;
+        // wide (100) → mostly random hosts pulled from the whole alive pool.
+        final int wantTop = Math.max(2, 20 - (b * 18 / 100));   // 20 (narrow)..2 (wide)
+        final int wantRandom = 4 + (b * 46 / 100);              // 4 (narrow)..50 (wide)
+        boolean wideGlobal = b >= 45;                           // also mix in GLOBAL alive
+
+        // Sticky upstream first — but NOT while widening: the sticky host is the
+        // very one Telegram just failed to hold, so leading with it wastes a try.
+        if (!bouncing && b < 70) {
+            ProxyEntry sticky = manager.stickyUpstream(localPort);
+            if (sticky != null && (!onlyFakeTls || sticky.isFakeTls())) {
+                candidates.add(sticky);
+            }
+        }
+
+        // 1. Top-rated alive for THIS network mode (VPN/WiFi/LTE graded apart).
+        int base = candidates.size();
+        for (ProxyEntry p : safeList(() -> usePerMode
                 ? store.topAliveForMode(fnet, wantTop * multi)
-                : store.topAlive(wantTop * multi));
-        for (ProxyEntry p : topAlive) {
+                : store.topAlive(wantTop * multi))) {
             if (onlyFakeTls && !p.isFakeTls()) continue;
             if (!containsId(candidates, p.id)) candidates.add(p);
-            if (candidates.size() >= wantTop + 1) break;
+            if (candidates.size() >= base + wantTop) break;
         }
-        // 2. Random alive outside the top — diversifies and exposes hosts
-        //    the rating undervalues (or that just recovered).
-        java.util.List<ProxyEntry> randomAlive = safeList(() -> usePerMode
+        // 2. Random alive outside the top (per-mode) — exposes undervalued hosts.
+        base = candidates.size();
+        for (ProxyEntry p : safeList(() -> usePerMode
                 ? store.randomAliveForMode(fnet, wantRandom * multi)
-                : store.randomAlive(wantRandom * multi));
-        for (ProxyEntry p : randomAlive) {
+                : store.randomAlive(wantRandom * multi))) {
             if (onlyFakeTls && !p.isFakeTls()) continue;
             if (!containsId(candidates, p.id)) candidates.add(p);
-            if (candidates.size() >= wantTop + wantRandom + 1) break;
+            if (candidates.size() >= base + wantRandom) break;
         }
-        // 3. Per-mode pool thin (fresh install, desktop, or a just-changed /
-        //    mis-detected network)? Pull GLOBAL alive proxies — these are
-        //    alive-filtered, so we NEVER hand Telegram a dead host while live
-        //    ones exist somewhere. Handing over a dead upstream is exactly what
-        //    made Telegram see a "broken" proxy and disable it.
-        if (candidates.size() < 5) {
+        // 3. Wide breadth OR a thin per-mode pool: pull from the GLOBAL alive
+        //    pool. Hundreds of hosts can be alive globally but not yet graded
+        //    for THIS mode, which is exactly why selection collapsed to ~4 hosts.
+        if (wideGlobal || candidates.size() < 5) {
+            base = candidates.size();
+            final int globalRandom = Math.max(wantRandom, bouncing ? 60 : 30);
+            for (ProxyEntry p : safeList(() -> store.randomAlive(globalRandom * multi))) {
+                if (onlyFakeTls && !p.isFakeTls()) continue;
+                if (!containsId(candidates, p.id)) candidates.add(p);
+                if (candidates.size() >= base + globalRandom) break;
+            }
             for (ProxyEntry p : safeList(() -> store.topAlive(wantTop * multi))) {
                 if (onlyFakeTls && !p.isFakeTls()) continue;
                 if (!containsId(candidates, p.id)) candidates.add(p);
-                if (candidates.size() >= wantTop + 1) break;
-            }
-            for (ProxyEntry p : safeList(() -> store.randomAlive(wantRandom * multi))) {
-                if (onlyFakeTls && !p.isFakeTls()) continue;
-                if (!containsId(candidates, p.id)) candidates.add(p);
-                if (candidates.size() >= wantTop + wantRandom + 1) break;
+                if (candidates.size() >= base + globalRandom + wantTop) break;
             }
         }
         // 4. Truly nothing alive matched — last resort, try best-by-score
@@ -536,6 +565,13 @@ public final class RelayConnection implements Runnable {
                 if (candidates.size() >= 25) break;
             }
         }
+        if (bouncing) {
+            RelayLog.emit("⟳ Telegram мечется по портам — расширяю выбор до "
+                    + candidates.size() + " разных живых хостов");
+        }
+        // For wide breadth / bouncing, shuffle so the race AND the serial trial
+        // pull from across the whole varied pool, not just the top of the list.
+        if (bouncing || b >= 50) java.util.Collections.shuffle(candidates);
 
         // Pick the connect strategy. OFF is the reference serial trial; the
         // others are experimental and aim to cut "very long to find a link".
@@ -543,7 +579,7 @@ public final class RelayConnection implements Runnable {
         switch (connMode) {
             case PARALLEL_RACE:
                 ch = tryRace(candidates, tag, dcId, dst, mode, exp,
-                        RelayConnectMode.RACE_WIDTH, UPSTREAM_TIMEOUT_MS);
+                        raceWidth, connectTimeoutMs);
                 break;
             case FAST_TIMEOUT:
                 ch = trySerial(candidates, tag, dcId, dst, mode, exp,
@@ -558,12 +594,10 @@ public final class RelayConnection implements Runnable {
                 // instead of always re-using the sticky/top one. Otherwise a
                 // couple of high-rated hosts win every connection, their rating
                 // climbs unbeatably (rich-get-richer), and the rest of the live
-                // pool — including the «random alive» diversity candidates added
-                // above — never gets actually used. Every candidate here is
-                // already alive-verified, so randomising the order costs no
-                // reliability, just balances usage.
+                // pool never gets used. Every candidate is already alive-verified,
+                // so randomising order costs no reliability, just balances usage.
                 java.util.Collections.shuffle(candidates);
-                ch = trySerial(candidates, tag, dcId, dst, mode, exp, UPSTREAM_TIMEOUT_MS);
+                ch = trySerial(candidates, tag, dcId, dst, mode, exp, connectTimeoutMs);
                 break;
         }
         // Cascade — nobody took the connection though we had candidates. Wake
@@ -586,6 +620,7 @@ public final class RelayConnection implements Runnable {
             } catch (Exception e) {
                 manager.markUpstreamBad(localPort, p);
                 try { store.logRelayAttempt(p.id, false); } catch (Exception ignored) {}
+                try { store.logAttempt(p.id, 1, false, -1, -1, -1, 0, 0); } catch (Exception ignored) {}
                 String why = e.getMessage() != null
                         ? e.getMessage() : e.getClass().getSimpleName();
                 RelayLog.emit("✗ " + p.host + ":" + p.port + " — " + why);

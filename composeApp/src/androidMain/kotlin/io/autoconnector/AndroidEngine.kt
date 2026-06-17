@@ -5,6 +5,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.provider.Settings
 import androidx.core.app.NotificationManagerCompat
 import io.autoconnector.engine.AppInfo
@@ -12,6 +13,7 @@ import io.autoconnector.engine.CatalogItem
 import io.autoconnector.engine.ConnState
 import io.autoconnector.engine.Engine
 import io.autoconnector.engine.EngineSettings
+import io.autoconnector.engine.HistoryRecord
 import io.autoconnector.engine.EngineState
 import io.autoconnector.engine.ExpEngineOption
 import io.autoconnector.engine.ScanParams
@@ -212,6 +214,9 @@ class AndroidEngine(context: Context) : Engine {
             expEngineMode = p.expEngineMode(),
             netLogEnabled = p.netLogEnabled(),
             relayConnectMode = p.relayConnectMode(),
+            relayRaceWidth = p.relayRaceWidth(),
+            relayBreadth = p.relayBreadth(),
+            relayConnectTimeoutMs = p.relayConnectTimeoutMs(),
         )
     }
 
@@ -255,6 +260,9 @@ class AndroidEngine(context: Context) : Engine {
         p.setExpEngineMode(s.expEngineMode)
         p.setNetLogEnabled(s.netLogEnabled)
         p.setRelayConnectMode(s.relayConnectMode)
+        p.setRelayRaceWidth(s.relayRaceWidth)
+        p.setRelayBreadth(s.relayBreadth)
+        p.setRelayConnectTimeoutMs(s.relayConnectTimeoutMs)
         NetLog.setEnabled(s.netLogEnabled)
         // Re-apply the override only when the mode picker actually changed, so a
         // plain settings-save doesn't kick the network monitor.
@@ -312,6 +320,13 @@ class AndroidEngine(context: Context) : Engine {
         appendLog(if (p != null) "· лог сетевого обмена: $p" else "⚠ путь лога недоступен")
     }
 
+    override fun dataDirPath(): String = ctx.filesDir.absolutePath
+
+    override fun openDataFolder() {
+        // No generic folder-opener on Android; just surface the path in the log.
+        appendLog("· папка данных: ${ctx.filesDir.absolutePath}")
+    }
+
     override fun handshakeStats(): List<HandshakeStatRow> =
         HandshakeMode.values()
             .filter { it.isWorking && HandshakeStats.attempts(it) > 0 }
@@ -358,6 +373,8 @@ class AndroidEngine(context: Context) : Engine {
     override fun appInfo(): AppInfo = AppInfo(
         version = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
         buildDate = BuildConfig.BUILD_DATE,
+        // e.g. "Android arm64-v8a · API 34" — primary ABI + SDK level.
+        platform = "Android ${Build.SUPPORTED_ABIS.firstOrNull() ?: "?"} · API ${Build.VERSION.SDK_INT}",
     )
 
     // === catalog actions =================================================
@@ -503,6 +520,10 @@ class AndroidEngine(context: Context) : Engine {
                 ScanGate.setAborted(false)
                 refreshCatalog(); refreshSources()
                 // Empty pool now — re-pull the subscriptions hard, like a fresh install.
+                // reconfigure() first so the running service drops its stale 30 s
+                // subsRefill tick and re-posts it at t=0 (adaptive fast tick takes
+                // over) — otherwise the wipe sat idle until the next 30 s tick.
+                if (Prefs(ctx).appEnabled() || Prefs(ctx).scanEnabled()) RelayService.reconfigure(ctx)
                 if (Prefs(ctx).scanEnabled()) bootstrapIntensive()
             } catch (_: Throwable) {}
             finally { refreshCatalog(); refreshSources() }
@@ -589,13 +610,17 @@ class AndroidEngine(context: Context) : Engine {
                 live = liveIds.contains(p.id),
                 pinned = pinnedId == p.id,
                 sticky = pinnedId != p.id && sticky.contains(p.id),
-                everServed = (ms?.tgConnections ?: 0L) > 0,
+                // "Telegram connected" is meaningful regardless of network mode,
+                // and the per-mode counter is rarely incremented — so show the
+                // host's GLOBAL last-connect time and count (fixes the dashes the
+                // per-mode catalog showed for "Telegram подключался").
+                everServed = p.lastTgConnectAt > 0 || p.tgConnections > 0,
                 sourceNum = if (srcId > 0) nums[srcId] else null,
                 checkedMinsAgo = if (ms != null && ms.lastCheck > 0) (now - ms.lastCheck) / 60_000 else -1,
-                tgConnectMinsAgo = -1,
+                tgConnectMinsAgo = if (p.lastTgConnectAt > 0) (now - p.lastTgConnectAt) / 60_000 else -1,
                 successes = ms?.successes ?: 0,
                 failures = ms?.failures ?: 0,
-                tgConnections = ms?.tgConnections ?: 0L,
+                tgConnections = p.tgConnections,
                 bytesRelayed = ms?.bytesRelayed ?: 0L,
                 bytesRelayedHuman = TrafficMeter.human(ms?.bytesRelayed ?: 0L),
                 sessionTotalHuman = (ms?.totalSessionMs ?: 0L).let { if (it > 0) Durations.human(it / 1000) else "—" },
@@ -607,6 +632,20 @@ class AndroidEngine(context: Context) : Engine {
             )
         }
     }
+
+    override fun hostHistory(id: Long, limit: Int): List<HistoryRecord> =
+        store.hostHistory(id, limit).map { r ->
+            HistoryRecord(
+                ts = r.ts,
+                isTelegram = r.kind == 1,
+                success = r.success,
+                tcpMs = r.tcpMs,
+                tlsMs = r.tlsMs,
+                totalMs = r.totalMs,
+                bytesIn = r.bytesIn,
+                bytesOut = r.bytesOut,
+            )
+        }
 
     override fun exportAliveLinksForMode(modeCode: String): List<String> {
         val mode = NetworkMode.fromCode(modeCode)

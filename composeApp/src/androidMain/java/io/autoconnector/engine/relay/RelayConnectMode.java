@@ -19,7 +19,7 @@ public enum RelayConnectMode {
 
     /** Race several upstreams at once, first completed handshake wins. */
     PARALLEL_RACE(1, "race", "Параллельная гонка апстримов",
-            "Открывает несколько апстримов одновременно (до 3) и берёт первый, "
+            "Открывает несколько апстримов одновременно (до 5/8/12 — настраивается) и берёт первый, "
             + "с кем прошёл handshake; остальные закрывает. Должно дать почти "
             + "мгновенный коннект, как при прямом вводе одного хорошего прокси."),
 
@@ -33,8 +33,12 @@ public enum RelayConnectMode {
             "Сначала пробует закреплённый/лучший прокси с коротким таймаутом "
             + "(как прямой ввод одного прокси), и только при неудаче — полный перебор.");
 
-    /** How many upstreams {@link #PARALLEL_RACE} dials concurrently. */
-    public static final int RACE_WIDTH = 3;
+    /**
+     * Legacy default width for {@link #PARALLEL_RACE}. The effective width is now
+     * user-configurable (5/8/12) via {@code Prefs.relayRaceWidth()}; this constant
+     * is kept only as a fallback for callers without a Prefs instance.
+     */
+    public static final int RACE_WIDTH = 8;
     /** Short connect/handshake timeout for the fast / sticky-first modes. */
     public static final int FAST_TIMEOUT_MS = 3000;
 

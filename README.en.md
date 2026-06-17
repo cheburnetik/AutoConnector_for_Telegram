@@ -28,20 +28,20 @@ All builds are on the releases page: **[GitHub Releases (latest)](https://github
 | OS | File | Run |
 |----|------|-----|
 | **Android** | `AutoConnector_for_Telegram.apk` | install the APK (outside Google Play — allow install from source) |
-| **Windows** 10/11 x64 | `AutoConnector-for-Telegram-windows-x64.zip` | extract → run `AutoConnector.bat` |
-| **Linux** x64 | `AutoConnector-for-Telegram-linux-x64.tar.gz` | extract → `./AutoConnector-for-Telegram/AutoConnector.sh` |
-| **macOS** 11+ (Apple Silicon/Intel) | `AutoConnector-for-Telegram-macos.tar.gz` | extract → `./AutoConnector.command` (if blocked — `xattr -dr com.apple.quarantine AutoConnector-for-Telegram`) |
+| **Windows** 10/11 x64 | `AutoConnector-for-Telegram-windows-x64.zip` | extract → run `AutoConnector\AutoConnector.exe` |
+| **Linux** x64 | `AutoConnector-for-Telegram-linux-x64.tar.gz` | extract → `./AutoConnector/bin/AutoConnector` |
+| **macOS** 11+ (Apple Silicon) | `AutoConnector-for-Telegram-macos.tar.gz` | extract → double-click `AutoConnector.app` (if blocked — `xattr -dr com.apple.quarantine AutoConnector.app`) |
 
-### 🔐 Authenticity (release 1.0.61)
+### 🔐 Authenticity (release 1.1.0)
 
 The APK is signed with a release certificate (apksigner, schemes v1+v2+v3). Before installing you can verify:
 
 - **Signing certificate (SHA-256):** `cb23a18c0cf8a23e43b5b63d199fc1440d3e4d6533e1309d3f92f273fe626a5a`
   (CN=AutoConnector for Telegram) — this fingerprint is identical across all future releases.
-- **APK SHA-256:** `04a8f71e0d7604364f6d12bab8d2b700f0d08379f420a33c01e2101ab6ed9b04`
-- **Windows zip SHA-256:** `afb08bd2c991ca3520ba94a620e3af5ffcc8274747c864a36265a7c93ecc9f2b`
-- **Linux tar.gz SHA-256:** `2a329a0a9e9b7892da9dd3437d5764e6ed209ce3d3acd6c69ff6dc6cd23f8354`
-- **macOS tar.gz SHA-256:** `f96ca244eea22834ca6ea8e19b1c377f80efaf6c9857f8f8cdb0d405933f938a`
+- **APK SHA-256:** `d7652e7f5c3a2174a3b7805c2539df7da080765c9b0f581a7ac5943987c9b935`
+- **Windows zip SHA-256:** `1d8d675936387e89038dc4943d7f99200c1b735b86e1f79bd953cd93e60f0217`
+- **Linux tar.gz SHA-256:** `9160ea519309dc62750a4a930dc1aae6e20dbcefd21b426fa85b48ace6f3e8f8`
+- **macOS tar.gz SHA-256:** `322082ef3f06955ed299be790bce453e47db37fca17daea54724d60698446bc7`
 
 Verify with: `apksigner verify --print-certs AutoConnector_for_Telegram.apk` (certificate) and
 `sha256sum -c SHA256SUMS.txt` (file integrity; `SHA256SUMS.txt` is attached to the release).
@@ -57,7 +57,23 @@ Verify with: `apksigner verify --print-certs AutoConnector_for_Telegram.apk` (ce
   FakeTLS, etc.); the "Auto-rotate" mode picks a working one by itself.
 - **Detailed statistics** — live/dead proxies, speed, latency, traffic, and the
   effectiveness of each anti-DPI trick.
-- **Proxy catalog** — top by rating, with a detailed card per host.
+- **Proxy catalog** — top by rating, with a detailed card per host: each host
+  shows "Telegram connects / successful / total checks" and the last 25 attempts
+  (TCP/TLS/total connect time, bytes received/sent).
+- **Flexible host selection** — a "breadth" slider from "stick to the best proven
+  hosts" to "try as widely as possible across all alive hosts"; when Telegram
+  keeps switching relay ports the search widens automatically. Plus a per-host
+  connect-timeout slider (100 ms … 15 s) and an "upstream race" (several parallel
+  connects).
+- **12 UI languages** with auto-detection and RTL support.
+
+> ### What's new in 1.1.0
+> Cross-platform app logo & icon; lower desktop memory use (~350 MB instead of
+> ~1 GB); global hotkeys on by default; "Factory reset" now truly wipes the whole
+> data directory; the catalog shows a Telegram-connect counter and per-host
+> attempt history; "selection breadth" and "connect timeout" sliders; the host
+> pool auto-widens when Telegram bounces between ports; default language is now
+> auto (follows the system).
 
 ## 📸 Screenshots
 

@@ -63,18 +63,37 @@ public final class SQLiteDatabase {
 
     static SQLiteDatabase open(File file) {
         try {
-            //noinspection ResultOfMethodCallIgnored
-            Class.forName("org.sqlite.JDBC");
-            File parent = file.getParentFile();
-            if (parent != null) parent.mkdirs();
-            SQLiteDatabase db = new SQLiteDatabase("jdbc:sqlite:" + file.getAbsolutePath());
-            // Open one connection eagerly so the file + WAL header are created
-            // before anyone queries, then hand it to the pool.
-            db.recycle(db.newConnection());
-            return db;
-        } catch (Exception e) {
-            throw new RuntimeException("cannot open sqlite db " + file, e);
+            return openOnce(file);
+        } catch (Exception first) {
+            // A partially-written / corrupt DB (crash or profile wipe mid-write)
+            // would otherwise throw forever and wedge the whole app. Delete the
+            // file + its WAL/SHM sidecars and try once more from a clean slate.
+            deleteFiles(file);
+            try {
+                return openOnce(file);
+            } catch (Exception second) {
+                throw new RuntimeException("cannot open sqlite db " + file, second);
+            }
         }
+    }
+
+    private static SQLiteDatabase openOnce(File file) throws Exception {
+        //noinspection ResultOfMethodCallIgnored
+        Class.forName("org.sqlite.JDBC");
+        File parent = file.getParentFile();
+        if (parent != null) parent.mkdirs();
+        SQLiteDatabase db = new SQLiteDatabase("jdbc:sqlite:" + file.getAbsolutePath());
+        // Open one connection eagerly so the file + WAL header are created
+        // before anyone queries, then hand it to the pool.
+        db.recycle(db.newConnection());
+        return db;
+    }
+
+    /** Best-effort removal of a SQLite DB file and its WAL/SHM sidecars. */
+    public static void deleteFiles(File file) {
+        try { file.delete(); } catch (Exception ignored) {}
+        try { new File(file.getAbsolutePath() + "-wal").delete(); } catch (Exception ignored) {}
+        try { new File(file.getAbsolutePath() + "-shm").delete(); } catch (Exception ignored) {}
     }
 
     private Connection newConnection() throws Exception {

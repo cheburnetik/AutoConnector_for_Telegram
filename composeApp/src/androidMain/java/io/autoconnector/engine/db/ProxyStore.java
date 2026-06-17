@@ -28,12 +28,16 @@ import java.util.List;
 public class ProxyStore extends SQLiteOpenHelper {
 
     private static final String DB_NAME = "autoconnector.db";
-    private static final int DB_VERSION = 10;
+    private static final int DB_VERSION = 11;
     private static final String T = "proxies";
     private static final String S = "sources";
     private static final String SP = "source_proxies";
     private static final String CL = "check_log";
     private static final String RL = "relay_log";
+    /** Per-host attempt history: individual check probes AND telegram-relay
+     *  connects, each with its own timings/bytes, capped per host so the UI
+     *  can show the last N attempts. */
+    private static final String AL = "attempt_log";
     /** Per-(proxy, network-mode) snapshot: a proxy's score and aliveness
      *  depend on whether the device is on Wi-Fi, LTE, or behind a VPN, so
      *  we track them independently. The legacy columns on {@link #T}
@@ -135,7 +139,23 @@ public class ProxyStore extends SQLiteOpenHelper {
         db.execSQL("CREATE INDEX idx_rl_ts ON " + RL + "(ts)");
 
         createModeStatsTable(db);
+        createAttemptLogTable(db);
         seedDefaultSources(db);
+    }
+
+    private static void createAttemptLogTable(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS " + AL + " ("
+                + "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                + "proxy_id INTEGER NOT NULL,"
+                + "ts INTEGER NOT NULL,"
+                + "kind INTEGER NOT NULL,"
+                + "success INTEGER NOT NULL,"
+                + "tcp_ms INTEGER NOT NULL DEFAULT -1,"
+                + "tls_ms INTEGER NOT NULL DEFAULT -1,"
+                + "total_ms INTEGER NOT NULL DEFAULT -1,"
+                + "bytes_in INTEGER NOT NULL DEFAULT 0,"
+                + "bytes_out INTEGER NOT NULL DEFAULT 0)");
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_al_proxy ON " + AL + "(proxy_id, ts)");
     }
 
     private static void createModeStatsTable(SQLiteDatabase db) {
@@ -185,6 +205,9 @@ public class ProxyStore extends SQLiteOpenHelper {
         if (oldV < 10) {
             db.execSQL("ALTER TABLE " + S
                     + " ADD COLUMN last_bytes INTEGER NOT NULL DEFAULT 0");
+        }
+        if (oldV < 11) {
+            createAttemptLogTable(db);
         }
     }
 
@@ -354,6 +377,66 @@ public class ProxyStore extends SQLiteOpenHelper {
     }
 
     /**
+     * Appends one entry to the per-host attempt history — a background check
+     * probe ({@code kind=0}) or a Telegram relay connect ({@code kind=1}) —
+     * with its individual timings/bytes, then prunes the host's log down to
+     * the most recent 50 rows. Never throws to the caller.
+     */
+    public void logAttempt(long proxyId, int kind, boolean success, int tcpMs,
+                           int tlsMs, int totalMs, long bytesIn, long bytesOut) {
+        try {
+            SQLiteDatabase db = getWritableDatabase();
+            db.execSQL("INSERT INTO " + AL
+                            + " (proxy_id, ts, kind, success, tcp_ms, tls_ms,"
+                            + " total_ms, bytes_in, bytes_out)"
+                            + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    new Object[]{proxyId, System.currentTimeMillis(), kind,
+                            success ? 1 : 0, tcpMs, tlsMs, totalMs, bytesIn, bytesOut});
+            db.execSQL("DELETE FROM " + AL + " WHERE proxy_id=? AND id NOT IN"
+                            + " (SELECT id FROM " + AL + " WHERE proxy_id=?"
+                            + " ORDER BY ts DESC, id DESC LIMIT 50)",
+                    new Object[]{proxyId, proxyId});
+        } catch (Exception ignored) {
+            // history logging is best-effort — never break the caller
+        }
+    }
+
+    /**
+     * The host's most recent attempts, newest first, capped to {@code limit}.
+     * Returns an empty list on any error (never throws).
+     */
+    public java.util.List<io.autoconnector.engine.model.AttemptRow> hostHistory(
+            long proxyId, int limit) {
+        java.util.List<io.autoconnector.engine.model.AttemptRow> out = new ArrayList<>();
+        Cursor c = null;
+        try {
+            c = getReadableDatabase().rawQuery(
+                    "SELECT ts, kind, success, tcp_ms, tls_ms, total_ms,"
+                            + " bytes_in, bytes_out FROM " + AL
+                            + " WHERE proxy_id=? ORDER BY ts DESC, id DESC LIMIT ?",
+                    new String[]{String.valueOf(proxyId), String.valueOf(limit)});
+            while (c.moveToNext()) {
+                io.autoconnector.engine.model.AttemptRow r =
+                        new io.autoconnector.engine.model.AttemptRow();
+                r.ts = c.getLong(0);
+                r.kind = c.getInt(1);
+                r.success = c.getInt(2) != 0;
+                r.tcpMs = c.getInt(3);
+                r.tlsMs = c.getInt(4);
+                r.totalMs = c.getInt(5);
+                r.bytesIn = c.getLong(6);
+                r.bytesOut = c.getLong(7);
+                out.add(r);
+            }
+        } catch (Exception ignored) {
+            // reading history is best-effort — return whatever we have
+        } finally {
+            if (c != null) c.close();
+        }
+        return out;
+    }
+
+    /**
      * Resets the working catalog state + all statistics WITHOUT deleting hosts
      * or subscriptions. Every proxy keeps its identity (host/port/secret/type/
      * source/added_at) and stays in the pool, but its health + rating + tallies
@@ -371,6 +454,7 @@ public class ProxyStore extends SQLiteOpenHelper {
                 + "total_session_ms=0, bytes_relayed=0, last_tg_connect_at=0");
         db.execSQL("DELETE FROM " + CL);
         db.execSQL("DELETE FROM " + RL);
+        db.execSQL("DELETE FROM " + AL);
         db.execSQL("DELETE FROM " + PMS);
     }
 
@@ -386,6 +470,7 @@ public class ProxyStore extends SQLiteOpenHelper {
         db.execSQL("DELETE FROM " + SP);
         db.execSQL("DELETE FROM " + CL);
         db.execSQL("DELETE FROM " + RL);
+        db.execSQL("DELETE FROM " + AL);
         db.execSQL("DELETE FROM " + PMS);
     }
 

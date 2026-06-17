@@ -10,9 +10,11 @@ public final class NetworkCapabilities {
     public static final int TRANSPORT_CELLULAR = 0;
     public static final int TRANSPORT_WIFI = 1;
     public static final int TRANSPORT_VPN = 4;
+    public static final int TRANSPORT_ETHERNET = 3;
 
-    /** Mirrors the real Android constant; the desktop poller ignores requests. */
+    /** Mirror the real Android constants; the desktop poller ignores requests. */
     public static final int NET_CAPABILITY_NOT_VPN = 15;
+    public static final int NET_CAPABILITY_INTERNET = 12;
 
     private final int transport;
 

@@ -79,6 +79,17 @@ interface Strings {
     val copyAsLink: String; val openInTelegram: String; val makeNextRelay: String
     val actCopy: String; val actOpen: String; val actRelay: String
     fun agoFmt(v: String): String
+    // host detail history + selection sliders (English defaults; languages may override)
+    val recentAttempts: String get() = "Recent connects & checks"
+    val kindCheck: String get() = "check"
+    val kindTg: String get() = "telegram"
+    val tgOkTotalHint: String get() = "Telegram connects / successful / total checks"
+    val breadthTitle: String get() = "Host selection breadth"
+    val breadthHelp: String get() = "Left = stick to the best proven hosts; right = try as widely as possible across all alive hosts. When Telegram keeps switching relay ports the app widens the search automatically."
+    val breadthNarrow: String get() = "proven"
+    val breadthWide: String get() = "widest"
+    val connTimeoutTitle: String get() = "Per-host connect timeout"
+    val connTimeoutHelp: String get() = "How long to wait for one upstream (TCP + TLS + first MTProto reply) before moving on to the next proxy."
     // per-mode catalog captions + mode-management page
     val catalogTopFor: String
     val catalogModeHelpTitle: String; val catalogModeHelp: String
@@ -133,6 +144,8 @@ interface Strings {
     val backupSettings: String; val backupSubs: String; val backupHosts: String
     val exportWord: String; val importWord: String
     val eraseAllHosts: String; val factoryReset: String; val factoryResetConfirm: String
+    // Shown after a factory reset. Default English; languages may override.
+    val factoryResetDone: String get() = "Everything has been reset. Please close the app and open it again."
     val resetCatalog: String; val resetCatalogConfirm: String
     val clearHosts: String; val clearHostsConfirm: String
     val doReset: String; val doCancel: String
@@ -158,6 +171,9 @@ interface Strings {
     val experimental: String; val experimentalHelp: String
     val expEngineTitle: String; val expEngineWarn: String
     val expConnectTitle: String
+    val raceWidthTitle: String
+    val connectionSection: String; val connectionSectionHelp: String
+    val netLogSection: String
     val netLog: String; val netLogSub: String
     val openLogFolder: String; val copyPath: String
     val quickSwitchTitle: String; val quickSwitchSub: String
@@ -228,12 +244,17 @@ interface Strings {
 
     // about
     val appTagline: String
-    val version: String; val buildDate: String
+    val version: String; val buildDate: String; val platform: String
     val downloadSources: String; val openOnGithub: String
     val feedbackBugs: String; val writeTelegram: String
 
     // language setting
     val language: String; val langAuto: String; val langRu: String; val langEn: String
+    // additional languages (endonyms — same in every locale)
+    val langFa: String; val langZh: String; val langAr: String; val langUr: String
+    val langTr: String; val langId: String; val langHi: String; val langBn: String; val langMy: String
+    /** The word "language" in THIS locale (for the collapsed language-picker button). */
+    val langWord: String
 }
 
 /** Short display caption for a network-mode code, independent of locale. */
@@ -243,9 +264,21 @@ fun modeLabel(code: String): String = when (code) {
 
 val LocalStrings = staticCompositionLocalOf<Strings> { Ru }
 
-/** Resolve the active Strings from a stored code ("auto"/"ru"/"en"). */
-fun stringsFor(code: String): Strings = when (code) {
-    "ru" -> Ru
-    "en" -> En
-    else -> if (deviceLanguage() == "ru") Ru else En
+/** Languages that lay out right-to-left. */
+val RTL_LANGS = setOf("fa", "ar", "ur")
+
+/** Whether the effective UI language (resolved from a stored code) is RTL. */
+fun isRtl(code: String): Boolean {
+    val eff = if (code == "auto") deviceLanguage() else code
+    return eff in RTL_LANGS
 }
+
+private fun byCode(code: String): Strings? = when (code) {
+    "ru" -> Ru; "en" -> En; "fa" -> Fa; "zh" -> Zh; "ar" -> Ar; "ur" -> Ur
+    "tr" -> Tr; "id" -> Id; "hi" -> Hi; "bn" -> Bn; "my" -> My
+    else -> null
+}
+
+/** Resolve the active Strings from a stored code ("auto" or a 2-letter code). */
+fun stringsFor(code: String): Strings =
+    byCode(code) ?: byCode(deviceLanguage()) ?: En

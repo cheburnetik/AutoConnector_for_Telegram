@@ -24,7 +24,11 @@ import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.material.icons.filled.Language
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -102,7 +106,13 @@ fun App(engine: Engine) {
         val listState = rememberLazyListState()
         val scope = rememberCoroutineScope()
 
-      CompositionLocalProvider(LocalStrings provides stringsFor(settings.langCode)) {
+      val layoutDir = if (io.autoconnector.i18n.isRtl(settings.langCode))
+          androidx.compose.ui.unit.LayoutDirection.Rtl
+      else androidx.compose.ui.unit.LayoutDirection.Ltr
+      CompositionLocalProvider(
+          LocalStrings provides stringsFor(settings.langCode),
+          androidx.compose.ui.platform.LocalLayoutDirection provides layoutDir,
+      ) {
         val t = LocalStrings.current
 
         if (notifInfo) {
@@ -127,6 +137,8 @@ fun App(engine: Engine) {
             scanParamsFor = engine::scanParamsFor,
             netLogPath = engine.netLogPath(),
             onOpenNetLogFolder = engine::openNetLogFolder,
+            dataDirPath = engine.dataDirPath(),
+            onOpenDataFolder = engine::openDataFolder,
             onUpdateSettings = engine::updateSettings,
             sources = sources,
             onAddSource = engine::addSource,
@@ -165,8 +177,12 @@ fun App(engine: Engine) {
         val detailItem = detail
         if (detailItem != null) {
             PlatformBackHandler(true) { detail = null }
+            // Load this host's last attempts once when the card opens (re-keyed if
+            // a different host is opened); refreshes on the periodic state tick.
+            val history = remember(detailItem.id, state) { engine.hostHistory(detailItem.id, 25) }
             CatalogDetailPage(
                 detailItem,
+                history = history,
                 onCopy = { engine.tgLink(detailItem.id)?.let(engine::copyToClipboard) },
                 onOpen = { engine.tgLink(detailItem.id)?.let(engine::openLink) },
                 onMakeRelay = { engine.pin(detailItem.id, true); detail = null },
@@ -225,7 +241,7 @@ fun App(engine: Engine) {
             // One global scroll for the whole window; the tab bar sticks to the
             // top once the header scrolls past it.
             LazyColumn(Modifier.fillMaxSize().keyPageScroll(listState), state = listState) {
-                item { TitleRow() }
+                item { TitleRow(settings.langCode) { code -> engine.updateSettings(settings.copy(langCode = code)) } }
                 if (state.setupNeeded && state.proxyEnabled) item { SetupLine(state) { showGuide = true } }
                 if (!state.notificationsOk) item {
                     NotifLine(onInfo = { notifInfo = true }, onFix = { engine.requestNotifications() })
@@ -275,11 +291,12 @@ fun App(engine: Engine) {
 
 // === Header pieces ======================================================
 
-/** Row 1 — the app title, dressed up with a gradient badge instead of a bare dot. */
+/** Row 1 — the app title + a language switcher (globe) on the right, so the UI
+ *  language can be changed without opening Settings. */
 @Composable
-private fun TitleRow() {
+private fun TitleRow(langCode: String, onPickLang: (String) -> Unit) {
     Row(
-        Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 2.dp),
+        Modifier.fillMaxWidth().padding(start = 14.dp, end = 8.dp, top = 12.dp, bottom = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
@@ -288,6 +305,30 @@ private fun TitleRow() {
             fontSize = 19.sp,
             color = AppColors.onSurface,
         )
+        Spacer(Modifier.weight(1f))
+        var expanded by remember { mutableStateOf(false) }
+        // English name first, then native — same labels as Settings.
+        val langs = listOf(
+            "auto" to "Auto (system)", "en" to "English", "ru" to "Russian (Русский)",
+            "fa" to "Persian (فارسی)", "zh" to "Simplified Chinese (简体中文)", "ar" to "Arabic (العربية)",
+            "ur" to "Urdu (اردو)", "tr" to "Turkish (Türkçe)", "id" to "Indonesian (Bahasa Indonesia)",
+            "hi" to "Hindi (हिन्दी)", "bn" to "Bengali (বাংলা)", "my" to "Burmese (မြန်မာ)",
+        )
+        Box {
+            // Compact (33dp vs the default 40dp) so the language button doesn't
+            // inflate the title row height (~7px back).
+            IconButton(onClick = { expanded = true }, modifier = Modifier.size(33.dp)) {
+                Icon(Icons.Filled.Language, contentDescription = "Language", tint = AppColors.accent, modifier = Modifier.size(22.dp))
+            }
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                langs.forEach { (code, label) ->
+                    DropdownMenuItem(
+                        text = { Text(if (code == langCode) "✓ $label" else label) },
+                        onClick = { onPickLang(code); expanded = false },
+                    )
+                }
+            }
+        }
     }
 }
 

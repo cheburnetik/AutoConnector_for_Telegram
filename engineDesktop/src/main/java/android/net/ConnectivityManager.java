@@ -21,6 +21,7 @@ public final class ConnectivityManager {
     public static final int TYPE_MOBILE = 0;
     public static final int TYPE_WIFI = 1;
     public static final int TYPE_VPN = 17;
+    public static final int TYPE_ETHERNET = 9;
 
     /** The single fake network reported on this machine. */
     private static final Network THE_NETWORK = new Network();
@@ -55,6 +56,16 @@ public final class ConnectivityManager {
      * a capability change so {@code NetworkMonitor} recomputes its mode.
      */
     public void registerNetworkCallback(NetworkRequest request, NetworkCallback callback) {
+        VpnPoller.ensureStarted(callback);
+    }
+
+    /**
+     * Desktop equivalent of {@code registerDefaultNetworkCallback}. A desktop has
+     * a single "default" network, so this drives the same VPN poller —
+     * NetworkMonitor's {@code onCapabilitiesChanged} then reads the transport
+     * straight from the replayed caps (VPN up/down, otherwise Wi-Fi).
+     */
+    public void registerDefaultNetworkCallback(NetworkCallback callback) {
         VpnPoller.ensureStarted(callback);
     }
 

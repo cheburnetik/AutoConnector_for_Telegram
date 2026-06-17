@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.io.File
 import java.io.FileInputStream
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -10,6 +11,34 @@ plugins {
     id("org.jetbrains.kotlin.multiplatform")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.compose")
+}
+
+// Desktop has no Android-style BuildConfig, so the About page's build date used
+// to be empty unless the portable launcher passed -Dautoconnector.build=…. Bake
+// the date into a generated Kotlin constant at build time (same UTC format as the
+// Android BUILD_DATE below), so even a plain `gradle` desktop build shows a real
+// date. The output dir is registered as a desktopMain Kotlin source dir; passing
+// the task to kotlin.srcDir(...) makes the desktop compile depend on it.
+val generateDesktopBuildStamp = tasks.register("generateDesktopBuildStamp") {
+    val outDir = layout.buildDirectory.dir("generated/buildStamp/desktop")
+    val stamp = SimpleDateFormat("yyyy-MM-dd HH:mm 'UTC'")
+        .apply { timeZone = TimeZone.getTimeZone("UTC") }
+        .format(Date())
+    inputs.property("stamp", stamp)
+    outputs.dir(outDir)
+    doLast {
+        val pkgDir = File(outDir.get().asFile, "io/autoconnector").apply { mkdirs() }
+        File(pkgDir, "BuildStamp.kt").writeText(
+            """
+            package io.autoconnector
+
+            /** Generated at desktop build time — do not edit. */
+            internal object BuildStamp {
+                const val BUILD_DATE = "$stamp"
+            }
+            """.trimIndent() + "\n"
+        )
+    }
 }
 
 kotlin {
@@ -41,6 +70,9 @@ kotlin {
             }
         }
         val desktopMain by getting {
+            // Generated BuildStamp.kt (build date constant). Passing the task itself
+            // wires the compile→generate dependency automatically.
+            kotlin.srcDir(generateDesktopBuildStamp)
             dependencies {
                 implementation(compose.desktop.currentOs)
                 // The reused relay engine, compiled for a plain JVM (+ android.* shim).
@@ -90,8 +122,8 @@ android {
         applicationId = "io.autoconnector"
         minSdk = 24
         targetSdk = 34
-        versionCode = 57
-        versionName = "1.0.61"
+        versionCode = 58
+        versionName = "1.1.0"
         buildConfigField("String", "BUILD_DATE", "\"$buildDate\"")
     }
 
@@ -151,7 +183,23 @@ tasks.register<Sync>("collectDesktopRuntime") {
 compose.desktop {
     application {
         mainClass = "io.autoconnector.MainKt"
-        jvmArgs += listOf("-Djava.awt.headless=false")
+        // Cap the JVM footprint. Without an explicit -Xmx the HotSpot ergonomics
+        // pick a max heap of ~1/4 of the host's physical RAM (≈2 GB on an 8 GB
+        // machine) and the process happily grows toward it before ever collecting,
+        // so a tiny relay UI was sitting at ~1 GB RSS. The real working set (10k
+        // hosts live in SQLite on disk, a 50-row UI catalog, small graph ring
+        // buffers, capped logs, transient handshake buffers) fits comfortably in a
+        // few hundred MB, so cap the heap and metaspace and let G1 hand committed
+        // pages back to the OS. Result: RSS drops to roughly a third.
+        jvmArgs += listOf(
+            "-Djava.awt.headless=false",
+            "-Xmx512m",
+            "-XX:MaxMetaspaceSize=192m",
+            "-XX:+UseG1GC",
+            "-XX:MaxGCPauseMillis=200",
+            "-XX:G1PeriodicGCInterval=30000",
+            "-XX:+G1PeriodicGCInvokesConcurrent",
+        )
         nativeDistributions {
             targetFormats(
                 org.jetbrains.compose.desktop.application.dsl.TargetFormat.Exe,
@@ -162,6 +210,23 @@ compose.desktop {
             packageVersion = "1.0.0"
             description = "AutoConnector for Telegram"
             modules("java.sql", "jdk.unsupported")
+
+            // Application icon for the native launcher / installer of each OS.
+            // Without these jpackage embeds its own generic Compose placeholder —
+            // that's why AutoConnector.exe showed the wrong icon in Explorer and on
+            // the shortcut. The window title-bar and tray already use icons/tray.png
+            // (the same logo); these files are .ico/.icns/.png renders of it.
+            val iconsDir = project.file("src/desktopMain/resources/icons")
+            windows {
+                iconFile.set(iconsDir.resolve("app.ico"))
+            }
+            macOS {
+                iconFile.set(iconsDir.resolve("app.icns"))
+                bundleID = "io.autoconnector"
+            }
+            linux {
+                iconFile.set(iconsDir.resolve("app.png"))
+            }
         }
     }
 }
