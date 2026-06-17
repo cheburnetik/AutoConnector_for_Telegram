@@ -26,6 +26,16 @@ java {
     targetCompatibility = JavaVersion.VERSION_17
 }
 
+// The reused engine .java files contain Cyrillic string literals (log lines like
+// «⟳ проверка», units «мс»/«КБ»). Plain `javac` reads sources in the PLATFORM
+// default charset — UTF-8 on Linux but CP1251/Cp1252 on Windows — which mangled
+// those literals into mojibake in the Windows desktop scan/relay logs (the Android
+// build is immune because AGP forces UTF-8). Pin UTF-8 so every host compiles the
+// literals identically.
+tasks.withType<JavaCompile>().configureEach {
+    options.encoding = "UTF-8"
+}
+
 repositories {
     mavenCentral()
 }

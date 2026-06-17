@@ -271,9 +271,10 @@ private fun CatalogTile(p: CatalogItem, onClick: () -> Unit) {
                 }
                 StatusDot(relayColor, 9)
             }
-            IconStat(ICON_CHECKED, fmtMins(p.checkedMinsAgo, t), Modifier.weight(1f))
-            IconStat(ICON_TG, fmtMins(p.tgConnectMinsAgo, t), Modifier.weight(1f))
-            IconStat(ICON_CHECKS, "${p.successes}/${p.successes + p.failures}", Modifier.weight(1.1f))
+            IconStat(ICON_CHECKED, fmtMins(p.checkedMinsAgo, t), Modifier.weight(0.9f))
+            IconStat(ICON_TG, fmtMins(p.tgConnectMinsAgo, t), Modifier.weight(0.9f))
+            // Telegram-connects / successful checks / total checks.
+            IconStat(ICON_CHECKS, "${p.tgConnections}/${p.successes}/${p.successes + p.failures}", Modifier.weight(1.5f))
             IconStat(ICON_TRAFFIC, p.bytesRelayedHuman, Modifier.weight(1.1f))
         }
     }
@@ -295,10 +296,69 @@ private fun fmtMins(m: Long, t: Strings): String = when {
     else -> "${m / 1440}${t.agoDay}"
 }
 
+private fun p2(n: Int): String = if (n in 0..9) "0$n" else "$n"
+
+/** Format an epoch-ms instant as local "DD/MM HH:MM" without kotlinx-datetime. */
+private fun fmtStamp(ms: Long): String {
+    val local = ms + io.autoconnector.ui.localOffsetMs(ms)
+    val secs = local / 1000
+    val min = ((secs / 60) % 60).toInt()
+    val hour = ((secs / 3600) % 24).toInt()
+    val days = secs / 86400                     // days since 1970-01-01
+    // Civil-from-days (Howard Hinnant's algorithm).
+    val z = days + 719468
+    val era = (if (z >= 0) z else z - 146096) / 146097
+    val doe = z - era * 146097
+    val yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+    val doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+    val mp = (5 * doy + 2) / 153
+    val d = (doy - (153 * mp + 2) / 5 + 1).toInt()
+    val mon = (if (mp < 10) mp + 3 else mp - 9).toInt()
+    return "${p2(d)}/${p2(mon)} ${p2(hour)}:${p2(min)}"
+}
+
+private fun msOrDash(v: Int, t: Strings): String = if (v >= 0) "$v${t.unitMs}" else t.dash
+
+private fun humanBytes(b: Long): String = when {
+    b <= 0L -> "0"
+    b < 1024L -> "${b}B"
+    b < 1024L * 1024 -> "${b / 1024}K"
+    b < 1024L * 1024 * 1024 -> "${b / (1024 * 1024)}M"
+    else -> "${b / (1024L * 1024 * 1024)}G"
+}
+
+/** One past attempt row in the detail card's history list. */
+@Composable
+private fun HistoryRow(r: io.autoconnector.engine.HistoryRecord, t: Strings) {
+    Column(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                if (r.success) "✓" else "✗",
+                color = if (r.success) AppColors.green else AppColors.red,
+                fontWeight = FontWeight.Bold, fontSize = 13.sp,
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(fmtStamp(r.ts), fontFamily = monospaceFontFamily(), fontSize = 13.sp, color = AppColors.onSurface)
+            Spacer(Modifier.width(8.dp))
+            Text(
+                if (r.isTelegram) t.kindTg else t.kindCheck,
+                fontSize = 12.sp,
+                color = if (r.isTelegram) AppColors.blue else AppColors.onSurfaceMuted,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+        Text(
+            "TCP ${msOrDash(r.tcpMs, t)} · TLS ${msOrDash(r.tlsMs, t)} · ${msOrDash(r.totalMs, t)} · ↓${humanBytes(r.bytesIn)} ↑${humanBytes(r.bytesOut)}",
+            fontSize = 12.sp, color = AppColors.onSurfaceMuted, fontFamily = monospaceFontFamily(),
+        )
+    }
+}
+
 /** Full-screen, scrollable per-host detail with icons (same as the tile) + actions. */
 @Composable
 fun CatalogDetailPage(
     p: CatalogItem,
+    history: List<io.autoconnector.engine.HistoryRecord>,
     onCopy: () -> Unit,
     onOpen: () -> Unit,
     onMakeRelay: () -> Unit,
@@ -353,6 +413,15 @@ fun CatalogDetailPage(
                         p.sourceNum?.let { DetailRow(Icons.Filled.Storage, t.sourceSub, "#$it") }
                         p.lastErrorShort?.let { DetailRow(Icons.Filled.CheckCircle, t.lastError, it, AppColors.red) }
                     }
+                }
+
+                // Last 25 attempts (checks + Telegram connects) with per-attempt
+                // timings and bytes — the most recent first.
+                if (history.isNotEmpty()) {
+                    Spacer(Modifier.height(12.dp))
+                    Text(t.recentAttempts, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = AppColors.accent)
+                    Spacer(Modifier.height(4.dp))
+                    history.forEach { r -> HistoryRow(r, t) }
                 }
                 Spacer(Modifier.height(16.dp))
             }

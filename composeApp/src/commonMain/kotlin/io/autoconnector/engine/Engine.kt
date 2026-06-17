@@ -103,7 +103,7 @@ data class EngineSettings(
     val speedWifi: Float = 1f,
     val speedLte: Float = 1f,
     val speedEthernet: Float = 1f,
-    val speedWp: Float = 1f,
+    val speedWp: Float = 0.2f,
     // Subscription re-download interval (minutes), separately per network mode.
     val subIntervalVpn: Int = 30,
     val subIntervalWifi: Int = 30,
@@ -114,7 +114,7 @@ data class EngineSettings(
     val scanMode: String = "auto",
     val adaptiveAliveThreshold: Int = 30,
     val fastSpeedMultiplier: Float = 0.1f,
-    val lazyAliveThreshold: Int = 60,
+    val lazyAliveThreshold: Int = 70,
     val lazySpeedMultiplier: Float = 5f,
     val wifiOnly: Boolean = false,
     val chargingOnly: Boolean = false,
@@ -133,6 +133,26 @@ data class EngineSettings(
     val netLogEnabled: Boolean = false,
     // Experimental: upstream-acquisition strategy (0 = OFF = serial reference).
     val relayConnectMode: Int = 0,
+    // Parallel-race connect mode: how many upstreams to dial at once (5/8/12).
+    val relayRaceWidth: Int = 8,
+    // Host-selection breadth 0..100: 0 = stick to the best proven hosts,
+    // 100 = try as widely as possible across all alive hosts.
+    val relayBreadth: Int = 30,
+    // Per-upstream wait budget (ms) for TCP connect + TLS + first MTProto reply
+    // before trying the next proxy. 100..15000, log-scaled slider.
+    val relayConnectTimeoutMs: Int = 8000,
+)
+
+/** One past attempt against a host, for the detail card's history list. */
+data class HistoryRecord(
+    val ts: Long,             // epoch ms
+    val isTelegram: Boolean,  // true = Telegram relay connect, false = background check probe
+    val success: Boolean,
+    val tcpMs: Int = -1,      // TCP socket connect time, -1 = unknown
+    val tlsMs: Int = -1,      // TLS/handshake time, -1 = unknown
+    val totalMs: Int = -1,    // total connect+handshake duration, -1 = unknown
+    val bytesIn: Long = 0,
+    val bytesOut: Long = 0,
 )
 
 /** A selectable experimental upstream engine for the settings picker. */
@@ -149,8 +169,10 @@ data class ScanParams(
     val disabled: Boolean = false,
 )
 
-/** Build/version info for the About page. */
-data class AppInfo(val version: String, val buildDate: String)
+/** Build/version info for the About page. [platform] = OS + CPU arch, e.g.
+ *  "Windows x86-64" / "Android arm64-v8a". Defaults to "" for callers that
+ *  don't supply it. */
+data class AppInfo(val version: String, val buildDate: String, val platform: String = "")
 
 /** A selectable anti-DPI handshake mode. [ordinal] is the persisted value. */
 data class HandshakeOption(val ordinal: Int, val label: String, val special: Boolean)
@@ -349,6 +371,12 @@ interface Engine {
     /** Reveal/open the folder holding the network-exchange log, if possible. */
     fun openNetLogFolder()
 
+    /** Absolute path of the per-user data folder (settings + proxy DB live here). */
+    fun dataDirPath(): String
+
+    /** Open that data folder in the OS file manager (desktop); no-op where unsupported. */
+    fun openDataFolder()
+
     /** Per-anti-DPI-trick statistics for the Stats table. */
     fun handshakeStats(): List<HandshakeStatRow>
     fun resetStats()
@@ -415,6 +443,9 @@ interface Engine {
 
     /** Catalog rows rated for one specific mode (probed-but-dead hosts included). */
     fun catalogForMode(modeCode: String): List<CatalogItem>
+
+    /** The host's most recent attempts (checks + Telegram connects), newest first. */
+    fun hostHistory(id: Long, limit: Int = 25): List<HistoryRecord>
 
     /** tg:// links of proxies alive for one mode, for the Export page. */
     fun exportAliveLinksForMode(modeCode: String): List<String>

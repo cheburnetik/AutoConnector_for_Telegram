@@ -116,7 +116,7 @@ public class Prefs {
             case WIFI: return sp.getFloat("speed_x_wifi", 1.0f);
             case LTE:  return sp.getFloat("speed_x_lte", 2.0f);
             case ETHERNET: return sp.getFloat("speed_x_ethernet", 1.0f);
-            case WHITEPAGES: return sp.getFloat("speed_x_wp", 1.0f);
+            case WHITEPAGES: return sp.getFloat("speed_x_wp", 0.2f);  // White: ×5 faster by default
             default:   return 1.0f;
         }
     }
@@ -160,7 +160,7 @@ public class Prefs {
     /** «Хороших хостов уже достаточно» — выше этого порога сканируем редко
      *  ({@link #lazySpeedMultiplier()} ×). */
     public int lazyAliveThreshold() {
-        return sp.getInt("lazy_alive_threshold", 60);
+        return sp.getInt("lazy_alive_threshold", 70);
     }
 
     public void setLazyAliveThreshold(int n) {
@@ -411,9 +411,9 @@ public class Prefs {
 
     /** Index into {@link io.autoconnector.engine.net.HandshakeMode#values()}. */
     public int handshakeMode() {
-        // Default anti-DPI trick = «Авто» (AUTO_RANDOM) — user request 2026-06-08.
+        // Default anti-DPI trick = OFF («Обычный»/NORMAL) — user request 2026-06-16.
         return sp.getInt("handshake_mode",
-                io.autoconnector.engine.net.HandshakeMode.AUTO_RANDOM.ordinal());
+                io.autoconnector.engine.net.HandshakeMode.NORMAL.ordinal());
     }
 
     public void setHandshakeMode(int ordinal) {
@@ -475,7 +475,7 @@ public class Prefs {
 
     /** Desktop global-hotkeys: a single on/off and the configurable trigger
      *  letter (default P → Ctrl+Shift+Alt+P / Ctrl+Win+Alt+P). No effect on Android. */
-    public boolean hotkeysEnabled() { return sp.getBoolean("hotkeys_enabled", false); }
+    public boolean hotkeysEnabled() { return sp.getBoolean("hotkeys_enabled", true); }
     public void setHotkeysEnabled(boolean v) { sp.edit().putBoolean("hotkeys_enabled", v).apply(); }
     public String hotkeyLetter() { return sp.getString("hotkey_letter", "P"); }
     public void setHotkeyLetter(String s) {
@@ -499,9 +499,59 @@ public class Prefs {
      * reference serial trial. Non-zero modes change how fast the relay finds a
      * working upstream proxy for a fresh Telegram connection.
      */
-    public int relayConnectMode() { return sp.getInt("relay_connect_mode", 1); }
+    public int relayConnectMode() { return sp.getInt("relay_connect_mode", 0); }
     public void setRelayConnectMode(int code) {
         sp.edit().putInt("relay_connect_mode", Math.max(0, code)).apply();
+    }
+
+    /**
+     * How many upstreams the «parallel race» connect mode dials concurrently.
+     * Allowed values are {@code 5 / 8 / 12} (default 5); any other stored value
+     * is normalised to the nearest allowed width on both read and write.
+     */
+    public int relayRaceWidth() { return clampRaceWidth(sp.getInt("relay_race_width", 8)); }
+    public void setRelayRaceWidth(int width) {
+        sp.edit().putInt("relay_race_width", clampRaceWidth(width)).apply();
+    }
+
+    private static int clampRaceWidth(int width) {
+        // Slider range in Settings is 1..30 parallel upstream connects.
+        if (width < 1) return 1;
+        if (width > 30) return 30;
+        return width;
+    }
+
+    /**
+     * Selection breadth — how widely the relay picks hosts versus sticking to
+     * top-rated proven ones. {@code 0} = connect only to the best proven hosts;
+     * {@code 100} = try as widely as possible across all alive hosts. Default
+     * {@code 30} (leans toward proven). Used by the relay's next-upstream picker.
+     */
+    public int relayBreadth() { return clampBreadth(sp.getInt("relay_breadth", 30)); }
+    public void setRelayBreadth(int v) {
+        sp.edit().putInt("relay_breadth", clampBreadth(v)).apply();
+    }
+
+    private static int clampBreadth(int v) {
+        if (v < 0) return 0;
+        if (v > 100) return 100;
+        return v;
+    }
+
+    /**
+     * Connect timeout (ms) — how long to wait for one upstream's TCP connect +
+     * TLS + first MTProto response before trying the next proxy. Per-upstream
+     * wait budget, {@code 100 ms .. 15000 ms}. Default {@code 8000}.
+     */
+    public int relayConnectTimeoutMs() { return clampConnTimeout(sp.getInt("relay_connect_timeout_ms", 8000)); }
+    public void setRelayConnectTimeoutMs(int ms) {
+        sp.edit().putInt("relay_connect_timeout_ms", clampConnTimeout(ms)).apply();
+    }
+
+    private static int clampConnTimeout(int ms) {
+        if (ms < 100) return 100;
+        if (ms > 15000) return 15000;
+        return ms;
     }
 
     /**
@@ -573,6 +623,33 @@ public class Prefs {
               .putInt("exp_engine_mode", SHIPPED_EXP_ENGINE)
               .putInt("handshake_mode", io.autoconnector.engine.net.HandshakeMode.AUTO_RANDOM.ordinal())
               .putInt("defaults_v", 7).apply();
+        }
+        if (v < 8) {
+            // v8 (user request 2026-06-16): parallel-race width default = 8
+            // connects; «many alive» threshold → 70; White-mode scan speed
+            // «×5 faster» (0.2). Re-affirm the race is on.
+            sp.edit()
+              .putInt("relay_connect_mode", 1)
+              .putInt("relay_race_width", 8)
+              .putInt("lazy_alive_threshold", 70)
+              .putFloat("speed_x_wp", 0.2f)
+              .putInt("defaults_v", 8).apply();
+        }
+        if (v < 9) {
+            // v9 (user request 2026-06-16): ship everything OFF by default —
+            // obfuscation engine OFF, upstream-race OFF (reference serial path),
+            // anti-DPI trick OFF (NORMAL).
+            sp.edit()
+              .putInt("exp_engine_mode", 0)
+              .putInt("relay_connect_mode", 0)
+              .putInt("handshake_mode", io.autoconnector.engine.net.HandshakeMode.NORMAL.ordinal())
+              .putInt("defaults_v", 9).apply();
+        }
+        if (v < 10) {
+            // v10 (user request 2026-06-16): desktop global hotkeys ON by default.
+            // Inert on Android (no global hotkeys there); applied once so existing
+            // desktop installs pick it up, afterwards the user's toggle is kept.
+            sp.edit().putBoolean("hotkeys_enabled", true).putInt("defaults_v", 10).apply();
         }
     }
 }

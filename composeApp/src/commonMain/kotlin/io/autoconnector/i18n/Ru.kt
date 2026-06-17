@@ -70,6 +70,16 @@ object Ru : Strings {
     override val copyAsLink = "Скопировать как ссылку"; override val openInTelegram = "Открыть хост в Telegram"; override val makeNextRelay = "Сделать следующим релеем"
     override val actCopy = "Копировать"; override val actOpen = "Открыть"; override val actRelay = "В реле"
     override fun agoFmt(v: String) = "$v назад"
+    override val recentAttempts = "Последние подключения и проверки"
+    override val kindCheck = "проверка"
+    override val kindTg = "телеграм"
+    override val tgOkTotalHint = "Подключений Telegram / успешных / всего проверок"
+    override val breadthTitle = "Широта выбора хостов"
+    override val breadthHelp = "Слева — держаться лучших проверенных хостов; справа — максимально широко пробовать разные живые. Когда Telegram мечется по портам реле, программа расширяет выбор автоматически."
+    override val breadthNarrow = "проверенные"
+    override val breadthWide = "шире"
+    override val connTimeoutTitle = "Таймаут коннекта к хосту"
+    override val connTimeoutHelp = "Сколько ждать один апстрим (TCP + TLS + первый ответ MTProto), прежде чем пробовать следующий прокси."
     override val catalogTopFor = "Список/рейтинг проксей для"
     override val catalogModeHelpTitle = "Режимы и рейтинги"
     override val catalogModeHelp = "Программа считает живых хостов и их рейтинг РАЗДЕЛЬНО по каждому режиму сети (VPN, Wi-Fi, LTE, Ethernet и White). «White» — отдельный РУЧНОЙ режим для белых списков; авто на него никогда не переключается. Поэтому один и тот же хост может быть живым в одном режиме и мёртвым в другом."
@@ -200,6 +210,7 @@ object Ru : Strings {
     override val factoryReset = "Сбросить всё (как при первом запуске)"
     override val factoryResetConfirm = "Полностью сбросить приложение к заводскому виду? Будут стёрты " +
         "ВСЕ настройки и весь каталог хостов, подписки вернутся к стандартным. Это как первый запуск."
+    override val factoryResetDone = "Всё сброшено. Закройте приложение и запустите заново."
     override val resetCatalog = "Сбросить каталог и статистику"
     override val resetCatalogConfirm = "Обнулить оценки, счётчики и логи проверок? " +
         "Скачанные хосты и подписки сохранятся, всё переоценится при следующем скане."
@@ -270,6 +281,10 @@ object Ru : Strings {
         "Применяется к живому релею через прокси (не к пробам и не к прямому выходу)."
     override val expEngineTitle = "Движок проксирования (обфускация сокетов)"
     override val expConnectTitle = "Движок коннекта (поиск апстрима)"
+    override val raceWidthTitle = "Параллельных коннектов"
+    override val connectionSection = "Подключение и обход блокировок"
+    override val connectionSectionHelp = "Движок коннекта, число параллельных апстримов, движок проксирования и анти-DPI трюки — всё в одном разделе."
+    override val netLogSection = "Лог сетевого обмена"
     override val expEngineWarn = "⚠ Экспериментальный режим. Если связь стала хуже — верните «Выключено (эталонный путь)»."
     override val netLog = "Включить лог сетевого обмена"
     override val netLogSub = "Пишет в файл КТО-КОМУ-КОГДА и размеры пакетов (БЕЗ содержимого данных) — " +
@@ -338,11 +353,14 @@ object Ru : Strings {
 
     override val appTagline = "Кросс-платформенный авто-коннектор: сам находит, проверяет и поднимает " +
         "MTProto-прокси, через которые работает Telegram."
-    override val version = "Версия"; override val buildDate = "Дата сборки"
+    override val version = "Версия"; override val buildDate = "Дата сборки"; override val platform = "Платформа"
     override val downloadSources = "Скачать и исходники"; override val openOnGithub = "Открыть на GitHub"
     override val feedbackBugs = "Обратная связь и баг-репорты"; override val writeTelegram = "Написать в Telegram"
 
     override val language = "Язык"; override val langAuto = "Авто (как в системе)"; override val langRu = "Русский"; override val langEn = "English"
+    override val langFa = "فارسی"; override val langZh = "简体中文"; override val langAr = "العربية"; override val langUr = "اردو"
+    override val langTr = "Türkçe"; override val langId = "Bahasa Indonesia"; override val langHi = "हिन्दी"; override val langBn = "বাংলা"; override val langMy = "မြန်မာ"
+    override val langWord = "Язык"
 
     override val scanModeTitle = "Режим сети"; override val scanModeAuto = "Авто"; override val scanModeManualLabel = "Вручную"
     override val activeModeLabel = "Активный режим"; override val formingListLabel = "Формирую список"; override val catalogModeTabs = "Режим"

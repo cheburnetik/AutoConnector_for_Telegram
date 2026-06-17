@@ -31,6 +31,7 @@ import io.autoconnector.engine.LogCat
 import io.autoconnector.engine.LogLevel
 import io.autoconnector.engine.LogLine
 import io.autoconnector.i18n.LocalStrings
+import io.autoconnector.ui.localOffsetMs
 import io.autoconnector.ui.theme.AppColors
 import io.autoconnector.ui.theme.monospaceFontFamily
 
@@ -225,12 +226,13 @@ private fun LogText(line: LogLine, indent: Boolean = false) {
     )
 }
 
-/** Format an epoch-ms timestamp as UTC-of-day "HH:MM:SS" (empty when unset).
- *  Local-offset conversion isn't reliably available in commonMain, so the
- *  time-of-day is derived straight from the epoch with plain arithmetic. */
+/** Format an epoch-ms timestamp as LOCAL-of-day "HH:MM:SS" (empty when unset).
+ *  Uses the computer's/device's timezone offset (incl. DST) via the platform
+ *  [localOffsetMs] expect/actual, so the time matches the local clock, not UTC. */
 private fun hms(ts: Long): String {
     if (ts <= 0L) return ""
-    val s = (ts / 1000) % 86400
+    val local = ts + localOffsetMs(ts)
+    val s = ((local / 1000) % 86400 + 86400) % 86400
     fun p(n: Long): String = if (n < 10) "0$n" else "$n"
     return "${p(s / 3600)}:${p((s % 3600) / 60)}:${p(s % 60)}"
 }

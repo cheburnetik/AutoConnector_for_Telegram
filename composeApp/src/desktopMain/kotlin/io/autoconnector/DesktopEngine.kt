@@ -6,6 +6,7 @@ import io.autoconnector.engine.CatalogItem
 import io.autoconnector.engine.ConnState
 import io.autoconnector.engine.Engine
 import io.autoconnector.engine.EngineSettings
+import io.autoconnector.engine.HistoryRecord
 import io.autoconnector.engine.EngineState
 import io.autoconnector.engine.ExpEngineOption
 import io.autoconnector.engine.ScanParams
@@ -298,6 +299,9 @@ class DesktopEngine(private val dataDir: File) : Engine {
             expEngineMode = p.expEngineMode(),
             netLogEnabled = p.netLogEnabled(),
             relayConnectMode = p.relayConnectMode(),
+            relayRaceWidth = p.relayRaceWidth(),
+            relayBreadth = p.relayBreadth(),
+            relayConnectTimeoutMs = p.relayConnectTimeoutMs(),
         )
     }
 
@@ -353,6 +357,9 @@ class DesktopEngine(private val dataDir: File) : Engine {
         p.setExpEngineMode(s.expEngineMode)
         p.setNetLogEnabled(s.netLogEnabled)
         p.setRelayConnectMode(s.relayConnectMode)
+        p.setRelayRaceWidth(s.relayRaceWidth)
+        p.setRelayBreadth(s.relayBreadth)
+        p.setRelayConnectTimeoutMs(s.relayConnectTimeoutMs)
         NetLog.setEnabled(s.netLogEnabled)
         // Re-apply the manual mode override when the user changed it here, and
         // seed-scan the freshly selected mode if its pool is thin.
@@ -431,6 +438,17 @@ class DesktopEngine(private val dataDir: File) : Engine {
         }
     }
 
+    override fun dataDirPath(): String = dataDir.absolutePath
+
+    override fun openDataFolder() {
+        try {
+            dataDir.mkdirs()
+            java.awt.Desktop.getDesktop().open(dataDir)
+        } catch (t: Throwable) {
+            appendLog("⚠ не удалось открыть папку данных: ${t.message}")
+        }
+    }
+
     override fun handshakeStats(): List<HandshakeStatRow> =
         HandshakeMode.values()
             .filter { it.isWorking && HandshakeStats.attempts(it) > 0 }
@@ -483,12 +501,38 @@ class DesktopEngine(private val dataDir: File) : Engine {
 
     override fun appInfo(): AppInfo = AppInfo(
         version = DESKTOP_VERSION,
-        // Stamped into the launcher (.bat passes -Dautoconnector.build=…, using
-        // '_' for spaces to avoid batch quoting); shows when this portable build
-        // was packaged. Falls back to "—" for dev runs.
-        buildDate = System.getProperty("autoconnector.build")?.takeIf { it.isNotBlank() }
-            ?.replace('_', ' ') ?: "—",
+        // Build date, in priority order:
+        //  1) BuildStamp.BUILD_DATE — baked into a generated constant at gradle
+        //     build time (see build.gradle.kts / generateDesktopBuildStamp), so a
+        //     plain build is never empty.
+        //  2) -Dautoconnector.build=… — passed by the portable .bat launcher (uses
+        //     '_' for spaces to avoid batch quoting), kept for back-compat.
+        //  3) "—" — last-resort dev fallback.
+        buildDate = (BuildStamp.BUILD_DATE.takeIf { it.isNotBlank() }
+            ?: System.getProperty("autoconnector.build")?.takeIf { it.isNotBlank() }
+                ?.replace('_', ' ')
+            ?: "—"),
+        platform = desktopPlatform(),
     )
+
+    /** Human-readable "OS arch" string for the About page, e.g. "Windows x86-64".
+     *  Normalises the JVM's os.name / os.arch into stable, friendly tokens. */
+    private fun desktopPlatform(): String {
+        val rawName = System.getProperty("os.name").orEmpty()
+        val os = when {
+            rawName.startsWith("Windows", ignoreCase = true) -> "Windows"
+            rawName.startsWith("Mac", ignoreCase = true) || rawName.contains("OS X", ignoreCase = true) -> "macOS"
+            rawName.startsWith("Linux", ignoreCase = true) -> "Linux"
+            else -> rawName.ifBlank { "Desktop" }
+        }
+        val arch = when (System.getProperty("os.arch").orEmpty().lowercase()) {
+            "amd64", "x86_64" -> "x86-64"
+            "aarch64", "arm64" -> "arm64"
+            "x86", "i386", "i486", "i586", "i686" -> "x86"
+            else -> System.getProperty("os.arch").orEmpty().ifBlank { "?" }
+        }
+        return "$os $arch"
+    }
 
     // === catalog actions =================================================
 
@@ -772,33 +816,66 @@ class DesktopEngine(private val dataDir: File) : Engine {
     override fun factoryReset() {
         scope.launch(Dispatchers.IO) {
             try {
-                appendLog("⚙ полный сброс к заводским настройкам…", LogCat.SCAN)
+                appendLog("⚙ полный сброс: стираю ВСЕ данные…", LogCat.SCAN)
+                // Stop everything holding the data dir: the relay (its SQLite reads),
+                // the global-hotkey native hook, and close the DB so its file handles
+                // release. We do NOT call dispose() — it cancels `scope`, which would
+                // kill this coroutine and the alert would never reach the UI.
                 io.autoconnector.engine.core.ScanGate.setAborted(true)
-                // 1) settings → defaults
-                Prefs(ctx).clearAll()
-                Prefs.SHIPPED_EXP_ENGINE = 0
-                Prefs(ctx).applyShippedDefaultsOnce()
-                // 2) wipe host pool + restore the shipped subscription set, then
-                //    re-seed the bundled starting pool so the Catalog isn't empty
-                //    until the subscriptions finish downloading (same as first run).
-                store.clearDownloadedHosts()
-                for (s in store.listSources()) store.deleteSource(s.id)
-                store.ensureDefaultSources()
-                store.resetSourceStats()
-                // 3) reset live graph buffers
-                io.autoconnector.engine.traffic.ScanPingBuffer.INSTANCE.reset()
-                io.autoconnector.engine.traffic.LatencyBuffer.INSTANCE.reset()
-                io.autoconnector.engine.traffic.ScanMetrics.INSTANCE.reset()
-                // 4) re-apply fresh state + refresh UI, then re-bootstrap
-                io.autoconnector.engine.core.ScanGate.setAborted(false)
-                loadSettings(); applyRelayState()
-                refreshCatalog(); refreshSources(); pushImmediate()
-                if (Prefs(ctx).scanEnabled()) aggressiveBootstrap()
-                appendLog("✓ сброшено к заводским настройкам — как при первом запуске", LogCat.SCAN)
+                runCatching { relayManager?.stop() }
+                relayManager = null
+                runCatching { hotkeys.apply(false, "P") }
+                runCatching { store.close() }
+                // Delete the WHOLE data dir now — DB (hosts, ratings, per-mode stats,
+                // scan logs), every *.prefs, the NetLog files and any cache.
+                runCatching { dataDir.deleteRecursively() }
+                // Backstop: a detached helper that waits for THIS process to exit and
+                // removes the data dir again, in case Windows still held a file open
+                // (the SQLite WAL/SHM sidecars, an open prefs handle, a recreated db).
+                // No relaunch — the user restarts manually, as the alert tells them.
+                runCatching { scheduleWipeOnExit() }
+                appendLog("✓ всё стёрто — перезапустите приложение вручную", LogCat.SCAN)
             } catch (t: Throwable) {
                 appendLog("⚠ factory reset: ${t.message}", LogCat.SCAN)
             }
         }
+    }
+
+    /**
+     * Spawns a detached helper that waits for THIS process to die (so every file
+     * handle — incl. the SQLite WAL/SHM and any prefs handle — is released) and
+     * then deletes the data dir once more. No relaunch: the user restarts manually.
+     */
+    private fun scheduleWipeOnExit() {
+        val dir = dataDir.absolutePath
+        val pid = ProcessHandle.current().pid()
+        val os = System.getProperty("os.name", "").lowercase()
+        try {
+            if (os.contains("win")) {
+                val bat = java.io.File.createTempFile("ac_reset", ".bat")
+                bat.writeText(
+                    "@echo off\r\n" +
+                        ":w\r\n" +
+                        "tasklist /FI \"PID eq $pid\" /NH 2>nul | findstr /B /C:\"AutoConnector\" >nul && ( timeout /t 1 /nobreak >nul & goto w )\r\n" +
+                        "rmdir /s /q \"$dir\" 2>nul\r\n" +
+                        "del \"%~f0\"\r\n",
+                )
+                ProcessBuilder("cmd", "/c", "start", "", "/min", bat.absolutePath).start()
+            } else {
+                val sh = java.io.File.createTempFile("ac_reset", ".sh")
+                sh.writeText(
+                    "#!/bin/sh\n" +
+                        "while kill -0 $pid 2>/dev/null; do sleep 1; done\n" +
+                        "rm -rf \"$dir\"\n" +
+                        "rm -f \"\$0\"\n",
+                )
+                sh.setExecutable(true)
+                ProcessBuilder("nohup", "sh", sh.absolutePath)
+                    .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                    .redirectError(ProcessBuilder.Redirect.DISCARD)
+                    .start()
+            }
+        } catch (_: Throwable) { }
     }
 
     override fun refreshNow() {
@@ -884,13 +961,16 @@ class DesktopEngine(private val dataDir: File) : Engine {
                 live = liveIds.contains(p.id),
                 pinned = pinnedId == p.id,
                 sticky = pinnedId != p.id && sticky.contains(p.id),
-                everServed = tgConns > 0,
+                // "Telegram connected" is mode-agnostic and the per-mode counter
+                // is rarely incremented — use the host's GLOBAL last-connect time
+                // and count so this never shows dashes for a host that served TG.
+                everServed = p.lastTgConnectAt > 0 || p.tgConnections > 0,
                 sourceNum = if (srcId > 0) nums[srcId] else null,
                 checkedMinsAgo = if (lastChk > 0) (now - lastChk) / 60_000 else -1,
-                tgConnectMinsAgo = if (lastOk > 0) (now - lastOk) / 60_000 else -1,
+                tgConnectMinsAgo = if (p.lastTgConnectAt > 0) (now - p.lastTgConnectAt) / 60_000 else -1,
                 successes = ms?.successes ?: 0,
                 failures = ms?.failures ?: 0,
-                tgConnections = tgConns,
+                tgConnections = p.tgConnections,
                 bytesRelayed = bytes,
                 bytesRelayedHuman = TrafficMeter.human(bytes),
                 sessionTotalHuman = if (sessMs > 0) Durations.human(sessMs / 1000) else "—",
@@ -902,6 +982,20 @@ class DesktopEngine(private val dataDir: File) : Engine {
             )
         }
     }
+
+    override fun hostHistory(id: Long, limit: Int): List<HistoryRecord> =
+        store.hostHistory(id, limit).map { r ->
+            HistoryRecord(
+                ts = r.ts,
+                isTelegram = r.kind == 1,
+                success = r.success,
+                tcpMs = r.tcpMs,
+                tlsMs = r.tlsMs,
+                totalMs = r.totalMs,
+                bytesIn = r.bytesIn,
+                bytesOut = r.bytesOut,
+            )
+        }
 
     override fun exportAliveLinksForMode(modeCode: String): List<String> {
         val list = if (modeCode == "auto" || modeCode == "unk")
@@ -1033,7 +1127,10 @@ class DesktopEngine(private val dataDir: File) : Engine {
                 feedDetectedMode()
                 pushState()
                 if (i % 4 == 0) { refreshCatalog(); refreshSources() }
-            } catch (_: Throwable) {
+            } catch (t: Throwable) {
+                // Don't stay silent — a recurring failure here used to hide real
+                // problems (e.g. a broken DB after a profile wipe). Throttled log.
+                if (i % 30 == 0) appendLog("⚠ цикл состояния: ${t.message}", LogCat.OTHER)
             }
             i++
             delay(2000)   // graph advances strictly once per 2 s
@@ -1075,8 +1172,9 @@ class DesktopEngine(private val dataDir: File) : Engine {
     /** Periodic priority probe of the sticky upstreams + an exploration batch,
      *  mirroring RelayService.checkMains() / dynamicCheckInterval(). */
     private suspend fun mainsLoop() {
-        // Small initial delay so the first bootstrap pass goes first.
-        delay(10_000)
+        // Small initial delay so the concurrent bootstrap gets a head start; the
+        // bootstrap now scans in parallel anyway, so this can be short.
+        delay(4_000)
         while (true) {
             try {
                 // checkMains() itself early-returns when intensity is disabled.
@@ -1180,7 +1278,7 @@ class DesktopEngine(private val dataDir: File) : Engine {
         if (urls.isEmpty()) return emptyList()
         val scanner = PageScanner(store, PageScanner.Log { line -> appendLog(line, LogCat.SUBS) })
         val failed = java.util.concurrent.CopyOnWriteArrayList<String>()
-        val pool = java.util.concurrent.Executors.newFixedThreadPool(threads.coerceIn(1, 24))
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(threads.coerceIn(1, 48))
         try {
             val futures = urls.map { url ->
                 pool.submit(Runnable {
@@ -1225,7 +1323,10 @@ class DesktopEngine(private val dataDir: File) : Engine {
                 && !io.autoconnector.engine.core.ScanGate.isAborted()
                 && round < maxRounds) {
             round++
-            val threads = if (round == 1) 12 else minOf(16, pending.size)
+            // Round 1: pull (almost) every pending source at once — a wide fan-out
+            // so a fresh start floods the anonymizer cascade immediately instead of
+            // trickling 12 at a time. Later rounds re-pull just the stragglers.
+            val threads = if (round == 1) minOf(32, maxOf(16, pending.size)) else minOf(16, pending.size)
             appendLog("⇣ закачка подписок, проход $round: ${pending.size} шт × $threads потоков", LogCat.SUBS)
             pending = downloadSourcesParallel(pending, threads)
             appendLog("⇣ проход $round: в базе ${store.count()} прокси, не скачано ${pending.size} подписок", LogCat.SUBS)
@@ -1278,23 +1379,23 @@ class DesktopEngine(private val dataDir: File) : Engine {
         for (d in due) if (combined.none { it.id == d.id }) combined.add(d)
         if (combined.isEmpty()) return
 
-        RelayLog.emit("⟳ проверка: главных ${mains.size} + новых ${combined.size - mains.size}")
+        appendLog("⟳ проверка: главных ${mains.size} + новых ${combined.size - mains.size}", LogCat.SCAN)
         val runner = CheckRunner(store, CheckRunner.Log { line -> appendLog(line, LogCat.SCAN) }, minOf(conc, combined.size))
         runner.runOn(combined, "mains+due")
 
         val after = if (ids.isEmpty()) ArrayList() else store.proxiesByIds(ids)
         var aliveMains = 0
         for (p in after) if (p.alive) aliveMains++
-        RelayLog.emit("⟳ главные: $aliveMains/${after.size} · в базе живых: ${store.aliveCount()}")
+        appendLog("⟳ главные: $aliveMains/${after.size} · в базе живых: ${store.aliveCount()}", LogCat.SCAN)
 
         relayManager?.refreshStickies()
 
         if (mains.isNotEmpty() && aliveMains == 0) {
-            RelayLog.emit("⚠ все главные мертвы — широкая проверка топ-200")
+            appendLog("⚠ все главные мертвы — широкая проверка топ-200", LogCat.SCAN)
             val wide = CheckRunner(store, CheckRunner.Log { line -> appendLog(line, LogCat.SCAN) }, 16)
             wide.runOn(store.top(200), "wide-after-cascade")
             relayManager?.refreshStickies()
-            RelayLog.emit("⟳ широкая проверка готова · живых: ${store.aliveCount()}")
+            appendLog("⟳ широкая проверка готова · живых: ${store.aliveCount()}", LogCat.SCAN)
         }
     }
 
@@ -1305,6 +1406,14 @@ class DesktopEngine(private val dataDir: File) : Engine {
         val p = Prefs(ctx)
         val proxyOn = p.appEnabled()
         val scanOn = p.scanEnabled()
+        // Publish the master switches IMMEDIATELY, before any DB query below. A
+        // freshly-wiped profile (or a transient DB hiccup) used to throw partway
+        // through this method; pollLoop swallowed it, so the toggles stayed stuck
+        // at their false default and the whole app looked "off / broken". Pushing
+        // the switches up-front guarantees they always reflect reality.
+        if (_state.value.proxyEnabled != proxyOn || _state.value.scanEnabled != scanOn) {
+            _state.value = _state.value.copy(proxyEnabled = proxyOn, scanEnabled = scanOn)
+        }
 
         val up = RelayStats.bytesUp.get()
         val down = RelayStats.bytesDown.get()
@@ -1746,31 +1855,39 @@ class DesktopEngine(private val dataDir: File) : Engine {
         // lands or we run out of rounds. A single retry pass (the old behaviour)
         // gave up after one failure, so a fresh install on a flaky/blocked network
         // ended up with 0 hosts and "silence". This hammers instead.
-        downloadAllSourcesPersistently()
-        refreshSources()
+        // Phase 1 (download) and Phase 2 (mass-check) run CONCURRENTLY — the user
+        // expects an INSTANT multi-threaded start, not "download everything, THEN
+        // scan". The persistent downloader runs on its own daemon thread; the
+        // checker below sweeps whatever has already landed, round after round,
+        // while more hosts keep arriving. (Both phases share the 64-thread probe
+        // pool + a ≤48-thread download pool — fine on a desktop.)
+        val downloader = Thread({
+            try { downloadAllSourcesPersistently(); refreshSources() } catch (_: Throwable) {}
+        }, "bootstrap-download")
+        downloader.isDaemon = true
+        downloader.start()
+
         val pp = Prefs(ctx)
-        val afterScan = store.count()
-        appendLog("— bootstrap: собрано $afterScan прокси, массовая проверка —", LogCat.SCAN)
-        // Sustained aggressive check: keep probing at near-pool concurrency, in
-        // big passes, until the pool has a healthy number of LIVE hosts (or we
-        // run out of rounds). Each runBatch takes the next most-overdue hosts, so
-        // successive rounds sweep through the whole pool instead of one short
-        // burst. This is what the user expects from a fresh start — "мало живых"
-        // → hammer the checks — rather than a couple of threads for two minutes.
+        appendLog("— bootstrap: качаю подписки и параллельно проверяю прилетающие хосты —", LogCat.SCAN)
         val target = pp.adaptiveAliveThreshold()
-        val conc = maxOf(24, minOf(Prefs.CONCURRENCY_CAP, store.count() / 40))
         val probeMode = if (pp.dpiApplyProbes()) HandshakeMode.fromOrdinal(pp.handshakeMode()) else HandshakeMode.NORMAL
         var round = 0
-        while (round < 8
+        // Keep checking while the downloader is still pulling OR the pool hasn't
+        // reached a healthy live count yet. The round cap is generous because the
+        // loop also covers the whole download window, not just a post-download burst.
+        while (round < 40
                 && Prefs(ctx).scanEnabled()
                 && !io.autoconnector.engine.core.ScanGate.isAborted()
-                && store.countAlive() < target
-                && store.count() > 0) {
+                && (downloader.isAlive || (store.countAlive() < target && store.count() > 0))) {
+            if (store.count() == 0) { Thread.sleep(300); continue }  // wait for first hosts
+            // Concurrency tracks the (growing) pool size, recomputed each round.
+            val conc = maxOf(24, minOf(Prefs.CONCURRENCY_CAP, store.count() / 40))
             val runner = CheckRunner(store, CheckRunner.Log { line -> appendLog(line, LogCat.SCAN) }, conc)
             runner.setProbeMode(probeMode)
             runner.runBatch(minOf(store.count(), 600))
             round++
-            appendLog("— bootstrap раунд $round: живых ${store.countAlive()} / ${store.count()} —", LogCat.SCAN)
+            appendLog("— bootstrap раунд $round: живых ${store.countAlive()} / ${store.count()} (потоков $conc) —", LogCat.SCAN)
+            if (!downloader.isAlive && store.countAlive() >= target) break
         }
         appendLog("— bootstrap готов: живых ${store.countAlive()} / ${store.count()} —", LogCat.SCAN)
     }
@@ -1821,6 +1938,6 @@ class DesktopEngine(private val dataDir: File) : Engine {
     companion object {
         // Single dotted-semver version line for the desktop build (matches the
         // GitHub release tag vX.Y.Z). Build date is injected at launch — see appInfo().
-        private const val DESKTOP_VERSION = "1.0.61"
+        private const val DESKTOP_VERSION = "1.1.0"
     }
 }

@@ -9,7 +9,9 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -51,6 +53,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import io.autoconnector.ui.appLogo
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
@@ -104,6 +109,8 @@ class MoreCallbacks(
     val scanParamsFor: (Int, Int, Int, Float) -> ScanParams,
     val netLogPath: String?,
     val onOpenNetLogFolder: () -> Unit,
+    val dataDirPath: String,
+    val onOpenDataFolder: () -> Unit,
     val onUpdateSettings: (EngineSettings) -> Unit,
     val sources: List<SourceItem>,
     val onAddSource: (String) -> Unit,
@@ -335,6 +342,9 @@ private fun SettingsPage(cb: MoreCallbacks) {
     var lang by remember { mutableStateOf(s.langCode) }
     var expEngine by remember { mutableStateOf(s.expEngineMode) }
     var connEngine by remember { mutableStateOf(s.relayConnectMode) }
+    var raceWidth by remember { mutableStateOf(s.relayRaceWidth) }
+    var breadth by remember { mutableStateOf(s.relayBreadth) }
+    var connTimeout by remember { mutableStateOf(s.relayConnectTimeoutMs) }
     var netLog by remember { mutableStateOf(s.netLogEnabled) }
     var hsExpanded by remember { mutableStateOf(false) }
     var expExpanded by remember { mutableStateOf(false) }
@@ -379,6 +389,9 @@ private fun SettingsPage(cb: MoreCallbacks) {
                 expEngineMode = expEngine,
                 netLogEnabled = netLog,
                 relayConnectMode = connEngine,
+                relayRaceWidth = raceWidth,
+                relayBreadth = breadth,
+                relayConnectTimeoutMs = connTimeout,
                 scanMode = scanMode,
                 minRescanMin = minRescan.toIntOrNull() ?: s.minRescanMin,
             )
@@ -405,26 +418,45 @@ private fun SettingsPage(cb: MoreCallbacks) {
         Modifier.fillMaxSize().keyPageScroll(settingsScroll).verticalScroll(settingsScroll).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        // Language.
+        // Language — collapsed behind a single button so the (now long) list of
+        // languages doesn't inflate the settings page height.
         Section(t.language, null)
-        ChoiceRow(t.langAuto, "", selected = lang == "auto") { lang = "auto"; save() }
-        ChoiceRow(t.langRu, "", selected = lang == "ru") { lang = "ru"; save() }
-        ChoiceRow(t.langEn, "", selected = lang == "en") { lang = "en"; save() }
+        var langExpanded by remember { mutableStateOf(false) }
+        // Labels: English name first, then the native name in parentheses.
+        val langOptions = listOf(
+            "auto" to t.langAuto,
+            "en" to "English",
+            "ru" to "Russian (${t.langRu})",
+            "fa" to "Persian (${t.langFa})",
+            "zh" to "Simplified Chinese (${t.langZh})",
+            "ar" to "Arabic (${t.langAr})",
+            "ur" to "Urdu (${t.langUr})",
+            "tr" to "Turkish (${t.langTr})",
+            "id" to "Indonesian (${t.langId})",
+            "hi" to "Hindi (${t.langHi})",
+            "bn" to "Bengali (${t.langBn})",
+            "my" to "Burmese (${t.langMy})",
+        )
+        val curLangLabel = langOptions.firstOrNull { it.first == lang }?.second ?: t.langAuto
+        Box {
+            OutlinedButton(onClick = { langExpanded = true }, modifier = Modifier.fillMaxWidth()) {
+                Text("Language · ${t.langWord}: $curLangLabel", fontSize = 14.sp)
+            }
+            DropdownMenu(expanded = langExpanded, onDismissRequest = { langExpanded = false }) {
+                langOptions.forEach { (code, label) ->
+                    DropdownMenuItem(
+                        text = { Text(if (code == lang) "✓ $label" else label) },
+                        onClick = { lang = code; save(); langExpanded = false },
+                    )
+                }
+            }
+        }
 
         Section(t.relayPorts) { help = t.relayPorts to t.relayPortsHelp }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             NumField(portA, { portA = it }, t.portA, Modifier.weight(1f))
             NumField(portB, { portB = it }, t.portB, Modifier.weight(1f))
         }
-
-        Section(t.antiDpiTrick) { help = t.antiDpiTrick to t.antiDpiHelp }
-        HandshakePicker(cb.handshakeOptions, hs, hsExpanded, { hsExpanded = it }) { hs = it; save() }
-        SwitchRow(t.onlyFakeTls, fakeTls) { fakeTls = it; save() }
-
-        Section(t.applyDpiTo) { help = t.applyDpiTo to t.applyDpiHelp }
-        SwitchRow(t.toRelay, dpiRelay) { dpiRelay = it; save() }
-        SwitchRow(t.toProbes, dpiProbes) { dpiProbes = it; save() }
-        SwitchRow(t.toDirect, dpiDirect) { dpiDirect = it; save() }
 
         Section(t.vpnSection) { help = t.vpnSection to t.vpnHelp }
         ChoiceRow(t.viaMtproto, t.viaMtprotoSub, selected = vpnMode != "vpn_only") { vpnMode = "use"; save() }
@@ -551,23 +583,78 @@ private fun SettingsPage(cb: MoreCallbacks) {
         SwitchRow(t.onlyCharging, charging) { charging = it; save() }
         SwitchRow(t.skipLowBattery, skipLow) { skipLow = it; save() }
 
-        // Connect engine — just the picker button; the description of the
-        // selected engine (plus the experimental warning) lives in the ? dialog.
-        Section(t.expConnectTitle) {
-            val opt = cb.connectEngineOptions.firstOrNull { it.code == connEngine }
-            help = t.expConnectTitle to ((opt?.description ?: "") +
-                (if (connEngine != 0) "\n\n" + t.expEngineWarn else ""))
-        }
-        ExpEnginePicker(cb.connectEngineOptions, connEngine, connExpanded, { connExpanded = it }) { connEngine = it; save() }
+        // --- Connection & block bypass — one merged section -------------
+        // Connect engine + parallel-race width + proxying engine + anti-DPI
+        // tricks, all under a single header (was four separate sections).
+        Section(t.connectionSection) { help = t.connectionSection to t.connectionSectionHelp }
 
-        // Proxying engine — same: button only, description inside the ? dialog.
-        Section(t.expEngineTitle) {
-            val opt = cb.expEngineOptions.firstOrNull { it.code == expEngine }
-            help = t.expEngineTitle to ((opt?.description ?: "") +
-                (if (expEngine != 0) "\n\n" + t.expEngineWarn else ""))
+        SubTitle(t.expConnectTitle)
+        ExpEnginePicker(cb.connectEngineOptions, connEngine, connExpanded, { connExpanded = it }) { connEngine = it; save() }
+        cb.connectEngineOptions.firstOrNull { it.code == connEngine }?.description
+            ?.takeIf { it.isNotBlank() }?.let {
+                Text(
+                    it + (if (connEngine != 0) "\n" + t.expEngineWarn else ""),
+                    color = AppColors.onSurfaceMuted, fontSize = 13.sp,
+                )
+            }
+        // Parallel-race width — only when the race connect engine (code 1) is on.
+        // Slider over 1..30 upstreams dialed simultaneously.
+        if (connEngine == 1) {
+            SubTitle("${t.raceWidthTitle}: $raceWidth")
+            Slider(
+                value = raceWidth.toFloat(),
+                onValueChange = { raceWidth = (it + 0.5f).toInt().coerceIn(1, 30) },
+                onValueChangeFinished = { save() },
+                valueRange = 1f..30f,
+                steps = 28,
+            )
         }
+
+        // Host-selection breadth: proven (0) ↔ widest (100). Linear 0..100.
+        SubTitle("${t.breadthTitle}: $breadth%")
+        Slider(
+            value = breadth.toFloat(),
+            onValueChange = { breadth = it.toInt().coerceIn(0, 100) },
+            onValueChangeFinished = { save() },
+            valueRange = 0f..100f,
+        )
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(t.breadthNarrow, color = AppColors.onSurfaceMuted, fontSize = 12.sp)
+            Text(t.breadthWide, color = AppColors.onSurfaceMuted, fontSize = 12.sp)
+        }
+        Text(t.breadthHelp, color = AppColors.onSurfaceMuted, fontSize = 13.sp)
+
+        // Per-host connect timeout, log-scaled 100 ms .. 15000 ms.
+        SubTitle("${t.connTimeoutTitle}: " +
+            (if (connTimeout >= 1000) "${connTimeout / 1000}.${(connTimeout % 1000) / 100} c" else "$connTimeout ${t.unitMs}"))
+        Slider(
+            value = (log10(connTimeout.coerceIn(100, 15000).toDouble() / 100.0) / log10(150.0)).toFloat(),
+            onValueChange = { connTimeout = (100.0 * 150.0.pow(it.toDouble())).toInt().coerceIn(100, 15000) },
+            onValueChangeFinished = { save() },
+        )
+        Text(t.connTimeoutHelp, color = AppColors.onSurfaceMuted, fontSize = 13.sp)
+
+        SubTitle(t.expEngineTitle)
         ExpEnginePicker(cb.expEngineOptions, expEngine, expExpanded, { expExpanded = it }) { expEngine = it; save() }
-        Spacer(Modifier.height(4.dp))
+        cb.expEngineOptions.firstOrNull { it.code == expEngine }?.description
+            ?.takeIf { it.isNotBlank() }?.let {
+                Text(
+                    it + (if (expEngine != 0) "\n" + t.expEngineWarn else ""),
+                    color = AppColors.onSurfaceMuted, fontSize = 13.sp,
+                )
+            }
+
+        SubTitle(t.antiDpiTrick)
+        HandshakePicker(cb.handshakeOptions, hs, hsExpanded, { hsExpanded = it }) { hs = it; save() }
+        SwitchRow(t.onlyFakeTls, fakeTls) { fakeTls = it; save() }
+
+        SubTitle(t.applyDpiTo)
+        SwitchRow(t.toRelay, dpiRelay) { dpiRelay = it; save() }
+        SwitchRow(t.toProbes, dpiProbes) { dpiProbes = it; save() }
+        SwitchRow(t.toDirect, dpiDirect) { dpiDirect = it; save() }
+
+        // --- Network exchange log — its own section (Section draws the rule) --
+        Section(t.netLogSection)
         SwitchRow(t.netLog, netLog) { netLog = it; save() }
         Text(t.netLogSub, color = AppColors.onSurfaceMuted, fontSize = 13.sp)
         if (netLog && cb.netLogPath != null) {
@@ -583,35 +670,6 @@ private fun SettingsPage(cb: MoreCallbacks) {
                 }
                 OutlinedButton(onClick = { cb.onCopy(cb.netLogPath) }) { Text(t.copyPath, fontSize = 14.sp) }
             }
-        }
-
-        // --- Reset / maintenance ----------------------------------------
-        Section(t.maintenance) { help = t.maintenance to t.maintenanceHelp }
-        var confirmCatalog by remember { mutableStateOf(false) }
-        var confirmHosts by remember { mutableStateOf(false) }
-        OutlinedButton(onClick = { confirmCatalog = true }, modifier = Modifier.fillMaxWidth()) {
-            Text(t.resetCatalog, fontSize = 15.sp)
-        }
-        OutlinedButton(onClick = { confirmHosts = true }, modifier = Modifier.fillMaxWidth()) {
-            Text(t.clearHosts, fontSize = 15.sp, color = AppColors.red)
-        }
-        if (confirmCatalog) {
-            AlertDialog(
-                onDismissRequest = { confirmCatalog = false },
-                confirmButton = { TextButton({ cb.onResetCatalogStats(); confirmCatalog = false }) { Text(t.doReset) } },
-                dismissButton = { TextButton({ confirmCatalog = false }) { Text(t.doCancel) } },
-                title = { Text(t.resetCatalog, fontWeight = FontWeight.Bold) },
-                text = { Text(t.resetCatalogConfirm, fontSize = 15.sp) },
-            )
-        }
-        if (confirmHosts) {
-            AlertDialog(
-                onDismissRequest = { confirmHosts = false },
-                confirmButton = { TextButton({ cb.onClearHosts(); confirmHosts = false }) { Text(t.doReset) } },
-                dismissButton = { TextButton({ confirmHosts = false }) { Text(t.doCancel) } },
-                title = { Text(t.clearHosts, fontWeight = FontWeight.Bold) },
-                text = { Text(t.clearHostsConfirm, fontSize = 15.sp) },
-            )
         }
 
         // --- Export / Import (universal JSON backup) --------------------
@@ -645,12 +703,28 @@ private fun SettingsPage(cb: MoreCallbacks) {
         if (bkStatus.isNotEmpty()) {
             Text(bkStatus, color = AppColors.onSurfaceMuted, fontSize = 13.sp, modifier = Modifier.padding(top = 2.dp))
         }
-        DarkRule()   // dark separator after the export/import controls
-
-        // Per-mode maintenance: zero a mode's host ratings, or forget a mode's
-        // host rows entirely (ratings are split per network mode in PMS).
+        // --- Reset / maintenance — ALL destructive buttons, one section -
+        Section(t.maintenance) { help = t.maintenance to t.maintenanceHelp }
+        var confirmCatalog by remember { mutableStateOf(false) }
+        var confirmHosts by remember { mutableStateOf(false) }
+        var confirmFactory by remember { mutableStateOf(false) }
+        var resetDone by remember { mutableStateOf(false) }
         var confirmModeReset by remember { mutableStateOf<String?>(null) }
         var confirmModeForget by remember { mutableStateOf<String?>(null) }
+        // Where settings + the proxy DB actually live (the location can fall back
+        // off %APPDATA% if that's not writable, so always show the real path).
+        Text("Data folder / Папка данных:", color = AppColors.onSurfaceMuted, fontSize = 13.sp)
+        Text(cb.dataDirPath, fontFamily = monospaceFontFamily(), fontSize = 12.sp, color = AppColors.onSurfaceMuted)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = cb.onOpenDataFolder, modifier = Modifier.weight(1f)) { Text("Open folder", fontSize = 14.sp) }
+            OutlinedButton(onClick = { cb.onCopy(cb.dataDirPath) }) { Text(t.copyPath, fontSize = 14.sp) }
+        }
+        // Catalog + global stats.
+        OutlinedButton(onClick = { confirmCatalog = true }, modifier = Modifier.fillMaxWidth()) {
+            Text(t.resetCatalog, fontSize = 15.sp)
+        }
+        // Per-mode: zero a mode's ratings / forget its host rows (ratings are
+        // split per network mode in PMS).
         listOf("vpn", "wifi", "lte", "ethernet", "wp").forEach { code ->
             OutlinedButton(onClick = { confirmModeReset = code }, modifier = Modifier.fillMaxWidth()) {
                 Text("${t.resetModeRatings}: ${modeLabel(code)}", fontSize = 15.sp)
@@ -660,6 +734,50 @@ private fun SettingsPage(cb: MoreCallbacks) {
             OutlinedButton(onClick = { confirmModeForget = code }, modifier = Modifier.fillMaxWidth()) {
                 Text("${t.forgetModeHosts}: ${modeLabel(code)}", fontSize = 15.sp, color = AppColors.red)
             }
+        }
+        DarkRule()
+        // Wipe every host / full factory reset.
+        OutlinedButton(onClick = { confirmHosts = true }, modifier = Modifier.fillMaxWidth()) {
+            Text(t.eraseAllHosts, fontSize = 15.sp, color = AppColors.red)
+        }
+        OutlinedButton(onClick = { confirmFactory = true }, modifier = Modifier.fillMaxWidth()) {
+            Text(t.factoryReset, fontSize = 15.sp, color = AppColors.red)
+        }
+        // Confirm dialogs.
+        if (confirmCatalog) {
+            AlertDialog(
+                onDismissRequest = { confirmCatalog = false },
+                confirmButton = { TextButton({ cb.onResetCatalogStats(); confirmCatalog = false }) { Text(t.doReset) } },
+                dismissButton = { TextButton({ confirmCatalog = false }) { Text(t.doCancel) } },
+                title = { Text(t.resetCatalog, fontWeight = FontWeight.Bold) },
+                text = { Text(t.resetCatalogConfirm, fontSize = 15.sp) },
+            )
+        }
+        if (confirmHosts) {
+            AlertDialog(
+                onDismissRequest = { confirmHosts = false },
+                confirmButton = { TextButton({ cb.onClearHosts(); confirmHosts = false }) { Text(t.doReset) } },
+                dismissButton = { TextButton({ confirmHosts = false }) { Text(t.doCancel) } },
+                title = { Text(t.eraseAllHosts, fontWeight = FontWeight.Bold) },
+                text = { Text(t.clearHostsConfirm, fontSize = 15.sp) },
+            )
+        }
+        if (confirmFactory) {
+            AlertDialog(
+                onDismissRequest = { confirmFactory = false },
+                confirmButton = { TextButton({ cb.onFactoryReset(); confirmFactory = false; resetDone = true }) { Text(t.doReset) } },
+                dismissButton = { TextButton({ confirmFactory = false }) { Text(t.doCancel) } },
+                title = { Text(t.factoryReset, fontWeight = FontWeight.Bold) },
+                text = { Text(t.factoryResetConfirm, fontSize = 15.sp) },
+            )
+        }
+        if (resetDone) {
+            AlertDialog(
+                onDismissRequest = { resetDone = false },
+                confirmButton = { TextButton({ resetDone = false }) { Text("OK") } },
+                title = { Text(t.factoryReset, fontWeight = FontWeight.Bold) },
+                text = { Text(t.factoryResetDone, fontSize = 15.sp) },
+            )
         }
         confirmModeReset?.let { code ->
             AlertDialog(
@@ -677,25 +795,6 @@ private fun SettingsPage(cb: MoreCallbacks) {
                 dismissButton = { TextButton({ confirmModeForget = null }) { Text(t.doCancel) } },
                 title = { Text("${t.forgetModeHosts}: ${modeLabel(code)}", fontWeight = FontWeight.Bold) },
                 text = { Text(t.clearHostsConfirm, fontSize = 15.sp) },
-            )
-        }
-
-        // --- Bottom: wipe hosts / full factory reset -------------------
-        DarkRule()
-        var confirmFactory by remember { mutableStateOf(false) }
-        OutlinedButton(onClick = { confirmHosts = true }, modifier = Modifier.fillMaxWidth()) {
-            Text(t.eraseAllHosts, fontSize = 15.sp, color = AppColors.red)
-        }
-        OutlinedButton(onClick = { confirmFactory = true }, modifier = Modifier.fillMaxWidth()) {
-            Text(t.factoryReset, fontSize = 15.sp, color = AppColors.red)
-        }
-        if (confirmFactory) {
-            AlertDialog(
-                onDismissRequest = { confirmFactory = false },
-                confirmButton = { TextButton({ cb.onFactoryReset(); confirmFactory = false }) { Text(t.doReset) } },
-                dismissButton = { TextButton({ confirmFactory = false }) { Text(t.doCancel) } },
-                title = { Text(t.factoryReset, fontWeight = FontWeight.Bold) },
-                text = { Text(t.factoryResetConfirm, fontSize = 15.sp) },
             )
         }
 
@@ -798,7 +897,7 @@ private fun DarkRule() {
                 val p = measurable.measure(constraints.copy(minWidth = w, maxWidth = w))
                 layout(p.width, p.height) { p.place(-12.dp.roundToPx(), 0) }
             }
-            .height(2.dp)
+            .height(1.dp)
             .background(Color(0xFF222222)),
     )
 }
@@ -1256,14 +1355,33 @@ private fun AboutPage(cb: MoreCallbacks) {
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("AutoConnector for Telegram", fontWeight = FontWeight.Bold, fontSize = 19.sp, color = AppColors.accent)
+        // App logo, shown square (1:1) and centred at the top of the page.
+        Image(
+            painter = appLogo(),
+            contentDescription = "AutoConnector for Telegram",
+            contentScale = ContentScale.Fit,
+            modifier = Modifier
+                .align(Alignment.CenterHorizontally)
+                .size(128.dp)
+                .aspectRatio(1f)
+                .clip(RoundedCornerShape(24.dp)),
+        )
+        Text(
+            "AutoConnector for Telegram",
+            fontWeight = FontWeight.Bold,
+            fontSize = 19.sp,
+            color = AppColors.accent,
+            modifier = Modifier.align(Alignment.CenterHorizontally),
+        )
         Text(t.appTagline, fontSize = 15.sp)
 
         StatTable(
-            rows = listOf(
-                listOf(cell(t.version), cell(cb.appInfo.version, bold = true)),
-                listOf(cell(t.buildDate), cell(cb.appInfo.buildDate, bold = true)),
-            ),
+            rows = buildList {
+                add(listOf(cell(t.version), cell(cb.appInfo.version, bold = true)))
+                add(listOf(cell(t.buildDate), cell(cb.appInfo.buildDate, bold = true)))
+                if (cb.appInfo.platform.isNotBlank())
+                    add(listOf(cell(t.platform), cell(cb.appInfo.platform, bold = true)))
+            },
             weights = listOf(1f, 1.6f),
             fontSize = 15,
         )

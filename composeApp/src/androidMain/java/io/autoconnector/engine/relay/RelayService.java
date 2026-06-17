@@ -117,16 +117,30 @@ public final class RelayService extends Service {
      * pulls every subscription HARD: many threads, the full direct→anonymizer
      * cascade, round after round until they land — then a big mass-check. Logs go
      * to the Subscriptions / Scan tabs (via the "@subs"/"@scan" session tags). */
-    private static final long SUBS_TICK_MS = 30_000L;
+    private static final long SUBS_TICK_MS = 30_000L;       // healthy pool → relaxed poll
+    private static final long SUBS_TICK_FAST_MS = 4_000L;    // empty/thin pool → notice fast
     private long lastSubsRun = 0;
     private volatile boolean subsRunning = false;
     private final Runnable subsRefillTask = new Runnable() {
         @Override
         public void run() {
             try { maybeRefillPool(); } catch (Throwable ignored) {}
-            if (running) svc.postDelayed(this, SUBS_TICK_MS);
+            if (running) svc.postDelayed(this, nextSubsTickMs());
         }
     };
+
+    /** Poll fast while the pool is empty/thin so a wipe (or a cold start that
+     *  raced ahead of source-seeding) is noticed within seconds, not the old
+     *  fixed 30 s — that's what made fresh starts look idle for half a minute. */
+    private long nextSubsTickMs() {
+        if (subsRunning) return SUBS_TICK_FAST_MS;          // a refill is in flight — re-poll soon
+        ProxyStore store = ProxyStore.get(this);
+        int total = store.count();
+        int alive = store.aliveCount();
+        if (total == 0 || alive < 10) return SUBS_TICK_FAST_MS;
+        if (total < 2000 || alive < 20) return 10_000L;
+        return SUBS_TICK_MS;
+    }
 
     private void maybeRefillPool() {
         if (subsRunning) return;
@@ -136,11 +150,21 @@ public final class RelayService extends Service {
         int alive = store.aliveCount();
         if (total >= 2000 && alive >= 20) return;            // genuinely healthy
         long now = System.currentTimeMillis();
-        // Keep hammering while the pool is thin: empty → almost immediately,
-        // merely thin → every ~30 s (NOT the old 5 min, which made it look idle
-        // and plateau at the first ~100 hosts that happened to come through).
-        long cooldown = (total == 0) ? 15_000L : 30_000L;
-        if (lastSubsRun != 0 && now - lastSubsRun < cooldown) return;
+        // Tell the Scan tab WHY it isn't scanning hard yet: an empty pool has
+        // nothing to check, so the scan waits on the subscription download. This
+        // line is the user-facing justification for the (apparent) idle scan.
+        if (total == 0) {
+            RelayLog.emit("@scan", "— хостов пока нет — сканировать нечего; "
+                    + "запускаю интенсивную закачку подписок, скан стартует сам —");
+        }
+        // Keep hammering while the pool is thin. An EMPTY pool fires immediately
+        // (no cooldown) so a wipe / fresh start kicks off in seconds; a merely
+        // thin pool re-pulls every ~30 s (NOT the old 5 min, which made it look
+        // idle and plateau at the first ~100 hosts that happened to come through).
+        if (total > 0) {
+            long cooldown = 30_000L;
+            if (lastSubsRun != 0 && now - lastSubsRun < cooldown) return;
+        }
         lastSubsRun = now;
         subsRunning = true;
         // Dedicated thread (not AppExecutors.SERVICE, which checkMains uses) so a
@@ -408,7 +432,9 @@ public final class RelayService extends Service {
         // Spark ingest also runs in proxy-only mode so the traffic graph keeps
         // filling even when background scanning is off.
         if (scanOn || proxyOn) svc.post(sparkTick);
-        running = proxyOn;
+        // Keep periodic tasks ticking in scan-only mode too (proxy engine may be
+        // off by default) — otherwise subsRefill/mains/spark stop rescheduling.
+        running = proxyOn || scanOn;
         refreshNotification();
         // If everything ended up off (race with toggle), shut down.
         if (!proxyOn && !scanOn) stopSelf();
@@ -464,9 +490,9 @@ public final class RelayService extends Service {
             }
             if (combined.isEmpty()) return;
 
-            RelayLog.emit("⟳ проверка: главных " + mains.size()
+            RelayLog.emit("@scan", "⟳ проверка: главных " + mains.size()
                     + " + новых " + (combined.size() - mains.size()));
-            CheckRunner runner = new CheckRunner(store, RelayLog::emit,
+            CheckRunner runner = new CheckRunner(store, line -> RelayLog.emit("@scan", line),
                     Math.min(conc, combined.size()));
             runner.runOn(combined, "mains+due");
 
@@ -477,7 +503,7 @@ public final class RelayService extends Service {
             for (ProxyEntry p : after) if (p.alive) aliveMains++;
 
             int aliveTotal = store.aliveCount();
-            RelayLog.emit("⟳ главные: " + aliveMains + "/" + after.size()
+            RelayLog.emit("@scan", "⟳ главные: " + aliveMains + "/" + after.size()
                     + " · в базе живых: " + aliveTotal);
 
             if (manager != null) manager.refreshStickies();
@@ -485,11 +511,11 @@ public final class RelayService extends Service {
             // Cascade: every sticky just died AND there are alive hosts
             // elsewhere — go find them aggressively.
             if (!mains.isEmpty() && aliveMains == 0) {
-                RelayLog.emit("⚠ все главные мертвы — широкая проверка топ-200");
-                CheckRunner wide = new CheckRunner(store, RelayLog::emit, 16);
+                RelayLog.emit("@scan", "⚠ все главные мертвы — широкая проверка топ-200");
+                CheckRunner wide = new CheckRunner(store, line -> RelayLog.emit("@scan", line), 16);
                 wide.runOn(store.top(200), "wide-after-cascade");
                 if (manager != null) manager.refreshStickies();
-                RelayLog.emit("⟳ широкая проверка готова · живых: "
+                RelayLog.emit("@scan", "⟳ широкая проверка готова · живых: "
                         + store.aliveCount());
             }
         });

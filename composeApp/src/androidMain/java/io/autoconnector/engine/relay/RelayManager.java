@@ -35,6 +35,11 @@ public final class RelayManager {
     private final AtomicReference<ProxyEntry> upstreamA = new AtomicReference<>();
     private final AtomicReference<ProxyEntry> upstreamB = new AtomicReference<>();
     private volatile int lastActivePort;
+    /** Epoch-ms of recent relay-port switches (ring of 6), to detect Telegram
+     *  "bouncing" between 55001/55002 — a sign it can't hold a link, so the
+     *  upstream picker should widen its candidate set hard. */
+    private final long[] portSwitchTimes = new long[6];
+    private volatile int portSwitchIdx = 0;
     /** User-pinned upstream from the catalogue. While non-null it sticks to
      *  both ports and bypasses automatic refresh / penalisation. */
     private volatile ProxyEntry pinned;
@@ -123,6 +128,13 @@ public final class RelayManager {
      */
     public void onConnection(int port) {
         int prev = lastActivePort;
+        if (prev != 0 && prev != port) {
+            // Record the switch for bounce detection (even when pinned).
+            synchronized (portSwitchTimes) {
+                portSwitchTimes[portSwitchIdx] = System.currentTimeMillis();
+                portSwitchIdx = (portSwitchIdx + 1) % portSwitchTimes.length;
+            }
+        }
         if (prev != 0 && prev != port && pinned == null) {
             ProxyEntry bad = ref(prev).getAndSet(null);
             if (bad != null) {
@@ -141,6 +153,22 @@ public final class RelayManager {
         }
         lastActivePort = port;
         io.autoconnector.engine.traffic.ConnectBuffer.INSTANCE.noteInbound(port);
+    }
+
+    /**
+     * True if Telegram has switched relay ports at least 2 times in the last
+     * 20 seconds — it can't hold a connection, so the upstream picker should
+     * stop reusing the same few top-rated hosts and fan out across the pool.
+     */
+    public boolean isPortBouncing() {
+        long now = System.currentTimeMillis();
+        int n = 0;
+        synchronized (portSwitchTimes) {
+            for (long t : portSwitchTimes) {
+                if (t > 0 && now - t <= 20_000L) n++;
+            }
+        }
+        return n >= 2;
     }
 
     /**

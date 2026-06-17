@@ -74,7 +74,6 @@ public final class PageScanner {
             "https://daintycloud.com/proxy-telegram-free-mtproto-proxy-list-real-time-updates/",
             "https://mtpro.xyz/mtproto-ru",
             // Telegram channel previews
-            "https://t.me/s/chatwtfproxy",
             "https://t.me/s/ProXyMTproto",
             "https://t.me/s/TelMTProto",
             "https://t.me/s/MTProtoProxies",
@@ -83,11 +82,9 @@ public final class PageScanner {
             "https://t.me/s/TURKMEN_VPNLAR",
             "https://t.me/s/proxy_tm_unlimited",
             "https://t.me/s/TProxyRU",
-            "https://t.me/s/mtproto_poc",
             "https://t.me/s/ProxyFreeMTProto",
             "https://t.me/s/mtprotoF",
             "https://t.me/s/mtproto6",
-            "https://t.me/s/telega_mtproto",
             "https://t.me/s/mtprotoproxy_telegaram",
             "https://tgstat.com/channel/@TURKMEN_VPNLAR",
             // GitHub raw plain-text lists

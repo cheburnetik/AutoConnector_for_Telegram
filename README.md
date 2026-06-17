@@ -27,20 +27,20 @@ for Telegram постоянно подбирает самые быстрые и 
 | ОС | Файл | Запуск |
 |----|------|--------|
 | **Android** | `AutoConnector_for_Telegram.apk` | установить APK (вне Google Play — разрешите установку из источника) |
-| **Windows** 10/11 x64 | `AutoConnector-for-Telegram-windows-x64.zip` | распаковать → запустить `AutoConnector.bat` |
-| **Linux** x64 | `AutoConnector-for-Telegram-linux-x64.tar.gz` | распаковать → `./AutoConnector-for-Telegram/AutoConnector.sh` |
-| **macOS** 11+ (Apple Silicon/Intel) | `AutoConnector-for-Telegram-macos.tar.gz` | распаковать → `./AutoConnector.command` (если блокирует — `xattr -dr com.apple.quarantine AutoConnector-for-Telegram`) |
+| **Windows** 10/11 x64 | `AutoConnector-for-Telegram-windows-x64.zip` | распаковать → запустить `AutoConnector\AutoConnector.exe` |
+| **Linux** x64 | `AutoConnector-for-Telegram-linux-x64.tar.gz` | распаковать → `./AutoConnector/bin/AutoConnector` |
+| **macOS** 11+ (Apple Silicon) | `AutoConnector-for-Telegram-macos.tar.gz` | распаковать → двойной клик по `AutoConnector.app` (если блокирует — `xattr -dr com.apple.quarantine AutoConnector.app`) |
 
-### 🔐 Проверка подлинности (release 1.0.61)
+### 🔐 Проверка подлинности (release 1.1.0)
 
 APK подписан release-сертификатом (apksigner, схемы v1+v2+v3). Перед установкой можно сверить:
 
 - **Сертификат подписи (SHA-256):** `cb23a18c0cf8a23e43b5b63d199fc1440d3e4d6533e1309d3f92f273fe626a5a`
   (CN=AutoConnector for Telegram) — этот отпечаток одинаков для всех будущих релизов.
-- **APK SHA-256:** `04a8f71e0d7604364f6d12bab8d2b700f0d08379f420a33c01e2101ab6ed9b04`
-- **Windows zip SHA-256:** `afb08bd2c991ca3520ba94a620e3af5ffcc8274747c864a36265a7c93ecc9f2b`
-- **Linux tar.gz SHA-256:** `2a329a0a9e9b7892da9dd3437d5764e6ed209ce3d3acd6c69ff6dc6cd23f8354`
-- **macOS tar.gz SHA-256:** `f96ca244eea22834ca6ea8e19b1c377f80efaf6c9857f8f8cdb0d405933f938a`
+- **APK SHA-256:** `d7652e7f5c3a2174a3b7805c2539df7da080765c9b0f581a7ac5943987c9b935`
+- **Windows zip SHA-256:** `1d8d675936387e89038dc4943d7f99200c1b735b86e1f79bd953cd93e60f0217`
+- **Linux tar.gz SHA-256:** `9160ea519309dc62750a4a930dc1aae6e20dbcefd21b426fa85b48ace6f3e8f8`
+- **macOS tar.gz SHA-256:** `322082ef3f06955ed299be790bce453e47db37fca17daea54724d60698446bc7`
 
 Проверка: `apksigner verify --print-certs AutoConnector_for_Telegram.apk` (сертификат) и
 `sha256sum -c SHA256SUMS.txt` (целостность файлов; `SHA256SUMS.txt` приложен к релизу).
@@ -57,7 +57,22 @@ APK подписан release-сертификатом (apksigner, схемы v1+
   пакетов, FakeTLS и др.); режим «Авто-перебор» сам подбирает рабочий.
 - **Подробная статистика** — живые/мёртвые прокси, скорость, латенси, трафик,
   эффективность каждой анти-DPI хитрости.
-- **Каталог прокси** — топ по рейтингу с детальной карточкой по каждому хосту.
+- **Каталог прокси** — топ по рейтингу с детальной карточкой по каждому хосту:
+  для каждого хоста видно «подключений Telegram / успешных / всего проверок» и
+  историю последних 25 попыток (TCP/TLS/общая длительность коннекта, принято/передано байт).
+- **Гибкий выбор хостов** — ползунок «широты»: от «держаться лучших проверенных»
+  до «максимально широко пробовать разные живые»; когда Telegram мечется по
+  портам реле, выбор расширяется автоматически. Отдельный ползунок — таймаут
+  коннекта (100 мс … 15 с) и «гонка апстримов» (несколько коннектов параллельно).
+- **12 языков** интерфейса с автоопределением, RTL-поддержка.
+
+> ### Что нового в 1.1.0
+> Кросс-платформенный логотип и иконка приложения; экономия памяти на десктопе
+> (≈350 МБ вместо ~1 ГБ); горячие клавиши включены по умолчанию; полный «Сброс
+> всё» реально стирает весь каталог данных; каталог показывает счётчик
+> подключений Telegram и историю попыток по каждому хосту; ползунки «широта
+> выбора» и «таймаут коннекта»; авто-расширение пула при «метании» Telegram по
+> портам; язык по умолчанию — авто (как в системе).
 
 ## 📸 Скриншоты
 

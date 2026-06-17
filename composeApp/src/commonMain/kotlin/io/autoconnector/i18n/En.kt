@@ -74,7 +74,7 @@ object En : Strings {
     override fun agoFmt(v: String) = "$v ago"
     override val catalogTopFor = "Proxy list/rating for"
     override val catalogModeHelpTitle = "Modes & ratings"
-    override val catalogModeHelp = "The app counts live hosts and their ratings SEPARATELY per network mode (VPN, Wi-Fi, LTE, Ethernet and White). «White» is a separate MANUAL mode for whitelists; auto never switches to it. So the same host can be live in one mode and dead in another."
+    override val catalogModeHelp = "The app counts live hosts and their ratings SEPARATELY per network mode (VPN, Wi-Fi, LTE, Ethernet and White). \"White\" is a separate MANUAL mode for whitelists; auto never switches to it. So the same host can be live in one mode and dead in another."
     override fun catalogInactiveWarn(section: String, active: String) =
         "You're viewing the inactive section $section — all stats right now go to $active, not here."
     override val manageModeTitle = "Manage mode"
@@ -191,7 +191,7 @@ object En : Strings {
     override val backupHelp = "Save or restore app data in a single JSON file. Tick what to " +
         "include — any combination:\n• Settings — all app parameters.\n• Subscriptions — the source " +
         "list (URL + on/off).\n• Live-host catalog — every live proxy with its ratings and stats " +
-        "PER network mode.\n\n«Export» asks where to save; «Import» asks which file to open and " +
+        "PER network mode.\n\n\"Export\" asks where to save; \"Import\" asks which file to open and " +
         "applies only the ticked sections present in it. Import ADDS to current data (no wipe)."
     override val backupSettings = "Settings"
     override val backupSubs = "Subscriptions"
@@ -224,21 +224,21 @@ object En : Strings {
         "— Save battery when you have enough: \"Slow-down\" 8 and/or \"Many\" threshold 30.\n" +
         "— Disable adaptation: set both multipliers to 1.\n\n" +
         "Defaults: Few 20, Speed-up 0.5, Many 50, Slow-down 4."
-    override val threshMany = "\"Few\" threshold"; override val threshFew = "\"Many\" threshold"; override val mulFast = "Speed-up ×"; override val mulLazy = "Slow-down ×"
+    override val threshMany = "\"Many\" threshold"; override val threshFew = "\"Few\" threshold"; override val mulFast = "Speed-up ×"; override val mulLazy = "Slow-down ×"
     override val subIntensityTitle = "Subscription intensity"
     override val subIntensityHint = "Pause between subscription downloads: how many minutes before re-downloading the proxy lists (separately per network mode)."
     override val baseScanTitle = "Base scan speed"
-    override val baseScanHelp = "The reference liveness-check speed. «Adaptive speed» and the «Speed by " +
-        "mode» multipliers are computed relative to it.\n\n" +
+    override val baseScanHelp = "The reference liveness-check speed. \"Adaptive speed\" and the \"Speed by " +
+        "mode\" multipliers are computed relative to it.\n\n" +
         "• How often to run, min — interval between check passes.\n" +
         "• Batch per thread, hosts — how many hosts each thread checks per pass.\n" +
-        "• Threads — how many checks run at once. A pass probes «batch × threads» hosts.\n" +
+        "• Threads — how many checks run at once. A pass probes \"batch × threads\" hosts.\n" +
         "• Don't rescan a host more often than every N min — anti-flood: a recently checked host is " +
         "skipped this pass.\n\n" +
         "More threads and a bigger batch = faster pool growth, but heavier load on network and battery."
     override val baseScanPeriod = "How often to run, min"
     override val baseScanBatch = "Batch per thread, hosts"; override val baseScanThreads = "Thread count"
-    override val adaptiveDesc = "If alive proxies are fewer than «few» or more than «many», apply an extra multiplier."
+    override val adaptiveDesc = "If alive proxies are fewer than \"few\" or more than \"many\", apply an extra multiplier."
     override val fewWord = "Few"; override val manyWord = "Many"
     override fun fasterX(x: String) = "$x× faster"
     override fun slowerX(x: String) = "$x× slower"
@@ -247,13 +247,13 @@ object En : Strings {
     override val disabledWord = "off"
     override val speedByModeTitle = "Speed by mode"
     override val speedByModeHelp = "A scan-speed multiplier for each network mode, on top of the base " +
-        "speed. «Standard» (×1) = the base interval. Right — rarer (slower, gentler on traffic/" +
+        "speed. \"Standard\" (×1) = the base interval. Right — rarer (slower, gentler on traffic/" +
         "battery), left — more often (faster, more aggressive). Logarithmic scale, up to ×100 each " +
         "way.\n\n" +
         "Under each slider are the resulting pass parameters with the adaptive speed applied — " +
-        "shown separately for «few alive» (× «Speed-up») and «many alive» (× «Slow-down»).\n\n" +
+        "shown separately for \"few alive\" (× \"Speed-up\") and \"many alive\" (× \"Slow-down\").\n\n" +
         "Modes:\n• VPN — an external VPN is active.\n• LTE — mobile network.\n• Wi-Fi — Wi-Fi network.\n" +
-        "• Ethernet — wired connection.\n• White — manual «white» proxy mode."
+        "• Ethernet — wired connection.\n• White — manual \"white\" proxy mode."
     override val aliveLt = "alive <"; override val aliveGt = "alive >"
     override val periodWord = "period"; override val nonstopWord = "nonstop"
     override val batchWord = "batch"; override val threadsWord = "threads"; override val scanModeOff = "scan off"
@@ -266,12 +266,12 @@ object En : Strings {
     override val dpiAutoLabel = "Auto-rotate DPI tricks"; override val dpiNoneLabel = "No DPI tricks (plain)"
     override val experimental = "Experimental"
     override val experimentalHelp = "Alternative proxying engines to the MTProto upstream plus a diagnostic log. " +
-        "The reference (working) path is unchanged when set to «Off». Only HOW the encrypted stream is written to " +
+        "The reference (working) path is unchanged when set to \"Off\". Only HOW the encrypted stream is written to " +
         "the upstream TCP socket changes (segment sizes, timing, TLS-record boundaries) — the stream itself stays byte-for-byte identical. " +
         "Applies to the live proxy relay only (not probes, not the direct path)."
     override val expEngineTitle = "Proxying engine (socket obfuscation)"
     override val expConnectTitle = "Connect engine (upstream selection)"
-    override val expEngineWarn = "⚠ Experimental mode. If connectivity gets worse, switch back to «Off (reference path)»."
+    override val expEngineWarn = "⚠ Experimental mode. If connectivity gets worse, switch back to \"Off (reference path)\"."
     override val netLog = "Enable network-exchange log"
     override val netLogSub = "Writes WHO-TO-WHOM-WHEN and packet sizes to a file (NO payload data) — " +
         "to compare the exchange pattern with vs. without a VPN."
@@ -343,12 +343,20 @@ object En : Strings {
     override val feedbackBugs = "Feedback & bug reports"; override val writeTelegram = "Write on Telegram"
 
     override val language = "Language"; override val langAuto = "Auto (system)"; override val langRu = "Русский"; override val langEn = "English"
+    override val langFa = "فارسی"; override val langZh = "简体中文"; override val langAr = "العربية"; override val langUr = "اردو"
+    override val langTr = "Türkçe"; override val langId = "Bahasa Indonesia"; override val langHi = "हिन्दी"; override val langBn = "বাংলা"; override val langMy = "မြန်မာ"
+    override val langWord = "Language"
+    override val raceWidthTitle = "Parallel connects"
+    override val connectionSection = "Connection & block bypass"
+    override val connectionSectionHelp = "Connect engine, parallel upstreams, proxying engine and anti-DPI tricks — all in one section."
+    override val netLogSection = "Network exchange log"
+    override val platform = "Platform"
 
     override val scanModeTitle = "Network mode"; override val scanModeAuto = "Auto"; override val scanModeManualLabel = "Manual"
     override val activeModeLabel = "Active mode"; override val formingListLabel = "Building list"; override val catalogModeTabs = "Mode"
     override val resetModeRatings = "Reset host ratings"; override val forgetModeHosts = "Forget mode hosts"
     override val exportModeTitle = "Export by mode"; override val modePickerTitle = "Mode"
-    override val modeHelp = "Each network mode keeps its own proxy ratings and its own scan + subscription-download intensity. «Auto» picks the mode from the active network. «Manual» lets you choose any mode yourself (including White, which auto never selects)."
+    override val modeHelp = "Each network mode keeps its own proxy ratings and its own scan + subscription-download intensity. \"Auto\" picks the mode from the active network. \"Manual\" lets you choose any mode yourself (including White, which auto never selects)."
     override val autoSelect = "Auto select"; override val manualSelect = "Manual select"
     override val connStatsTitle = "Connections now"; override val connOnPort = "Connections on port"; override val outgoingConns = "Outgoing connections"
     override val modeChoice = "Mode selection"; override val autoChoice = "auto-select"; override val manualChoice = "manual fixed"
