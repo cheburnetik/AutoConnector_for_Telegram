@@ -48,6 +48,28 @@ public final class RelayConnection implements Runnable {
     private static final java.util.concurrent.atomic.AtomicLong SESSION_SEQ =
             new java.util.concurrent.atomic.AtomicLong();
 
+    /** Short-lived shared cache of the DB-derived upstream candidate pool, so a
+     *  burst of Telegram sockets shares one set of queries instead of hammering
+     *  SQLite (and pinning the WAL) per connection. See acquireUpstream(). */
+    private static volatile java.util.List<ProxyEntry> CAND_CACHE = null;
+    private static volatile long CAND_CACHE_AT = 0L;
+    private static volatile String CAND_CACHE_KEY = "";
+    private static final long CAND_CACHE_TTL_MS = 1500L;
+
+    /** Debounce for the app-level "last Telegram connect" pref stamps: writing
+     *  them on every connection rewrote the whole .prefs file synchronously in
+     *  the relay hot path. They are display-only, so once every few seconds is
+     *  plenty. */
+    private static final java.util.concurrent.atomic.AtomicLong LAST_TG_PREF_AT =
+            new java.util.concurrent.atomic.AtomicLong();
+    private static final long TG_PREF_MIN_GAP_MS = 8000L;
+
+    /** Sampler for failed-upstream logging: a handshake-failure storm tries many
+     *  candidates that all fail, so logging each one floods the DB/disk. Keep ~1
+     *  in 8 — enough for stats/history, a fraction of the writes. */
+    private static final java.util.concurrent.atomic.AtomicLong FAIL_LOG_SEQ =
+            new java.util.concurrent.atomic.AtomicLong();
+
     private final Socket tg;
     private final int localPort;
     private final ProxyStore store;
@@ -151,8 +173,13 @@ public final class RelayConnection implements Runnable {
             }
 
             // 2. Strip Telegram's obfuscated2 (no secret over SOCKS5).
+            // Read the obfuscated2-init THROUGH a recorder, so that if no upstream
+            // can be acquired below we can still replay those exact bytes into a
+            // direct bypass. Without this, a hard close after SOCKS-success makes
+            // tdesktop declare the proxy "misconfigured" and DISABLE it.
+            RecordingInputStream rec = new RecordingInputStream(tgIn);
             Obfuscated2 local = new Obfuscated2();
-            local.accept(tgIn, null);
+            local.accept(rec, null);
             int tag = local.transportTag;
             int dcId = local.dcId;
             if (dcId < 1 || dcId > 5) dcId = DcAddresses.dcIdForIp(dst.host);
@@ -160,10 +187,37 @@ public final class RelayConnection implements Runnable {
             // 3. Acquire an upstream, with connect-time failover.
             up = acquireUpstream(tag, dcId, dst, handshakeMode, onlyFakeTls, expEngine, connMode,
                     prefs.relayRaceWidth(), prefs.relayBreadth(), prefs.relayConnectTimeoutMs());
+            // If the chosen proxying engine failed EVERY upstream handshake (common
+            // on Windows with «нет»/«сплит» — immediate/fragmented first send), retry
+            // once with coalescing: it batches the obfuscated2-init + FakeTLS hello
+            // into one clean segment, which far more capricious upstreams accept.
+            // This is the engine that empirically never trips Telegram's "proxy
+            // misconfigured / will be disabled", so the relay self-heals to it
+            // regardless of the user's chosen default. Candidate pool is cached, so
+            // the retry only re-does the handshake, not the DB queries.
+            if (up == null && expEngine != WireShaper.Mode.COALESCE_DELAY) {
+                RelayLog.emit("↻ ни один апстрим не принял handshake (" + expEngine.key
+                        + ") — повторяю с коалесингом");
+                up = acquireUpstream(tag, dcId, dst, handshakeMode, onlyFakeTls,
+                        WireShaper.Mode.COALESCE_DELAY, connMode,
+                        prefs.relayRaceWidth(), prefs.relayBreadth(), prefs.relayConnectTimeoutMs());
+            }
             if (up == null) {
-                listener.event("порт " + localPort + ": нет рабочего апстрима (DC" + dcId + ")");
+                // No upstream took the connection — DON'T drop it (that disables the
+                // proxy in Telegram). Pass straight to the DC instead, replaying the
+                // obfuscated2-init that local.accept() already consumed so the DC
+                // sees the full MTProto handshake. The next connection self-heals
+                // through a live upstream as soon as one is available.
+                listener.event("порт " + localPort + ": нет рабочего апстрима (DC" + dcId
+                        + ") — прямой проход, чтобы Telegram не выключил прокси");
+                RelayLog.emit("→ прямой проход на DC" + dcId + " (нет рабочего апстрима; прокси оставляем включённым)");
+                acceptingDecremented = true;  // handleBypassRaw owns the single decrement
+                java.io.InputStream bypassIn = new java.io.SequenceInputStream(
+                        new java.io.ByteArrayInputStream(rec.recorded()), tgIn);
+                handleBypassRaw(tg, bypassIn, tgOut, dst, prefs.dpiApplyDirect());
                 return;
             }
+            rec.stopRecording();  // committed to the relay path — free the buffer
             upstreamProxy = up.proxy;
             upSocket = up.socket;
             manager.setUpstream(localPort, upstreamProxy);
@@ -182,9 +236,15 @@ public final class RelayConnection implements Runnable {
                     store.markRelaySuccess(upstreamProxy.id, net, now);
                 }
             } catch (Exception ignored) {}
-            prefs.setLastTelegramConnect(now);
-            if (localPort == manager.portA) prefs.setLastTelegramConnectPortA(now);
-            else if (localPort == manager.portB) prefs.setLastTelegramConnectPortB(now);
+            // Debounced: these display-only stamps rewrite the whole .prefs file
+            // synchronously, so under a burst of Telegram sockets writing them per
+            // connection thrashed the disk. Once every few seconds is plenty.
+            long prevPref = LAST_TG_PREF_AT.get();
+            if (now - prevPref >= TG_PREF_MIN_GAP_MS && LAST_TG_PREF_AT.compareAndSet(prevPref, now)) {
+                prefs.setLastTelegramConnect(now);
+                if (localPort == manager.portA) prefs.setLastTelegramConnectPortA(now);
+                else if (localPort == manager.portB) prefs.setLastTelegramConnectPortB(now);
+            }
             RelayLog.emit("→ " + upstreamProxy.host + ":" + upstreamProxy.port
                     + " (порт " + localPort + ", DC" + dcId
                     + ", " + (upstreamProxy.type == ProxyType.MTPROTO ? "MT" : "S5") + ")");
@@ -489,7 +549,6 @@ public final class RelayConnection implements Runnable {
                                                       int raceWidth,
                                                       int breadth,
                                                       int connectTimeoutMs) {
-        List<ProxyEntry> candidates = new ArrayList<>();
         int multi = onlyFakeTls ? 4 : 1;
         io.autoconnector.engine.core.NetworkMode net =
                 io.autoconnector.engine.core.NetworkMonitor.currentMode();
@@ -506,65 +565,80 @@ public final class RelayConnection implements Runnable {
         // wide (100) → mostly random hosts pulled from the whole alive pool.
         final int wantTop = Math.max(2, 20 - (b * 18 / 100));   // 20 (narrow)..2 (wide)
         final int wantRandom = 4 + (b * 46 / 100);              // 4 (narrow)..50 (wide)
-        boolean wideGlobal = b >= 45;                           // also mix in GLOBAL alive
+        final boolean wideGlobal = b >= 45;                     // also mix in GLOBAL alive
 
-        // Sticky upstream first — but NOT while widening: the sticky host is the
-        // very one Telegram just failed to hold, so leading with it wastes a try.
+        // The DB-derived candidate pool is the same for every Telegram socket in a
+        // short window, so cache it (TTL ~1.5 s). A burst of connects then shares
+        // ONE set of queries instead of hammering SQLite per socket — that read
+        // storm was what pinned the WAL (constant disk churn) and slowed acquire
+        // (→ SOCKS timeouts → "proxy disabled"). Liveness is still proven by the
+        // actual connect below, so a slightly stale list costs nothing.
+        String cacheKey = fnet.code + "|" + (b / 10) + "|" + bouncing + "|" + onlyFakeTls;
+        long nowMs = System.currentTimeMillis();
+        java.util.List<ProxyEntry> pool = CAND_CACHE;
+        if (!(pool != null && cacheKey.equals(CAND_CACHE_KEY)
+                && nowMs - CAND_CACHE_AT < CAND_CACHE_TTL_MS && !pool.isEmpty())) {
+            java.util.List<ProxyEntry> built = new ArrayList<>();
+            // 1. Top-rated alive for THIS network mode (VPN/WiFi/LTE graded apart).
+            for (ProxyEntry p : safeList(() -> usePerMode
+                    ? store.topAliveForMode(fnet, wantTop * multi)
+                    : store.topAlive(wantTop * multi))) {
+                if (onlyFakeTls && !p.isFakeTls()) continue;
+                if (!containsId(built, p.id)) built.add(p);
+                if (built.size() >= wantTop) break;
+            }
+            // 2. Random alive outside the top (per-mode) — exposes undervalued hosts.
+            int base = built.size();
+            for (ProxyEntry p : safeList(() -> usePerMode
+                    ? store.randomAliveForMode(fnet, wantRandom * multi)
+                    : store.randomAlive(wantRandom * multi))) {
+                if (onlyFakeTls && !p.isFakeTls()) continue;
+                if (!containsId(built, p.id)) built.add(p);
+                if (built.size() >= base + wantRandom) break;
+            }
+            // 3. Wide breadth OR a thin per-mode pool: pull from the GLOBAL alive
+            //    pool (hundreds of hosts alive globally but not graded for THIS mode).
+            if (wideGlobal || built.size() < 5) {
+                int base3 = built.size();
+                final int globalRandom = Math.max(wantRandom, bouncing ? 60 : 30);
+                for (ProxyEntry p : safeList(() -> store.randomAlive(globalRandom * multi))) {
+                    if (onlyFakeTls && !p.isFakeTls()) continue;
+                    if (!containsId(built, p.id)) built.add(p);
+                    if (built.size() >= base3 + globalRandom) break;
+                }
+                for (ProxyEntry p : safeList(() -> store.topAlive(wantTop * multi))) {
+                    if (onlyFakeTls && !p.isFakeTls()) continue;
+                    if (!containsId(built, p.id)) built.add(p);
+                    if (built.size() >= base3 + globalRandom + wantTop) break;
+                }
+            }
+            // 4. Truly nothing alive matched — last resort, best-by-score (unverified).
+            if (built.isEmpty()) {
+                java.util.List<ProxyEntry> fallback = safeList(() -> usePerMode
+                        ? store.topForMode(fnet, 20 * multi)
+                        : store.top(20 * multi));
+                if (fallback.isEmpty()) fallback = safeList(() -> store.top(20 * multi));
+                for (ProxyEntry p : fallback) {
+                    if (onlyFakeTls && !p.isFakeTls()) continue;
+                    if (!containsId(built, p.id)) built.add(p);
+                    if (built.size() >= 25) break;
+                }
+            }
+            pool = built;
+            CAND_CACHE = built;          // shared read-only snapshot
+            CAND_CACHE_KEY = cacheKey;
+            CAND_CACHE_AT = nowMs;
+        }
+
+        // Working copy (never mutate the shared cache): sticky upstream (per-port,
+        // in-memory — no DB) first unless widening, then the cached pool.
+        List<ProxyEntry> candidates = new ArrayList<>(pool.size() + 1);
         if (!bouncing && b < 70) {
             ProxyEntry sticky = manager.stickyUpstream(localPort);
-            if (sticky != null && (!onlyFakeTls || sticky.isFakeTls())) {
-                candidates.add(sticky);
-            }
+            if (sticky != null && (!onlyFakeTls || sticky.isFakeTls())) candidates.add(sticky);
         }
+        for (ProxyEntry p : pool) if (!containsId(candidates, p.id)) candidates.add(p);
 
-        // 1. Top-rated alive for THIS network mode (VPN/WiFi/LTE graded apart).
-        int base = candidates.size();
-        for (ProxyEntry p : safeList(() -> usePerMode
-                ? store.topAliveForMode(fnet, wantTop * multi)
-                : store.topAlive(wantTop * multi))) {
-            if (onlyFakeTls && !p.isFakeTls()) continue;
-            if (!containsId(candidates, p.id)) candidates.add(p);
-            if (candidates.size() >= base + wantTop) break;
-        }
-        // 2. Random alive outside the top (per-mode) — exposes undervalued hosts.
-        base = candidates.size();
-        for (ProxyEntry p : safeList(() -> usePerMode
-                ? store.randomAliveForMode(fnet, wantRandom * multi)
-                : store.randomAlive(wantRandom * multi))) {
-            if (onlyFakeTls && !p.isFakeTls()) continue;
-            if (!containsId(candidates, p.id)) candidates.add(p);
-            if (candidates.size() >= base + wantRandom) break;
-        }
-        // 3. Wide breadth OR a thin per-mode pool: pull from the GLOBAL alive
-        //    pool. Hundreds of hosts can be alive globally but not yet graded
-        //    for THIS mode, which is exactly why selection collapsed to ~4 hosts.
-        if (wideGlobal || candidates.size() < 5) {
-            base = candidates.size();
-            final int globalRandom = Math.max(wantRandom, bouncing ? 60 : 30);
-            for (ProxyEntry p : safeList(() -> store.randomAlive(globalRandom * multi))) {
-                if (onlyFakeTls && !p.isFakeTls()) continue;
-                if (!containsId(candidates, p.id)) candidates.add(p);
-                if (candidates.size() >= base + globalRandom) break;
-            }
-            for (ProxyEntry p : safeList(() -> store.topAlive(wantTop * multi))) {
-                if (onlyFakeTls && !p.isFakeTls()) continue;
-                if (!containsId(candidates, p.id)) candidates.add(p);
-                if (candidates.size() >= base + globalRandom + wantTop) break;
-            }
-        }
-        // 4. Truly nothing alive matched — last resort, try best-by-score
-        //    (may be unverified) so there's at least something to attempt.
-        if (candidates.isEmpty()) {
-            java.util.List<ProxyEntry> fallback = safeList(() -> usePerMode
-                    ? store.topForMode(fnet, 20 * multi)
-                    : store.top(20 * multi));
-            if (fallback.isEmpty()) fallback = safeList(() -> store.top(20 * multi));
-            for (ProxyEntry p : fallback) {
-                if (onlyFakeTls && !p.isFakeTls()) continue;
-                if (!containsId(candidates, p.id)) candidates.add(p);
-                if (candidates.size() >= 25) break;
-            }
-        }
         if (bouncing) {
             RelayLog.emit("⟳ Telegram мечется по портам — расширяю выбор до "
                     + candidates.size() + " разных живых хостов");
@@ -619,8 +693,7 @@ public final class RelayConnection implements Runnable {
                         p, tag, dcId, dst.host, dst.port, timeoutMs, mode, exp);
             } catch (Exception e) {
                 manager.markUpstreamBad(localPort, p);
-                try { store.logRelayAttempt(p.id, false); } catch (Exception ignored) {}
-                try { store.logAttempt(p.id, 1, false, -1, -1, -1, 0, 0); } catch (Exception ignored) {}
+                logFailedAttempt(p.id);
                 String why = e.getMessage() != null
                         ? e.getMessage() : e.getClass().getSimpleName();
                 RelayLog.emit("✗ " + p.host + ":" + p.port + " — " + why);
@@ -660,7 +733,7 @@ public final class RelayConnection implements Runnable {
                     }
                 } catch (Exception e) {
                     manager.markUpstreamBad(localPort, p);
-                    try { store.logRelayAttempt(p.id, false); } catch (Exception ignored) {}
+                    logFailedAttempt(p.id);
                     String why = e.getMessage() != null
                             ? e.getMessage() : e.getClass().getSimpleName();
                     RelayLog.emit("✗ " + p.host + ":" + p.port + " — " + why);
@@ -803,8 +876,11 @@ public final class RelayConnection implements Runnable {
                     }
                 }
                 accumForProxy += n;
-                if (accumForProxy >= 262144
-                        || now - lastFlush >= 15000) {
+                // Persist the relayed-bytes counter at most every 15 s (and once
+                // at session end). The previous per-256 KB flush issued a DB UPDATE
+                // dozens of times a second on a fast download — pure disk churn;
+                // the live UI reads the in-memory counter, not this column.
+                if (now - lastFlush >= 15000) {
                     flushBytesToProxy(accumForProxy);
                     accumForProxy = 0;
                     lastFlush = now;
@@ -818,6 +894,13 @@ public final class RelayConnection implements Runnable {
         }
     }
 
+    /** Throttled logging of a failed upstream attempt (see FAIL_LOG_SEQ). */
+    private void logFailedAttempt(long proxyId) {
+        if ((FAIL_LOG_SEQ.incrementAndGet() & 0x7L) != 0L) return;
+        try { store.logRelayAttempt(proxyId, false); } catch (Exception ignored) {}
+        try { store.logAttempt(proxyId, 1, false, -1, -1, -1, 0, 0); } catch (Exception ignored) {}
+    }
+
     private void flushBytesToProxy(long n) {
         ProxyEntry up = upstreamProxy;
         if (n <= 0 || up == null) return;
@@ -827,6 +910,38 @@ public final class RelayConnection implements Runnable {
             store.addBytesRelayed(up.id, n);
         } catch (Exception ignored) {
         }
+    }
+
+    /**
+     * Input stream that copies everything read into a small buffer until
+     * {@link #stopRecording()} is called. Used so the obfuscated2-init consumed
+     * by {@code local.accept()} can be replayed into a direct bypass when no
+     * upstream can be acquired (otherwise the DC would miss the MTProto handshake
+     * and the bypass would fail). Reading is delegated verbatim, so the relay
+     * path stays byte-identical.
+     */
+    private static final class RecordingInputStream extends InputStream {
+        private final InputStream src;
+        private final java.io.ByteArrayOutputStream rec = new java.io.ByteArrayOutputStream(96);
+        private boolean recording = true;
+
+        RecordingInputStream(InputStream src) { this.src = src; }
+        void stopRecording() { recording = false; }
+        byte[] recorded() { return rec.toByteArray(); }
+
+        @Override public int read() throws IOException {
+            int b = src.read();
+            if (recording && b >= 0) rec.write(b);
+            return b;
+        }
+
+        @Override public int read(byte[] b, int off, int len) throws IOException {
+            int n = src.read(b, off, len);
+            if (recording && n > 0) rec.write(b, off, n);
+            return n;
+        }
+
+        @Override public int available() throws IOException { return src.available(); }
     }
 
     private void closeBoth() {

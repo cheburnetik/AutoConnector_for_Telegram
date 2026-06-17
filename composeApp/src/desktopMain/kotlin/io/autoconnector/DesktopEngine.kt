@@ -140,9 +140,13 @@ class DesktopEngine(private val dataDir: File) : Engine {
         NetworkMonitor.init(ctx)
         NetLog.init(dataDir)
         // Default proxying/obfuscation engine is OFF (user request 2026-06-08) —
-        // the relay's plain path works, anti-DPI is handled by the «Авто» DPI
-        // trick instead. Was «Сплит первого пакета ×3» (code 14).
-        Prefs.SHIPPED_EXP_ENGINE = 0
+        // Desktop default = COALESCE_DELAY (4, «Коалесинг»). On Windows the
+        // immediate/fragmented first send of OFF/«сплит» fails the upstream
+        // handshake on many proxies → no working upstream → Telegram declares the
+        // proxy misconfigured and DISABLES it. Coalescing batches the first send
+        // (obfuscated2-init + FakeTLS hello) into one clean segment, which far more
+        // upstreams accept — empirically the only mode that never trips the error.
+        Prefs.SHIPPED_EXP_ENGINE = 4
         Prefs(ctx).applyShippedDefaultsOnce()
         RelayLog.register { session, line -> appendLog(line, LogCat.TELEGRAM, session) }
         loadSettings()
@@ -661,138 +665,44 @@ class DesktopEngine(private val dataDir: File) : Engine {
 
     // --- backup: export / import (universal JSON) --------------------------
 
-    override fun exportBackup(settings: Boolean, subs: Boolean, hosts: Boolean): String {
-        return try {
-            val root = LinkedHashMap<String, Any?>()
-            root["app"] = "AutoConnectorForTelegram"
-            root["v"] = 1
-            if (settings) root["settings"] = Prefs(ctx).exportSettings()
-            if (subs) {
-                val arr = ArrayList<Any?>()
-                for (s in store.listSources()) {
-                    val m = LinkedHashMap<String, Any?>()
-                    m["url"] = s.url
-                    m["enabled"] = s.enabled
-                    arr.add(m)
-                }
-                root["subscriptions"] = arr
-            }
-            if (hosts) root["hosts"] = collectHostsForBackup()
-            val json = io.autoconnector.engine.io.Json.encode(root)
-            val f = chooseBackupFile("autoconnector_backup.json", true)
-                ?: return "Экспорт отменён"
-            f.writeText(json)
-            val parts = ArrayList<String>()
-            if (settings) parts.add("настройки")
-            if (subs) parts.add("подписки")
-            if (hosts) parts.add("хосты")
-            appendLog("⤓ бэкап (${parts.joinToString(", ")}) → ${f.absolutePath}", LogCat.OTHER)
-            "✓ Сохранено: ${f.name} — ${parts.joinToString(", ")}"
-        } catch (t: Throwable) {
-            "⚠ Ошибка экспорта: ${t.message}"
-        }
-    }
+    override fun buildBackupJson(settings: Boolean, subs: Boolean, hosts: Boolean): String =
+        io.autoconnector.engine.io.BackupIo.build(store, Prefs(ctx), settings, subs, hosts)
 
-    private fun collectHostsForBackup(): List<Any?> {
-        val out = ArrayList<Any?>()
-        for (p in store.aliveHostsAnyMode()) {
-            val h = LinkedHashMap<String, Any?>()
-            h["host"] = p.host
-            h["port"] = p.port
-            h["type"] = p.type.name
-            h["secret"] = p.secret
-            h["source"] = p.source
-            val modes = LinkedHashMap<String, Any?>()
-            for ((mode, st) in store.modeStatsAll(p.id)) {
-                if (st.lastCheck <= 0 && !st.alive) continue   // skip never-probed modes
-                val ms = LinkedHashMap<String, Any?>()
-                ms["alive"] = st.alive
-                ms["rtt"] = st.rttMs
-                ms["score"] = st.score
-                ms["successes"] = st.successes
-                ms["failures"] = st.failures
-                ms["lastCheck"] = st.lastCheck
-                ms["lastOk"] = st.lastOk
-                ms["tg"] = st.tgConnections
-                ms["sessionMs"] = st.totalSessionMs
-                ms["bytes"] = st.bytesRelayed
-                modes[mode.code] = ms
-            }
-            h["modes"] = modes
-            out.add(h)
-        }
-        return out
-    }
-
-    override fun importBackup(settings: Boolean, subs: Boolean, hosts: Boolean): String {
+    override fun importBackupText(text: String, settings: Boolean, subs: Boolean, hosts: Boolean): String {
         return try {
-            val f = chooseBackupFile("autoconnector_backup.json", false)
-                ?: return "Импорт отменён"
-            val root = io.autoconnector.engine.io.Json.parseObject(f.readText())
-            val done = ArrayList<String>()
-            (root["settings"] as? Map<*, *>)?.let { m ->
-                if (settings) {
-                    val sm = LinkedHashMap<String, String>()
-                    for ((k, v) in m) if (k != null) sm[k.toString()] = v?.toString() ?: ""
-                    val n = Prefs(ctx).importSettings(sm)
-                    done.add("настройки ($n)")
-                }
-            }
-            (root["subscriptions"] as? List<*>)?.let { list ->
-                if (subs) {
-                    var n = 0
-                    for (item in list) {
-                        val mm = item as? Map<*, *> ?: continue
-                        val url = mm["url"]?.toString() ?: continue
-                        val id = store.upsertSource(url)
-                        val en = mm["enabled"]
-                        if (id > 0 && en is Boolean) store.setSourceEnabled(id, en)
-                        n++
-                    }
-                    refreshSources()
-                    done.add("подписки ($n)")
-                }
-            }
-            (root["hosts"] as? List<*>)?.let { list ->
-                if (hosts) {
-                    var n = 0
-                    for (item in list) {
-                        val mm = item as? Map<*, *> ?: continue
-                        val host = mm["host"]?.toString() ?: continue
-                        val port = (mm["port"] as? Double)?.toInt() ?: continue
-                        val type = try { ProxyType.valueOf(mm["type"]?.toString() ?: "MTPROTO") }
-                            catch (_: Throwable) { ProxyType.MTPROTO }
-                        val entry = ProxyEntry(type, host, port, mm["secret"]?.toString(), mm["source"]?.toString())
-                        val id = store.importHost(entry)
-                        if (id <= 0) continue
-                        (mm["modes"] as? Map<*, *>)?.forEach { (mc, mv) ->
-                            val ms = mv as? Map<*, *> ?: return@forEach
-                            store.importModeStats(
-                                id, mc.toString(),
-                                (ms["alive"] as? Boolean) ?: false,
-                                (ms["rtt"] as? Double)?.toInt() ?: -1,
-                                (ms["score"] as? Double) ?: 0.0,
-                                (ms["successes"] as? Double)?.toInt() ?: 0,
-                                (ms["failures"] as? Double)?.toInt() ?: 0,
-                                (ms["lastCheck"] as? Double)?.toLong() ?: 0L,
-                                (ms["lastOk"] as? Double)?.toLong() ?: 0L,
-                                (ms["tg"] as? Double)?.toLong() ?: 0L,
-                                (ms["sessionMs"] as? Double)?.toLong() ?: 0L,
-                                (ms["bytes"] as? Double)?.toLong() ?: 0L,
-                            )
-                        }
-                        n++
-                    }
-                    refreshCatalog(); refreshSources()
-                    done.add("хосты ($n)")
-                }
-            }
-            if (done.isEmpty()) "⚠ В файле нет выбранных разделов"
-            else { appendLog("⤒ импорт: ${done.joinToString(", ")}", LogCat.OTHER); "✓ Импортировано: ${done.joinToString(", ")}" }
+            val r = io.autoconnector.engine.io.BackupIo.importInto(store, Prefs(ctx), text, settings, subs, hosts)
+            if (r.status == null) return "⚠ В тексте нет выбранных разделов"
+            if (r.hostsChanged) { refreshCatalog(); refreshSources() }
+            else if (r.subsChanged) refreshSources()
+            appendLog("⤒ импорт: ${r.status}", LogCat.OTHER)
+            "✓ Импортировано: ${r.status}"
         } catch (t: Throwable) {
             "⚠ Ошибка импорта: ${t.message}"
         }
     }
+
+    override fun saveTextToFile(suggestedName: String, text: String): String {
+        return try {
+            val f = chooseBackupFile(suggestedName, true) ?: return "Сохранение отменено"
+            f.writeText(text)
+            appendLog("⤓ сохранено в файл → ${f.absolutePath}", LogCat.OTHER)
+            "✓ Сохранено: ${f.name}"
+        } catch (t: Throwable) {
+            "⚠ Ошибка сохранения: ${t.message}"
+        }
+    }
+
+    override fun pickTextFile(): String? {
+        return try {
+            val f = chooseBackupFile("autoconnector_backup.json", false) ?: return null
+            if (!f.exists()) null else f.readText()
+        } catch (t: Throwable) {
+            appendLog("⚠ не удалось прочитать файл: ${t.message}", LogCat.OTHER)
+            null
+        }
+    }
+
+    override fun fileIoSupported(): Boolean = true
 
     /** Native save/open dialog; falls back to a fixed file in the user's home
      *  dir if no AWT dialog is available. Returns null only when cancelled. */
@@ -1938,6 +1848,6 @@ class DesktopEngine(private val dataDir: File) : Engine {
     companion object {
         // Single dotted-semver version line for the desktop build (matches the
         // GitHub release tag vX.Y.Z). Build date is injected at launch — see appInfo().
-        private const val DESKTOP_VERSION = "1.1.0"
+        private const val DESKTOP_VERSION = "1.1.5"
     }
 }

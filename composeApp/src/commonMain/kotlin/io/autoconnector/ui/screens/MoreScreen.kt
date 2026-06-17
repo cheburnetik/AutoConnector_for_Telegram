@@ -89,7 +89,7 @@ import io.autoconnector.ui.theme.AppColors
 import io.autoconnector.ui.theme.monospaceFontFamily
 import io.autoconnector.ui.theme.sansFontFamily
 
-enum class MoreDest { SETTINGS, SOURCES, ADD_SOURCES, STATS, EXPORT, HOTKEYS, ABOUT }
+enum class MoreDest { SETTINGS, SOURCES, ADD_SOURCES, STATS, EXPORT, BACKUP_EXPORT, BACKUP_IMPORT, HOTKEYS, ABOUT }
 
 private fun titleFor(dest: MoreDest, t: Strings) = when (dest) {
     MoreDest.SETTINGS -> t.settings
@@ -97,6 +97,8 @@ private fun titleFor(dest: MoreDest, t: Strings) = when (dest) {
     MoreDest.ADD_SOURCES -> t.addSourcesTitle
     MoreDest.STATS -> t.statistics
     MoreDest.EXPORT -> t.export
+    MoreDest.BACKUP_EXPORT -> t.backupExportTitle
+    MoreDest.BACKUP_IMPORT -> t.backupImportTitle
     MoreDest.HOTKEYS -> t.hotkeys
     MoreDest.ABOUT -> t.about
 }
@@ -123,8 +125,12 @@ class MoreCallbacks(
     val state: EngineState,
     val exportLinks: () -> List<String>,
     val onExportToFile: () -> String?,
-    val onExportBackup: (Boolean, Boolean, Boolean) -> String,
-    val onImportBackup: (Boolean, Boolean, Boolean) -> String,
+    // Universal backup (settings/subs/hosts) — JSON shown in a text field.
+    val onBuildBackup: (Boolean, Boolean, Boolean) -> String,
+    val onImportText: (String, Boolean, Boolean, Boolean) -> String,
+    val onSaveToFile: (String, String) -> String,
+    val onPickFile: () -> String?,
+    val fileIoSupported: Boolean,
     // Per-network-mode actions (wired in App.kt by these exact names).
     val onSetScanMode: (String) -> Unit,
     val onResetModeStats: (String) -> Unit,
@@ -177,6 +183,8 @@ fun MoreFullPage(dest: MoreDest, cb: MoreCallbacks, onBack: () -> Unit) {
                 MoreDest.ADD_SOURCES -> AddSourcesPage(cb)
                 MoreDest.STATS -> StatsPage(cb)
                 MoreDest.EXPORT -> ExportPage(cb)
+                MoreDest.BACKUP_EXPORT -> BackupExportPage(cb)
+                MoreDest.BACKUP_IMPORT -> BackupImportPage(cb)
                 MoreDest.HOTKEYS -> HotkeysPage(cb)
                 MoreDest.ABOUT -> AboutPage(cb)
             }
@@ -672,36 +680,17 @@ private fun SettingsPage(cb: MoreCallbacks) {
             }
         }
 
-        // --- Export / Import (universal JSON backup) --------------------
+        // --- Export / Import (universal JSON backup) — each opens its own page -
         Section(t.backupTitle) { help = t.backupTitle to t.backupHelp }
-        var bkSettings by remember { mutableStateOf(true) }
-        var bkSubs by remember { mutableStateOf(true) }
-        var bkHosts by remember { mutableStateOf(true) }
-        var bkStatus by remember { mutableStateOf("") }
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Checkbox(checked = bkSettings, onCheckedChange = { bkSettings = it })
-            Text(t.backupSettings, fontSize = 14.sp)
-        }
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Checkbox(checked = bkSubs, onCheckedChange = { bkSubs = it })
-            Text(t.backupSubs, fontSize = 14.sp)
-        }
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Checkbox(checked = bkHosts, onCheckedChange = { bkHosts = it })
-            Text(t.backupHosts, fontSize = 14.sp)
-        }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedButton(
-                onClick = { if (bkSettings || bkSubs || bkHosts) bkStatus = cb.onExportBackup(bkSettings, bkSubs, bkHosts) },
+                onClick = { cb.onOpenDest(MoreDest.BACKUP_EXPORT) },
                 modifier = Modifier.weight(1f),
             ) { Text(t.exportWord, fontSize = 15.sp) }
             OutlinedButton(
-                onClick = { if (bkSettings || bkSubs || bkHosts) bkStatus = cb.onImportBackup(bkSettings, bkSubs, bkHosts) },
+                onClick = { cb.onOpenDest(MoreDest.BACKUP_IMPORT) },
                 modifier = Modifier.weight(1f),
             ) { Text(t.importWord, fontSize = 15.sp) }
-        }
-        if (bkStatus.isNotEmpty()) {
-            Text(bkStatus, color = AppColors.onSurfaceMuted, fontSize = 13.sp, modifier = Modifier.padding(top = 2.dp))
         }
         // --- Reset / maintenance — ALL destructive buttons, one section -
         Section(t.maintenance) { help = t.maintenance to t.maintenanceHelp }
@@ -1540,6 +1529,104 @@ private fun ExportPage(cb: MoreCallbacks) {
             textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp, fontFamily = monospaceFontFamily()),
             label = { Text(t.aliveLinks(links.size), fontSize = 13.sp) },
         )
+    }
+}
+
+// === Backup export / import (universal JSON: settings / subs / hosts) =====
+
+/** One backup-section checkbox row (Settings / Subscriptions / Live-hosts). */
+@Composable
+private fun BackupCheck(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Checkbox(checked = checked, onCheckedChange = onChange)
+        Text(label, fontSize = 14.sp)
+    }
+}
+
+/** Export page: pick sections → ready JSON in a big field → Copy / Save-to-file. */
+@Composable
+private fun BackupExportPage(cb: MoreCallbacks) {
+    val t = LocalStrings.current
+    var bkSettings by remember { mutableStateOf(true) }
+    var bkSubs by remember { mutableStateOf(true) }
+    var bkHosts by remember { mutableStateOf(true) }
+    var status by remember { mutableStateOf("") }
+    val any = bkSettings || bkSubs || bkHosts
+    // Rebuilt only when the selection changes (each build hits the DB once).
+    val json = remember(bkSettings, bkSubs, bkHosts) {
+        if (bkSettings || bkSubs || bkHosts) cb.onBuildBackup(bkSettings, bkSubs, bkHosts) else ""
+    }
+    Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(t.backupSelectExport, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+        BackupCheck(t.backupSettings, bkSettings) { bkSettings = it }
+        BackupCheck(t.backupSubs, bkSubs) { bkSubs = it }
+        BackupCheck(t.backupHosts, bkHosts) { bkHosts = it }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Button(
+                onClick = { if (json.isNotEmpty()) { cb.onCopy(json); status = "✓ ${t.backupCopyBtn}" } },
+                enabled = any && json.isNotEmpty(),
+                modifier = Modifier.weight(1f),
+            ) { Text(t.backupCopyBtn, fontSize = 15.sp) }
+            if (cb.fileIoSupported) {
+                OutlinedButton(
+                    onClick = { if (json.isNotEmpty()) status = cb.onSaveToFile("autoconnector_backup.json", json) },
+                    enabled = any && json.isNotEmpty(),
+                    modifier = Modifier.weight(1f),
+                ) { Text(t.backupSaveFile, fontSize = 15.sp) }
+            }
+        }
+        if (status.isNotEmpty()) {
+            Text(status, color = AppColors.onSurfaceMuted, fontSize = 13.sp)
+        }
+        OutlinedTextField(
+            value = json,
+            onValueChange = {},
+            readOnly = true,
+            modifier = Modifier.fillMaxWidth().weight(1f),
+            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp, fontFamily = monospaceFontFamily()),
+            label = { Text(t.backupJsonLabel, fontSize = 13.sp) },
+        )
+    }
+}
+
+/** Import page: paste JSON (or load a file) → pick sections → Import. */
+@Composable
+private fun BackupImportPage(cb: MoreCallbacks) {
+    val t = LocalStrings.current
+    var bkSettings by remember { mutableStateOf(true) }
+    var bkSubs by remember { mutableStateOf(true) }
+    var bkHosts by remember { mutableStateOf(true) }
+    var text by remember { mutableStateOf("") }
+    var status by remember { mutableStateOf("") }
+    val any = bkSettings || bkSubs || bkHosts
+    Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(t.backupSelectImport, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+        BackupCheck(t.backupSettings, bkSettings) { bkSettings = it }
+        BackupCheck(t.backupSubs, bkSubs) { bkSubs = it }
+        BackupCheck(t.backupHosts, bkHosts) { bkHosts = it }
+        if (cb.fileIoSupported) {
+            OutlinedButton(
+                onClick = { cb.onPickFile()?.let { text = it } },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text(t.backupLoadFile, fontSize = 15.sp) }
+        } else {
+            Text(t.backupAndroidFileNote, color = AppColors.onSurfaceMuted, fontSize = 13.sp)
+        }
+        OutlinedTextField(
+            value = text,
+            onValueChange = { text = it },
+            modifier = Modifier.fillMaxWidth().weight(1f),
+            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp, fontFamily = monospaceFontFamily()),
+            label = { Text(t.backupPasteLabel, fontSize = 13.sp) },
+        )
+        Button(
+            onClick = { if (text.isNotBlank() && any) status = cb.onImportText(text, bkSettings, bkSubs, bkHosts) },
+            enabled = text.isNotBlank() && any,
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text(t.backupDoImport, fontSize = 15.sp) }
+        if (status.isNotEmpty()) {
+            Text(status, color = AppColors.onSurfaceMuted, fontSize = 13.sp)
+        }
     }
 }
 

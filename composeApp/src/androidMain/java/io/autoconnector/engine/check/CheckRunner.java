@@ -35,6 +35,9 @@ public final class CheckRunner {
 
     private static final int DEFAULT_CONCURRENCY = 12;
     private static final int PROBE_TIMEOUT_MS = 8000;
+    /** Rotating counter to sample successful checks into the per-host history
+     *  (1 in 8) so continuous scanning doesn't flood attempt_log / the disk. */
+    private static final AtomicInteger AL_SAMPLE = new AtomicInteger();
     /** Coarse per-probe traffic estimate (handshake + resPQ round-trip). */
     private static final int PROBE_BYTES_ESTIMATE = 1400;
 
@@ -162,8 +165,15 @@ public final class CheckRunner {
                 Rating.record(p, r.ok(), pingMs, r.detail);
                 store.updateStats(p);
                 store.logCheck(p.id, r.ok());
+                // Record into the per-host history shown on the detail card. To
+                // keep disk writes low under continuous scanning we log EVERY
+                // failure (the interesting events) but only a 1-in-8 sample of
+                // routine successful re-checks; Telegram connects are always
+                // logged separately by the relay.
                 try {
-                    store.logAttempt(p.id, 0, r.ok(), -1, -1, r.ok() ? pingMs : -1, 0, 0);
+                    if (!r.ok() || (AL_SAMPLE.incrementAndGet() & 0x7) == 0L) {
+                        store.logAttempt(p.id, 0, r.ok(), -1, -1, r.ok() ? pingMs : -1, 0, 0);
+                    }
                 } catch (Exception ignored) {}
                 // Per-mode record — what the relay actually uses to pick
                 // an upstream on the current network.

@@ -501,11 +501,28 @@ class AndroidEngine(context: Context) : Engine {
         }
     }
 
-    // Backup export/import is a desktop feature (file dialogs); Android stub.
-    override fun exportBackup(settings: Boolean, subs: Boolean, hosts: Boolean): String =
-        "Доступно в десктоп-версии"
-    override fun importBackup(settings: Boolean, subs: Boolean, hosts: Boolean): String =
-        "Доступно в десктоп-версии"
+    // Backup payload works on Android too (copy/paste); only disk file dialogs
+    // are unavailable here, so save/pick are no-ops and fileIoSupported() = false.
+    override fun buildBackupJson(settings: Boolean, subs: Boolean, hosts: Boolean): String =
+        io.autoconnector.engine.io.BackupIo.build(store, Prefs(ctx), settings, subs, hosts)
+
+    override fun importBackupText(text: String, settings: Boolean, subs: Boolean, hosts: Boolean): String {
+        return try {
+            val r = io.autoconnector.engine.io.BackupIo.importInto(store, Prefs(ctx), text, settings, subs, hosts)
+            if (r.status == null) return "⚠ В тексте нет выбранных разделов"
+            if (r.hostsChanged) { refreshCatalog(); refreshSources() }
+            else if (r.subsChanged) refreshSources()
+            appendLog("⤒ импорт: ${r.status}")
+            "✓ Импортировано: ${r.status}"
+        } catch (t: Throwable) {
+            "⚠ Ошибка импорта: ${t.message}"
+        }
+    }
+
+    override fun saveTextToFile(suggestedName: String, text: String): String =
+        "На Android используйте «Скопировать»"
+    override fun pickTextFile(): String? = null
+    override fun fileIoSupported(): Boolean = false
 
     override fun factoryReset() {
         scope.launch(Dispatchers.IO) {

@@ -188,16 +188,28 @@ object En : Strings {
         "the next scan).\n• \"Clear downloaded hosts\" — deletes the whole proxy pool but keeps " +
         "subscriptions so the scan refills the pool. Subscriptions are never touched either way."
     override val backupTitle = "Export / Import"
-    override val backupHelp = "Save or restore app data in a single JSON file. Tick what to " +
+    override val backupHelp = "Save or restore app data as JSON. Tick what to " +
         "include — any combination:\n• Settings — all app parameters.\n• Subscriptions — the source " +
         "list (URL + on/off).\n• Live-host catalog — every live proxy with its ratings and stats " +
-        "PER network mode.\n\n\"Export\" asks where to save; \"Import\" asks which file to open and " +
-        "applies only the ticked sections present in it. Import ADDS to current data (no wipe)."
+        "PER network mode.\n\n\"Export\" opens a page with the ready JSON — copy it or save to a file. " +
+        "\"Import\" — paste JSON (or load a file) and it applies only the ticked sections present in " +
+        "it. Import ADDS to current data (no wipe)."
     override val backupSettings = "Settings"
     override val backupSubs = "Subscriptions"
     override val backupHosts = "Live-host catalog (per mode)"
     override val exportWord = "Export"
     override val importWord = "Import"
+    override val backupExportTitle = "Export data"
+    override val backupImportTitle = "Import data"
+    override val backupSelectExport = "What to export:"
+    override val backupSelectImport = "What to import:"
+    override val backupCopyBtn = "Copy"
+    override val backupSaveFile = "Save to file"
+    override val backupLoadFile = "Load from file"
+    override val backupDoImport = "Import"
+    override val backupPasteLabel = "Paste backup JSON here"
+    override val backupJsonLabel = "Backup JSON"
+    override val backupAndroidFileNote = "Files aren't available here — use Copy / Paste."
     override val eraseAllHosts = "Erase all hosts"
     override val factoryReset = "Reset everything (like first launch)"
     override val factoryResetConfirm = "Fully reset the app to factory state? ALL settings and the entire " +

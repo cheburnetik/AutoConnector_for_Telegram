@@ -44,6 +44,25 @@ public final class ProxyParser {
     private static final Pattern BARE_HP = Pattern.compile(
             "(?<![\\w.])((?:\\d{1,3}\\.){3}\\d{1,3}|[a-zA-Z0-9][a-zA-Z0-9.\\-]+\\.[a-zA-Z]{2,}):(\\d{1,5})(?![\\w:.])");
 
+    /** A flat JSON-ish object (no nested braces) — proxy APIs emit arrays of
+     *  {@code {"host":..,"port":..,"secret":..}}. Field ORDER is not assumed. */
+    private static final Pattern JSON_OBJ = Pattern.compile("\\{[^{}]{0,600}\\}");
+    private static final Pattern J_HOST = Pattern.compile(
+            "\"(?:host|ip|server|address|addr)\"\\s*:\\s*\"([^\"]+)\"", Pattern.CASE_INSENSITIVE);
+    private static final Pattern J_PORT = Pattern.compile(
+            "\"port\"\\s*:\\s*\"?(\\d{1,5})\"?", Pattern.CASE_INSENSITIVE);
+    private static final Pattern J_SECRET = Pattern.compile(
+            "\"secret\"\\s*:\\s*\"([^\"]*)\"", Pattern.CASE_INSENSITIVE);
+
+    /** {@code atob('BASE64')} blobs — many sites hide their list inside an
+     *  eval(atob(..)) wrapper to defeat naive scrapers. */
+    private static final Pattern ATOB = Pattern.compile(
+            "atob\\(\\s*['\"]([A-Za-z0-9+/=_\\-]{32,})['\"]\\s*\\)");
+    /** A whole body that is just one base64 token (V2Ray-style subscriptions). */
+    private static final Pattern WHOLE_B64 = Pattern.compile("^[A-Za-z0-9+/=_\\-\\s]+$");
+
+    private static final int MAX_DEPTH = 3;
+
     /**
      * @param text        raw page body
      * @param source      page URL, stored for provenance
@@ -51,7 +70,13 @@ public final class ProxyParser {
      */
     public static List<ProxyEntry> parse(String text, String source, ProxyType bareDefault) {
         List<ProxyEntry> out = new ArrayList<>();
-        if (text == null || text.isEmpty()) return out;
+        parse(text, source, bareDefault, 0, out);
+        return out;
+    }
+
+    private static void parse(String text, String source, ProxyType bareDefault,
+                              int depth, List<ProxyEntry> out) {
+        if (text == null || text.isEmpty() || depth > MAX_DEPTH) return;
 
         // 1a) URL-form proxies — scan the whole blob.
         Matcher m = URL_PROXY.matcher(text);
@@ -109,7 +134,82 @@ public final class ProxyParser {
                 }
             }
         }
-        return out;
+
+        // 3) JSON objects — {"host":..,"port":..,"secret":..} in any field order.
+        //    Covers proxy-list APIs (e.g. mtpro.xyz) that emit a JSON array.
+        Matcher jo = JSON_OBJ.matcher(text);
+        while (jo.find()) {
+            String obj = jo.group();
+            Matcher jh = J_HOST.matcher(obj);
+            Matcher jp = J_PORT.matcher(obj);
+            if (!jh.find() || !jp.find()) continue;
+            int port = parsePort(jp.group(1));
+            if (port < 0) continue;
+            Matcher js = J_SECRET.matcher(obj);
+            String secret = js.find() ? normSecret(js.group(1)) : null;
+            out.add(new ProxyEntry(secret != null ? ProxyType.MTPROTO : bareDefault,
+                    jh.group(1), port, secret, source));
+        }
+
+        // 4) De-obfuscation: decode atob('…') blobs (sites hide their list in an
+        //    eval(atob(..)) wrapper) and re-scan the decoded text.
+        Matcher ab = ATOB.matcher(text);
+        while (ab.find()) {
+            String dec = b64decode(ab.group(1));
+            if (dec != null && !dec.isEmpty()) parse(dec, source, bareDefault, depth + 1, out);
+        }
+
+        // 5) Whole-body base64 (V2Ray-style subscription) — only when nothing else
+        //    matched, to avoid mangling normal pages.
+        if (out.isEmpty() && depth == 0) {
+            String trimmed = text.trim();
+            if (trimmed.length() >= 40 && trimmed.length() <= MAX_B64_BODY
+                    && WHOLE_B64.matcher(trimmed).matches()) {
+                String dec = b64decode(trimmed);
+                if (dec != null && !dec.isEmpty() && !dec.equals(trimmed)) {
+                    parse(dec, source, bareDefault, depth + 1, out);
+                }
+            }
+        }
+    }
+
+    private static final int MAX_B64_BODY = 4 * 1024 * 1024;
+
+    /** Minimal, dependency-free base64 decoder (standard + URL-safe alphabets,
+     *  whitespace tolerated, padding optional). Returns null on malformed input.
+     *  java.util.Base64 needs API 26 and minSdk here is 24, so we roll our own. */
+    private static String b64decode(String in) {
+        if (in == null) return null;
+        int[] inv = B64_INV;
+        byte[] buf = new byte[in.length() * 3 / 4 + 3];
+        int outLen = 0, accum = 0, bits = 0;
+        for (int i = 0; i < in.length(); i++) {
+            char c = in.charAt(i);
+            if (c == '=' || c == '\n' || c == '\r' || c == ' ' || c == '\t') continue;
+            int v = (c < 128) ? inv[c] : -1;
+            if (v < 0) continue;          // skip stray chars rather than fail
+            accum = (accum << 6) | v;
+            bits += 6;
+            if (bits >= 8) {
+                bits -= 8;
+                buf[outLen++] = (byte) ((accum >> bits) & 0xFF);
+            }
+        }
+        try {
+            return new String(buf, 0, outLen, "UTF-8");
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static final int[] B64_INV = buildB64Inv();
+    private static int[] buildB64Inv() {
+        int[] t = new int[128];
+        for (int i = 0; i < 128; i++) t[i] = -1;
+        String std = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        for (int i = 0; i < std.length(); i++) t[std.charAt(i)] = i;
+        t['-'] = 62; t['_'] = 63;        // URL-safe alphabet maps onto +,/
+        return t;
     }
 
     private static String qparam(String query, String key) {

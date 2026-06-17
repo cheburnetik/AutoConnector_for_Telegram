@@ -104,6 +104,16 @@ public final class SQLiteDatabase {
             st.execute("PRAGMA journal_mode=WAL");
             st.execute("PRAGMA busy_timeout=5000");
             st.execute("PRAGMA synchronous=NORMAL");
+            // Keep the working set in memory and flush to disk rarely. An 8 MB
+            // page cache holds the whole proxy DB in RAM (reads never touch the
+            // platter); a big WAL-checkpoint threshold + size cap means the many
+            // repeated stat updates coalesce in the WAL and hit the main DB only
+            // occasionally — instead of the constant multi-MB/s churn the relay
+            // produced under load. The data is a re-derivable proxy cache, so
+            // NORMAL durability (lose only the last txn on a crash) is fine.
+            st.execute("PRAGMA cache_size=-8000");          // ~8 MB page cache
+            st.execute("PRAGMA wal_autocheckpoint=4000");   // checkpoint ~every 16 MB, not 4
+            st.execute("PRAGMA journal_size_limit=16777216"); // truncate WAL back to ≤16 MB
         }
         return c;
     }

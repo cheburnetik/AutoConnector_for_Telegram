@@ -651,5 +651,12 @@ public class Prefs {
             // desktop installs pick it up, afterwards the user's toggle is kept.
             sp.edit().putBoolean("hotkeys_enabled", true).putInt("defaults_v", 10).apply();
         }
+        if (v < 11) {
+            // v11 (user report 2026-06-17): on Windows, OFF/«сплит» fail the
+            // upstream handshake on many proxies → Telegram disables the proxy.
+            // Re-apply the platform default proxying engine, which is now COALESCE
+            // on desktop (SHIPPED_EXP_ENGINE=4) and OFF on Android (native path).
+            sp.edit().putInt("exp_engine_mode", SHIPPED_EXP_ENGINE).putInt("defaults_v", 11).apply();
+        }
     }
 }

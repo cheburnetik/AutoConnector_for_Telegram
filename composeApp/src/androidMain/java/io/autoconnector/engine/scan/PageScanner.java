@@ -186,6 +186,17 @@ public final class PageScanner {
         }
 
         List<ProxyEntry> list = ProxyParser.parse(body, pageUrl, ProxyType.SOCKS5);
+        if (list.isEmpty()) {
+            // The page carried no proxies inline — some sites (e.g. mtpro.xyz)
+            // load the list from a same-origin JS bundle, often base64-obfuscated
+            // inside eval(atob(..)). Pull those scripts and parse them too.
+            List<ProxyEntry> viaScripts = followSameOriginScripts(body,
+                    r.usedUrl != null ? r.usedUrl : pageUrl);
+            if (!viaScripts.isEmpty()) {
+                log.line("↳ список найден во встроенном скрипте: " + viaScripts.size());
+                list = viaScripts;
+            }
+        }
         r.found = list.size();
         if (r.found == 0) {
             r.error = "контент скачан (" + body.length()
@@ -413,6 +424,57 @@ public final class PageScanner {
         } finally {
             c.disconnect();
         }
+    }
+
+    /** {@code <script src="…">} reference in an HTML page. */
+    private static final Pattern SCRIPT_SRC = Pattern.compile(
+            "(?i)<script[^>]+\\bsrc\\s*=\\s*[\"']([^\"']+)[\"']");
+    /** Cap on how many same-origin scripts we fetch per page (keeps traffic sane). */
+    private static final int MAX_FOLLOW_SCRIPTS = 6;
+
+    /**
+     * When a page itself has no proxies, fetch the SAME-ORIGIN scripts it pulls
+     * in (skipping third-party CDNs/analytics) and parse those — that is where
+     * JS-driven lists actually live. Returns whatever proxies were found.
+     */
+    private List<ProxyEntry> followSameOriginScripts(String html, String pageUrl) {
+        List<ProxyEntry> out = new java.util.ArrayList<>();
+        String host;
+        try { host = new URL(pageUrl).getHost(); } catch (Exception e) { return out; }
+        java.util.LinkedHashSet<String> urls = new java.util.LinkedHashSet<>();
+        Matcher m = SCRIPT_SRC.matcher(html);
+        while (m.find() && urls.size() < 40) {
+            String abs = resolveUrl(pageUrl, m.group(1).replace("&amp;", "&"));
+            if (abs == null) continue;
+            try {
+                if (sameHost(new URL(abs).getHost(), host)) urls.add(abs);
+            } catch (Exception ignore) {}
+        }
+        int fetched = 0;
+        for (String u : urls) {
+            if (fetched >= MAX_FOLLOW_SCRIPTS) break;
+            if (io.autoconnector.engine.core.ScanGate.isAborted()) break;
+            try {
+                String js = fetch(u);
+                fetched++;
+                io.autoconnector.engine.traffic.ScanMetrics.INSTANCE.addSubBytes(js.length());
+                List<ProxyEntry> got = ProxyParser.parse(js, pageUrl, ProxyType.SOCKS5);
+                if (!got.isEmpty()) out.addAll(got);
+            } catch (Exception ignore) {}
+        }
+        return out;
+    }
+
+    private static String resolveUrl(String base, String ref) {
+        try { return new URL(new URL(base), ref).toString(); }
+        catch (Exception e) { return null; }
+    }
+
+    /** Same registrable host, modulo a sub-domain prefix on either side. */
+    private static boolean sameHost(String a, String b) {
+        if (a == null || b == null) return false;
+        a = a.toLowerCase(); b = b.toLowerCase();
+        return a.equals(b) || a.endsWith("." + b) || b.endsWith("." + a);
     }
 
     /** Maps a low-level exception into a short, user-readable phrase. */
