@@ -28,7 +28,16 @@ import java.util.List;
 public class ProxyStore extends SQLiteOpenHelper {
 
     private static final String DB_NAME = "autoconnector.db";
-    private static final int DB_VERSION = 11;
+    private static final int DB_VERSION = 13;
+    /** Consecutive real-Telegram relay failures before a host is put on cooldown. */
+    private static final int COOL_AFTER = 3;
+
+    /** Cooldown duration (ms) for a host after {@code consec} consecutive relay
+     *  failures: 60s, 120s, 240s, … doubling, capped at 30 min. */
+    private static long coolBackoff(int consec) {
+        int over = Math.max(0, consec - COOL_AFTER);
+        return Math.min(1_800_000L, 60_000L * (1L << Math.min(over, 5)));
+    }
     private static final String T = "proxies";
     private static final String S = "sources";
     private static final String SP = "source_proxies";
@@ -114,7 +123,9 @@ public class ProxyStore extends SQLiteOpenHelper {
                 + "tg_connections INTEGER NOT NULL DEFAULT 0,"
                 + "total_session_ms INTEGER NOT NULL DEFAULT 0,"
                 + "bytes_relayed INTEGER NOT NULL DEFAULT 0,"
-                + "last_tg_connect_at INTEGER NOT NULL DEFAULT 0)");
+                + "last_tg_connect_at INTEGER NOT NULL DEFAULT 0,"
+                + "consec_fail INTEGER NOT NULL DEFAULT 0,"
+                + "cool_until INTEGER NOT NULL DEFAULT 0)");
         db.execSQL("CREATE INDEX idx_score ON " + T + "(score DESC)");
         db.execSQL("CREATE INDEX idx_check ON " + T + "(last_check ASC)");
 
@@ -167,7 +178,8 @@ public class ProxyStore extends SQLiteOpenHelper {
                 + "tls_ms INTEGER NOT NULL DEFAULT -1,"
                 + "total_ms INTEGER NOT NULL DEFAULT -1,"
                 + "bytes_in INTEGER NOT NULL DEFAULT 0,"
-                + "bytes_out INTEGER NOT NULL DEFAULT 0)");
+                + "bytes_out INTEGER NOT NULL DEFAULT 0,"
+                + "session_ms INTEGER NOT NULL DEFAULT 0)");
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_al_proxy ON " + AL + "(proxy_id, ts)");
     }
 
@@ -185,6 +197,8 @@ public class ProxyStore extends SQLiteOpenHelper {
                 + "tg_connections INTEGER NOT NULL DEFAULT 0,"
                 + "total_session_ms INTEGER NOT NULL DEFAULT 0,"
                 + "bytes_relayed INTEGER NOT NULL DEFAULT 0,"
+                + "consec_fail INTEGER NOT NULL DEFAULT 0,"
+                + "cool_until INTEGER NOT NULL DEFAULT 0,"
                 + "PRIMARY KEY (proxy_id, mode))");
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_pms_mode_score "
                 + "ON " + PMS + "(mode, score DESC)");
@@ -221,6 +235,24 @@ public class ProxyStore extends SQLiteOpenHelper {
         }
         if (oldV < 11) {
             createAttemptLogTable(db);
+        }
+        if (oldV < 12) {
+            // attempt_log is disposable per-host history (pruned to ~50) — just
+            // recreate it with the new session_ms column rather than ALTER.
+            db.execSQL("DROP TABLE IF EXISTS " + AL);
+            createAttemptLogTable(db);
+        }
+        if (oldV < 13) {
+            // Real-Telegram-relay reliability: consecutive-failure counter +
+            // cooldown timestamp (see CONCEPT_RATING.md). T always exists here;
+            // PMS only pre-exists without these columns when oldV>=9 (oldV<9
+            // already recreated it WITH them via createModeStatsTable above).
+            db.execSQL("ALTER TABLE " + T + " ADD COLUMN consec_fail INTEGER NOT NULL DEFAULT 0");
+            db.execSQL("ALTER TABLE " + T + " ADD COLUMN cool_until INTEGER NOT NULL DEFAULT 0");
+            if (oldV >= 9) {
+                db.execSQL("ALTER TABLE " + PMS + " ADD COLUMN consec_fail INTEGER NOT NULL DEFAULT 0");
+                db.execSQL("ALTER TABLE " + PMS + " ADD COLUMN cool_until INTEGER NOT NULL DEFAULT 0");
+            }
         }
     }
 
@@ -313,12 +345,78 @@ public class ProxyStore extends SQLiteOpenHelper {
      * to the 24-hour probe log so the catalogue's "пров." column updates.
      */
     public void markAliveFromRelay(long proxyId, long ms) {
-        getWritableDatabase().execSQL(
+        SQLiteDatabase db = getWritableDatabase();
+        // Real relay success: count it, clear any cooldown / consecutive-failure
+        // streak, and recompute the score so the rating reflects real TG outcomes.
+        db.execSQL(
                 "UPDATE " + T + " SET last_check=?, last_ok=?, alive=1,"
-                        + " successes=successes+1, last_error=NULL"
+                        + " successes=successes+1, consec_fail=0, cool_until=0, last_error=NULL"
                         + " WHERE id=?",
                 new Object[]{ms, ms, proxyId});
+        recomputeScore(db, T, "id=?", new String[]{String.valueOf(proxyId)});
         logCheck(proxyId, true);
+    }
+
+    /** Recompute and persist {@code score} from the row's successes/failures/
+     *  rtt/alive using the same {@link io.autoconnector.engine.check.Rating}
+     *  formula the background probe uses — so real relay outcomes move the rating. */
+    private void recomputeScore(SQLiteDatabase db, String table, String where, String[] args) {
+        Cursor c = db.rawQuery("SELECT successes, failures, rtt_ms, alive FROM " + table
+                + " WHERE " + where, args);
+        try {
+            if (c != null && c.moveToFirst()) {
+                double s = io.autoconnector.engine.check.Rating.computePerMode(
+                        c.getInt(0), c.getInt(1), c.getInt(2), c.getInt(3) != 0);
+                ContentValues v = new ContentValues();
+                v.put("score", s);
+                db.update(table, v, where, args);
+            }
+        } finally { if (c != null) c.close(); }
+    }
+
+    /**
+     * Records a FAILED real-Telegram relay attempt against the host (global and,
+     * if known, per-mode): failures++, consecutive-failure streak++, and — once
+     * the streak reaches {@link #COOL_AFTER} — a growing cooldown that excludes
+     * the host from normal selection until it expires or a success clears it.
+     * Score is recomputed so the displayed rating drops too. See CONCEPT_RATING.md.
+     */
+    public void markRelayFailure(long proxyId, NetworkMode mode, long now) {
+        SQLiteDatabase db = getWritableDatabase();
+        bumpFailure(db, T, "id=?", new String[]{String.valueOf(proxyId)}, now);
+        if (mode != null && mode != NetworkMode.UNKNOWN) {
+            ContentValues seed = new ContentValues();
+            seed.put("proxy_id", proxyId);
+            seed.put("mode", mode.code);
+            db.insertWithOnConflict(PMS, null, seed, SQLiteDatabase.CONFLICT_IGNORE);
+            bumpFailure(db, PMS, "proxy_id=? AND mode=?",
+                    new String[]{String.valueOf(proxyId), mode.code}, now);
+        }
+        logRelayAttempt(proxyId, false);
+    }
+
+    private void bumpFailure(SQLiteDatabase db, String table, String where, String[] args, long now) {
+        Cursor c = db.rawQuery("SELECT successes, failures, rtt_ms, alive, consec_fail FROM "
+                + table + " WHERE " + where, args);
+        try {
+            if (c == null || !c.moveToFirst()) return;
+            int succ = c.getInt(0), fail = c.getInt(1) + 1, rtt = c.getInt(2);
+            boolean alive = c.getInt(3) != 0;
+            int consec = c.getInt(4) + 1;
+            double score = io.autoconnector.engine.check.Rating.computePerMode(succ, fail, rtt, alive);
+            ContentValues v = new ContentValues();
+            v.put("failures", fail);
+            v.put("consec_fail", consec);
+            v.put("score", score);
+            if (consec >= COOL_AFTER) v.put("cool_until", now + coolBackoff(consec));
+            db.update(table, v, where, args);
+        } finally { if (c != null) c.close(); }
+    }
+
+    /** True while the host is on relay-failure cooldown (skip it for selection). */
+    public boolean isCooled(long proxyId) {
+        return scalar("SELECT COUNT(*) FROM " + T + " WHERE id=? AND cool_until>?",
+                new String[]{String.valueOf(proxyId), String.valueOf(System.currentTimeMillis())}) > 0;
     }
 
     /** Records one completed relay session through the given proxy. */
@@ -402,15 +500,17 @@ public class ProxyStore extends SQLiteOpenHelper {
             new java.util.concurrent.atomic.AtomicLong();
 
     public void logAttempt(long proxyId, int kind, boolean success, int tcpMs,
-                           int tlsMs, int totalMs, long bytesIn, long bytesOut) {
+                           int tlsMs, int totalMs, long bytesIn, long bytesOut,
+                           long sessionMs) {
         try {
             SQLiteDatabase db = getWritableDatabase();
             db.execSQL("INSERT INTO " + AL
                             + " (proxy_id, ts, kind, success, tcp_ms, tls_ms,"
-                            + " total_ms, bytes_in, bytes_out)"
-                            + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                            + " total_ms, bytes_in, bytes_out, session_ms)"
+                            + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     new Object[]{proxyId, System.currentTimeMillis(), kind,
-                            success ? 1 : 0, tcpMs, tlsMs, totalMs, bytesIn, bytesOut});
+                            success ? 1 : 0, tcpMs, tlsMs, totalMs, bytesIn, bytesOut,
+                            sessionMs});
             // Trim this proxy's history (keep ~50) only every 16th insert overall:
             // the table stays bounded while the expensive subquery runs 16x less.
             if ((AL_INSERTS.incrementAndGet() & 0xF) == 0L) {
@@ -435,7 +535,7 @@ public class ProxyStore extends SQLiteOpenHelper {
         try {
             c = getReadableDatabase().rawQuery(
                     "SELECT ts, kind, success, tcp_ms, tls_ms, total_ms,"
-                            + " bytes_in, bytes_out FROM " + AL
+                            + " bytes_in, bytes_out, session_ms FROM " + AL
                             + " WHERE proxy_id=? ORDER BY ts DESC, id DESC LIMIT ?",
                     new String[]{String.valueOf(proxyId), String.valueOf(limit)});
             while (c.moveToNext()) {
@@ -449,6 +549,7 @@ public class ProxyStore extends SQLiteOpenHelper {
                 r.totalMs = c.getInt(5);
                 r.bytesIn = c.getLong(6);
                 r.bytesOut = c.getLong(7);
+                r.sessionMs = c.getLong(8);
                 out.add(r);
             }
         } catch (Exception ignored) {
@@ -589,8 +690,16 @@ public class ProxyStore extends SQLiteOpenHelper {
      *  the last probe already declared dead. */
     public List<ProxyEntry> topAlive(int limit) {
         return query("SELECT * FROM " + T + " WHERE alive=1 AND last_check>0"
+                        + " AND cool_until < (CAST(strftime('%s','now') AS INTEGER)*1000)"
                         + " ORDER BY score DESC, rtt_ms ASC LIMIT ?",
                 new String[]{String.valueOf(limit)});
+    }
+
+    /** Single host by id (for the catalog "test now"), or null if gone. */
+    public ProxyEntry byId(long id) {
+        List<ProxyEntry> l = query("SELECT * FROM " + T + " WHERE id=? LIMIT 1",
+                new String[]{String.valueOf(id)});
+        return (l == null || l.isEmpty()) ? null : l.get(0);
     }
 
     /** Random sample of alive hosts NOT in the top tier — for diversification
@@ -598,6 +707,7 @@ public class ProxyStore extends SQLiteOpenHelper {
      *  candidates, not endless retries of the same dead set. */
     public List<ProxyEntry> randomAlive(int limit) {
         return query("SELECT * FROM " + T + " WHERE alive=1 AND last_check>0"
+                        + " AND cool_until < (CAST(strftime('%s','now') AS INTEGER)*1000)"
                         + " ORDER BY RANDOM() LIMIT ?",
                 new String[]{String.valueOf(limit)});
     }
@@ -1065,8 +1175,11 @@ public class ProxyStore extends SQLiteOpenHelper {
                 SQLiteDatabase.CONFLICT_IGNORE);
         getWritableDatabase().execSQL(
                 "UPDATE " + PMS + " SET last_check=?, last_ok=?, alive=1,"
-                        + " successes=successes+1 WHERE proxy_id=? AND mode=?",
+                        + " successes=successes+1, consec_fail=0, cool_until=0"
+                        + " WHERE proxy_id=? AND mode=?",
                 new Object[]{now, now, proxyId, mode.code});
+        recomputeScore(getWritableDatabase(), PMS, "proxy_id=? AND mode=?",
+                new String[]{String.valueOf(proxyId), mode.code});
     }
 
     public void modeRecordSession(long proxyId, NetworkMode mode, long durMs, long bytes) {
@@ -1089,6 +1202,7 @@ public class ProxyStore extends SQLiteOpenHelper {
         return joinedQuery(
                 "JOIN " + PMS + " m ON m.proxy_id=p.id AND m.mode=?"
                         + " WHERE m.alive=1 AND m.last_check>0"
+                        + " AND m.cool_until < (CAST(strftime('%s','now') AS INTEGER)*1000)"
                         + " ORDER BY m.score DESC, m.rtt_ms ASC LIMIT ?",
                 new String[]{mode.code, String.valueOf(limit)});
     }
@@ -1109,6 +1223,7 @@ public class ProxyStore extends SQLiteOpenHelper {
         return joinedQuery(
                 "JOIN " + PMS + " m ON m.proxy_id=p.id AND m.mode=?"
                         + " WHERE m.alive=1 AND m.last_check>0"
+                        + " AND m.cool_until < (CAST(strftime('%s','now') AS INTEGER)*1000)"
                         + " ORDER BY RANDOM() LIMIT ?",
                 new String[]{mode.code, String.valueOf(limit)});
     }

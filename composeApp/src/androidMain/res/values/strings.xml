@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">AutoConnector for Telegram</string>
+    <string name="vol_accessibility_desc">Watches fast Volume-button click patterns to switch the Telegram proxy. Only acts while the in-app toggle is on; volume keys keep working normally.</string>
 </resources>

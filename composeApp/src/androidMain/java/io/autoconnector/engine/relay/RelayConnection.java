@@ -64,11 +64,13 @@ public final class RelayConnection implements Runnable {
             new java.util.concurrent.atomic.AtomicLong();
     private static final long TG_PREF_MIN_GAP_MS = 8000L;
 
-    /** Sampler for failed-upstream logging: a handshake-failure storm tries many
-     *  candidates that all fail, so logging each one floods the DB/disk. Keep ~1
-     *  in 8 — enough for stats/history, a fraction of the writes. */
-    private static final java.util.concurrent.atomic.AtomicLong FAIL_LOG_SEQ =
-            new java.util.concurrent.atomic.AtomicLong();
+    /** Per-host debounce for failed-relay accounting: a handshake-failure storm
+     *  tries many candidates / Telegram opens many sockets fast, so we count a
+     *  given host's failure at most once per window (the cooldown then pulls it
+     *  out of the selection pool). See CONCEPT_RATING.md. */
+    private static final java.util.concurrent.ConcurrentHashMap<Long, Long> FAIL_AT =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private static final long FAIL_DEBOUNCE_MS = 8_000L;
 
     private final Socket tg;
     private final int localPort;
@@ -124,6 +126,29 @@ public final class RelayConnection implements Runnable {
             tg.setSoTimeout(HANDSHAKE_TIMEOUT_MS);
             InputStream tgIn = tg.getInputStream();
             OutputStream tgOut = tg.getOutputStream();
+
+            // 0. LAN sharing / web-portal multiplex (same ports as Telegram).
+            //    - A LAN client when sharing is OFF → ignore (loopback always allowed).
+            //    - Sniff the first byte: a browser (HTTP method / TLS 0x16) gets the
+            //      proxy-list web page; SOCKS5 (0x05) is Telegram (local or a neighbour)
+            //      and falls through to the normal relay path. The peeked byte is
+            //      pushed back so the SOCKS handshake sees the stream intact.
+            boolean loopback = tg.getInetAddress() != null && tg.getInetAddress().isLoopbackAddress();
+            if (!loopback && !prefs.lanShareEnabled()) return;
+            java.io.PushbackInputStream pin = new java.io.PushbackInputStream(tgIn, 1);
+            int first = pin.read();
+            if (first == -1) return;
+            pin.unread(first);
+            tgIn = pin;
+            if (first == 0x16) {                       // TLS ClientHello → browser via https://
+                String ip = LanAddress.bestLanIPv4();
+                WebPortal.serveTlsHint(tgOut, "http://" + (ip != null ? ip : "<device-ip>") + ":" + localPort);
+                return;
+            }
+            if (first >= 'A' && first <= 'Z') {        // HTTP method (GET/POST/HEAD/…) → browser
+                serveWebPortal(pin, tgOut);
+                return;
+            }
 
             // 1. SOCKS5 handshake — learn the DC endpoint Telegram wants.
             Socks5Server.Target dst = Socks5Server.handshake(tgIn, tgOut);
@@ -185,8 +210,17 @@ public final class RelayConnection implements Runnable {
             if (dcId < 1 || dcId > 5) dcId = DcAddresses.dcIdForIp(dst.host);
 
             // 3. Acquire an upstream, with connect-time failover.
-            up = acquireUpstream(tag, dcId, dst, handshakeMode, onlyFakeTls, expEngine, connMode,
-                    prefs.relayRaceWidth(), prefs.relayBreadth(), prefs.relayConnectTimeoutMs());
+            // 3a. Experimental: try a pre-warmed standby socket first — if the pool
+            //     has a warm FakeTLS channel it skips the (multi-RTT) connect/handshake.
+            //     take() returns null when the feature is off, so the normal path runs.
+            boolean fromPrewarm = false;
+            PrewarmPool pw = manager.prewarm();
+            if (pw != null) { up = pw.take(tag, dcId, expEngine, handshakeMode); fromPrewarm = up != null; }
+            // 3b. Otherwise connect normally.
+            if (up == null) {
+                up = acquireUpstream(tag, dcId, dst, handshakeMode, onlyFakeTls, expEngine, connMode,
+                        prefs.relayRaceWidth(), prefs.relayBreadth(), prefs.relayConnectTimeoutMs());
+            }
             // If the chosen proxying engine failed EVERY upstream handshake (common
             // on Windows with «нет»/«сплит» — immediate/fragmented first send), retry
             // once with coalescing: it batches the obfuscated2-init + FakeTLS hello
@@ -273,6 +307,7 @@ public final class RelayConnection implements Runnable {
                     upstreamProxy.id, dcId,
                     upstreamProxy.type == ProxyType.MTPROTO,
                     upstreamProxy.rttMs, sni, srcNum);
+            liveConn.fromPrewarm = fromPrewarm;
             liveConnRef = liveConn;
             liveConnRefForLatency = liveConn;
             // Seed the relay-ping graph with this upstream's TCP-connect RTT — a
@@ -354,7 +389,7 @@ public final class RelayConnection implements Runnable {
                             up != null ? up.connectMs : -1,
                             up != null ? up.tlsMs : -1,
                             up != null ? up.totalMs : -1,
-                            inB, outB);
+                            inB, outB, dur);
                 } catch (Exception ignored) {}
                 // Anti-DPI bookkeeping. "active" window = first real byte
                 // after handshake → end-of-session; "duration" = whole pipe
@@ -635,7 +670,8 @@ public final class RelayConnection implements Runnable {
         List<ProxyEntry> candidates = new ArrayList<>(pool.size() + 1);
         if (!bouncing && b < 70) {
             ProxyEntry sticky = manager.stickyUpstream(localPort);
-            if (sticky != null && (!onlyFakeTls || sticky.isFakeTls())) candidates.add(sticky);
+            if (sticky != null && (!onlyFakeTls || sticky.isFakeTls())
+                    && !store.isCooled(sticky.id)) candidates.add(sticky);
         }
         for (ProxyEntry p : pool) if (!containsId(candidates, p.id)) candidates.add(p);
 
@@ -894,11 +930,37 @@ public final class RelayConnection implements Runnable {
         }
     }
 
-    /** Throttled logging of a failed upstream attempt (see FAIL_LOG_SEQ). */
+    /** Records a failed real-Telegram relay attempt against the host: penalises
+     *  its rating (failures++ → score recompute) and arms a growing cooldown
+     *  after repeated failures so Telegram stops being sent to a host whose real
+     *  connects keep failing (CONCEPT_RATING.md). Debounced per host. */
     private void logFailedAttempt(long proxyId) {
-        if ((FAIL_LOG_SEQ.incrementAndGet() & 0x7L) != 0L) return;
-        try { store.logRelayAttempt(proxyId, false); } catch (Exception ignored) {}
-        try { store.logAttempt(proxyId, 1, false, -1, -1, -1, 0, 0); } catch (Exception ignored) {}
+        long now = System.currentTimeMillis();
+        Long last = FAIL_AT.get(proxyId);
+        if (last != null && now - last < FAIL_DEBOUNCE_MS) return;
+        FAIL_AT.put(proxyId, now);
+        io.autoconnector.engine.core.NetworkMode net =
+                io.autoconnector.engine.core.NetworkMonitor.currentMode();
+        try { store.markRelayFailure(proxyId, net, now); } catch (Exception ignored) {}
+        try { store.logAttempt(proxyId, 1, false, -1, -1, -1, 0, 0, 0); } catch (Exception ignored) {}
+    }
+
+    /** Serves the LAN web portal to a browser: this device as a SOCKS proxy
+     *  (both relay ports) plus the best discovered hosts as Telegram proxy links. */
+    private void serveWebPortal(java.io.InputStream in, OutputStream out) {
+        try {
+            String ip = LanAddress.bestLanIPv4();
+            java.util.List<WebPortal.Link> links = new java.util.ArrayList<>();
+            try {
+                for (ProxyEntry p : store.topAlive(20)) {
+                    String sub = (p.type == ProxyType.MTPROTO)
+                            ? ("MTProto" + (p.isFakeTls() ? " · FakeTLS" : p.isDdSecret() ? " · dd" : ""))
+                            : "SOCKS5";
+                    links.add(new WebPortal.Link(p.host + ":" + p.port, sub, p.tgLink()));
+                }
+            } catch (Exception ignored) {}
+            WebPortal.serveHttp(in, out, ip, manager.portA, manager.portB, links);
+        } catch (Exception ignored) {}
     }
 
     private void flushBytesToProxy(long n) {

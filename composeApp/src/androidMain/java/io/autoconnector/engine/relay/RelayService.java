@@ -120,6 +120,8 @@ public final class RelayService extends Service {
     private static final long SUBS_TICK_MS = 30_000L;       // healthy pool → relaxed poll
     private static final long SUBS_TICK_FAST_MS = 4_000L;    // empty/thin pool → notice fast
     private long lastSubsRun = 0;
+    /** Last time we ran the SCHEDULED (healthy-pool) per-mode subscription refresh. */
+    private long lastScheduledRefreshAt = 0;
     private volatile boolean subsRunning = false;
     private final Runnable subsRefillTask = new Runnable() {
         @Override
@@ -148,8 +150,33 @@ public final class RelayService extends Service {
         ProxyStore store = ProxyStore.get(this);
         int total = store.count();
         int alive = store.aliveCount();
-        if (total >= 2000 && alive >= 20) return;            // genuinely healthy
         long now = System.currentTimeMillis();
+        if (total >= 2000 && alive >= 20) {
+            // Pool is healthy — but STILL re-download subscriptions on the per-mode
+            // schedule so fresh proxies keep arriving. (Bug: with a healthy pool the
+            // old code returned here forever, so dozens of 30-min sources never
+            // re-downloaded — hours could pass with no refresh.)
+            Prefs prefs = new Prefs(this);
+            io.autoconnector.engine.core.NetworkMode mode =
+                    io.autoconnector.engine.core.NetworkMonitor.currentMode();
+            long intervalMs = Math.max(60_000L, prefs.subIntervalMin(mode) * 60_000L);
+            if (lastScheduledRefreshAt != 0 && now - lastScheduledRefreshAt < intervalMs) return;
+            lastScheduledRefreshAt = now;
+            subsRunning = true;
+            new Thread(() -> {
+                try {
+                    RelayLog.emit("@subs", "⟳ плановое обновление подписок (каждые "
+                            + (intervalMs / 60000) + " мин)");
+                    scheduledRefresh(store);
+                } catch (Throwable t) {
+                    RelayLog.emit("@subs", "⚠ плановое обновление: " + t.getMessage());
+                } finally {
+                    subsRunning = false;
+                    if (manager != null) try { manager.refreshStickies(); } catch (Throwable ignored) {}
+                }
+            }, "subs-scheduled").start();
+            return;
+        }
         // Tell the Scan tab WHY it isn't scanning hard yet: an empty pool has
         // nothing to check, so the scan waits on the subscription download. This
         // line is the user-facing justification for the (apparent) idle scan.
@@ -182,6 +209,22 @@ public final class RelayService extends Service {
                 if (manager != null) try { manager.refreshStickies(); } catch (Throwable ignored) {}
             }
         }, "subs-refill").start();
+    }
+
+    /** Light scheduled refresh (healthy pool): ONE parallel pass over every
+     *  enabled subscription so fresh proxies arrive on the per-mode interval.
+     *  Newly added hosts are graded by the regular scan/check loop. */
+    private void scheduledRefresh(ProxyStore store) {
+        if (io.autoconnector.engine.core.ScanGate.isAborted()) return;
+        PageScanner scanner = new PageScanner(store, line -> RelayLog.emit("@subs", line));
+        List<String> srcs = store.enabledSourceUrls();
+        if (srcs.isEmpty()) return;
+        int before = store.count();
+        int threads = Math.min(32, Math.max(8, srcs.size()));
+        RelayLog.emit("@subs", "⟳ обновляю " + srcs.size() + " подписок × " + threads + " потоков");
+        downloadSourcesParallel(scanner, store, srcs, threads);
+        RelayLog.emit("@subs", "⟳ готово: в базе " + store.count() + " прокси (+"
+                + Math.max(0, store.count() - before) + ")");
     }
 
     /** Re-download every subscription that hasn't yielded anything yet, round

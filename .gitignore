@@ -31,3 +31,7 @@ run-windows-wine.sh
 .idea/
 *.iml
 .DS_Store
+
+# JVM crash artifacts
+*.hprof
+hs_err_pid*.log

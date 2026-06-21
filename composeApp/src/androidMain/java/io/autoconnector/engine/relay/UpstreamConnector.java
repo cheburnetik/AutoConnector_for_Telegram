@@ -26,7 +26,9 @@ public final class UpstreamConnector {
         public final Socket socket;
         public final InputStream in;
         public final OutputStream out;
-        public final Obfuscated2 obf;
+        /** Obfuscated2 ciphers. {@code null} on a half-open (pre-warm) channel
+         *  until {@link #finishObf} sends the init and seeds the ciphers. */
+        public Obfuscated2 obf;
         public ProxyEntry proxy;
         /** Which handshake-mode actually got applied (after AUTO_RANDOM resolves). */
         public HandshakeMode handshakeMode = HandshakeMode.NORMAL;
@@ -125,8 +127,63 @@ public final class UpstreamConnector {
         }
     }
 
+    // --- Pre-warm support (experimental standby pool) ------------------------
+
+    /**
+     * Connects to a FakeTLS upstream and completes ONLY the TCP + FakeTLS
+     * handshake, WITHOUT sending the obfuscated2 init. The returned channel has
+     * {@code obf == null}: it is parked (no DC committed, no dcId/tag bound) and
+     * sends ZERO application bytes, so it can be held in the pre-warm pool and
+     * later bound to the real dcId/tag via {@link #finishObf}. FakeTLS only —
+     * that is where the saved (multi-RTT) handshake actually matters.
+     */
+    public static Channel connectHalf(ProxyEntry p, int timeoutMs,
+                                      HandshakeMode userMode, WireShaper.Mode exp)
+            throws Exception {
+        if (p.type == io.autoconnector.engine.model.ProxyType.SOCKS5 || !p.isFakeTls())
+            throw new IllegalArgumentException("connectHalf: FakeTLS upstreams only");
+        HandshakeMode effective = (userMode == HandshakeMode.AUTO_RANDOM)
+                ? HandshakeMode.randomTrick() : userMode;
+        HandshakeStats.noteUsed(effective);
+        HandshakeStats.recordAttempt(effective);
+        Channel c = connectMtprotoHalf(p, timeoutMs, effective, exp);
+        c.proxy = p;
+        c.handshakeMode = effective;
+        return c;
+    }
+
+    /**
+     * Hand-off step for a pre-warmed channel: now that the real {@code dcId} and
+     * transport {@code tag} are known (from Telegram's handshake), send the
+     * obfuscated2 init and seed the ciphers. After this the channel is identical
+     * to one returned by {@link #connect}.
+     */
+    public static void finishObf(Channel half, int tag, int dcId) throws Exception {
+        performObf(half, tag, dcId);
+        HandshakeStats.recordHandshake(half.handshakeMode);
+    }
+
     /** MTProto upstream: obfuscated2 with the proxy secret, FakeTLS-wrapped if needed. */
     private static Channel connectMtproto(ProxyEntry p, int tag, int dcId,
+                                          int timeoutMs, HandshakeMode mode,
+                                          WireShaper.Mode exp)
+            throws Exception {
+        Channel c = connectMtprotoHalf(p, timeoutMs, mode, exp);
+        c.proxy = p;                 // performObf reads the secret from it
+        performObf(c, tag, dcId);
+        return c;
+    }
+
+    /** Sends the obfuscated2 init on an already-connected channel and seeds [obf]. */
+    private static void performObf(Channel c, int tag, int dcId) throws Exception {
+        byte[] secret = HealthChecker.secretBytes(c.proxy.secret);
+        Obfuscated2 obf = new Obfuscated2();
+        obf.perform(c.out, secret, tag, dcId);
+        c.obf = obf;
+    }
+
+    /** TCP connect + FakeTLS (if «ee») WITHOUT the obfuscated2 init ([obf]==null). */
+    private static Channel connectMtprotoHalf(ProxyEntry p,
                                           int timeoutMs, HandshakeMode mode,
                                           WireShaper.Mode exp)
             throws Exception {
@@ -191,9 +248,10 @@ public final class UpstreamConnector {
                 out = WireShaper.wrapApp(rawOut, exp, false);
             }
 
-            Obfuscated2 obf = new Obfuscated2();
-            obf.perform(out, secret, tag, dcId);
-            Channel c = new Channel(s, in, out, obf);
+            // Half-open: ciphers seeded later by performObf/finishObf once the
+            // dcId + transport tag are known (immediately for the normal path,
+            // at hand-off for a pre-warmed channel).
+            Channel c = new Channel(s, in, out, null);
             c.connectMs = connMs;
             c.tlsMs = tlsMs;
             c.totalMs = (int) ((System.nanoTime() - connT0) / 1_000_000L);

@@ -29,6 +29,17 @@ data class Session(
     val lastData: String,
     val traffic: String,
     val alive: Boolean,
+    /** True if this connection's upstream was handed over from the pre-warm pool. */
+    val fromPrewarm: Boolean = false,
+)
+
+/** One row of the Connector-tab pre-warm table: a standby socket being warmed,
+ *  or a warmed socket now carrying Telegram. */
+data class PrewarmRow(
+    val host: String,
+    val ageSecs: Long,       // how long the socket has been alive
+    val inUse: Boolean,      // true = now used by Telegram; false = idle standby (new)
+    val traffic: String,     // bytes both ways once in use ("↓.. ↑.."), "—" while idle
 )
 
 /** Details of the upstream proxy currently carrying Telegram traffic. */
@@ -141,6 +152,11 @@ data class EngineSettings(
     // Per-upstream wait budget (ms) for TCP connect + TLS + first MTProto reply
     // before trying the next proxy. 100..15000, log-scaled slider.
     val relayConnectTimeoutMs: Int = 8000,
+    // Experimental: pre-warm standby upstream sockets (off by default).
+    val prewarmEnabled: Boolean = true,
+    val prewarmMode: Int = 0,            // 0 = deferred-obf2 (TLS-only), 1 = full handshake
+    val prewarmPool: Int = 5,            // standby sockets to hold (1..8)
+    val prewarmHoldSecs: Int = 20,       // hold each before rotation (5..120 s)
 )
 
 /** One past attempt against a host, for the detail card's history list. */
@@ -153,6 +169,8 @@ data class HistoryRecord(
     val totalMs: Int = -1,    // total connect+handshake duration, -1 = unknown
     val bytesIn: Long = 0,
     val bytesOut: Long = 0,
+    val sessionMs: Long = 0,  // relay-session duration (successful TG connect), 0 otherwise
+    val secondsAgo: Long = -1, // how long ago the attempt happened (computed in-engine), -1 = unknown
 )
 
 /** A selectable experimental upstream engine for the settings picker. */
@@ -327,6 +345,23 @@ data class EngineState(
     val aliveMode: Int = 0,                  // alive hosts for the ACTIVE mode
     val deadMode: Int = 0,
     val totalMode: Int = 0,
+    // Experimental pre-warm standby pool (Connector tab status).
+    val prewarmEnabled: Boolean = false,
+    val prewarmHoldSecs: Int = 0,     // configured hold-before-rotation
+    val prewarmRows: List<PrewarmRow> = emptyList(),  // warming + in-use prewarmed sockets
+    // LAN sharing / web portal (Settings).
+    val lanShareEnabled: Boolean = false,
+    val lanUrls: List<String> = emptyList(),  // URLs neighbours use, e.g. ["http://192.168.1.42:55001", "http://192.168.1.42:55002"]
+    // Android volume-button pattern trigger (Hotkeys page, Android variant).
+    val volPatternSupported: Boolean = false,
+    val volPatternEnabled: Boolean = false,
+    val volPatternGapMs: Int = 800,
+    val volPatternIndex: Int = 0,
+    val accessibilityGranted: Boolean = false,
+    // Catalog "test host now" live state.
+    val testHostId: Long = 0,
+    val testRunning: Boolean = false,
+    val testSummary: String = "",
 ) {
     // Identity-based equals is fine and avoids the array-equals boilerplate;
     // every tick produces a fresh instance anyway.
@@ -495,4 +530,38 @@ interface Engine {
 
     fun start()
     fun dispose()
+
+    /** Desktop: called when the window is minimised/restored (or hidden to tray)
+     *  so UI-only background work (state poll, sparkline ingest) can back off and
+     *  a minimised window costs ~no CPU/disk. No-op on platforms that manage this
+     *  via their own lifecycle (Android). */
+    fun setUiActive(active: Boolean) {}
+
+    /** Toggle LAN sharing / web portal (binds relay ports to the LAN and serves a
+     *  proxy-list web page to browsers). Applied immediately. */
+    fun setLanShareEnabled(enabled: Boolean) {}
+
+    // Android volume-button pattern trigger — replaces the desktop hotkeys page on
+    // Android. Default no-ops so desktop (where hotkeys are real) keeps its page.
+    /** True on Android (the Hotkeys page shows volume-pattern UI instead). */
+    fun volPatternSupported(): Boolean = false
+    fun volPatternEnabled(): Boolean = false
+    fun setVolPatternEnabled(on: Boolean) {}
+    fun volPatternGapMs(): Int = 800
+    fun setVolPatternGapMs(ms: Int) {}
+    /** Selected pattern index (0..9 into the recognised-patterns list). */
+    fun volPatternIndex(): Int = 0
+    fun setVolPatternIndex(i: Int) {}
+    /** Whether our accessibility service is currently granted (required to watch keys). */
+    fun accessibilityGranted(): Boolean = false
+    /** Open the system Accessibility settings so the user can grant access. */
+    fun openAccessibilitySettings() {}
+    /** Open this app's "App info" screen — where Android 13+ hides "Allow restricted
+     *  settings" (needed to ungrey Accessibility for sideloaded installs). */
+    fun openAppInfo() {}
+
+    /** Catalog "test this host now": run a few real probes against the host, log
+     *  each into its attempt history, and surface live progress via EngineState. */
+    fun testHostNow(id: Long) {}
+    fun stopHostTest() {}
 }

@@ -15,6 +15,7 @@ import io.autoconnector.engine.Engine
 import io.autoconnector.engine.EngineSettings
 import io.autoconnector.engine.HistoryRecord
 import io.autoconnector.engine.EngineState
+import io.autoconnector.engine.PrewarmRow
 import io.autoconnector.engine.ExpEngineOption
 import io.autoconnector.engine.ScanParams
 import io.autoconnector.engine.HandshakeOption
@@ -144,7 +145,7 @@ class AndroidEngine(context: Context) : Engine {
 
     override fun setProxyEnabled(on: Boolean) {
         Prefs(ctx).setAppEnabled(on)
-        appendLog(if (on) "⏻ прокси включён — открываю порты" else "⏻ прокси отключён — закрываю порты")
+        appendLog(if (on) "⏻ proxy enabled — opening ports" else "⏻ proxy disabled — closing ports")
         syncService()
         pushImmediate()
     }
@@ -161,7 +162,7 @@ class AndroidEngine(context: Context) : Engine {
             io.autoconnector.engine.traffic.ScanPingBuffer.INSTANCE.reset()
             io.autoconnector.engine.traffic.ThreadsBuffer.INSTANCE.reset()
         }
-        appendLog(if (on) "✓ фоновое сканирование включено" else "⏸ фоновое сканирование отключено — останавливаю фоновые задачи", LogCat.SCAN)
+        appendLog(if (on) "✓ background scanning enabled" else "⏸ background scanning disabled — stopping background tasks", LogCat.SCAN)
         syncService()
         pushImmediate()
     }
@@ -217,6 +218,10 @@ class AndroidEngine(context: Context) : Engine {
             relayRaceWidth = p.relayRaceWidth(),
             relayBreadth = p.relayBreadth(),
             relayConnectTimeoutMs = p.relayConnectTimeoutMs(),
+            prewarmEnabled = p.prewarmEnabled(),
+            prewarmMode = p.prewarmMode(),
+            prewarmPool = p.prewarmPool(),
+            prewarmHoldSecs = p.prewarmHoldSecs(),
         )
     }
 
@@ -263,6 +268,10 @@ class AndroidEngine(context: Context) : Engine {
         p.setRelayRaceWidth(s.relayRaceWidth)
         p.setRelayBreadth(s.relayBreadth)
         p.setRelayConnectTimeoutMs(s.relayConnectTimeoutMs)
+        p.setPrewarmEnabled(s.prewarmEnabled)
+        p.setPrewarmMode(s.prewarmMode)
+        p.setPrewarmPool(s.prewarmPool)
+        p.setPrewarmHoldSecs(s.prewarmHoldSecs)
         NetLog.setEnabled(s.netLogEnabled)
         // Re-apply the override only when the mode picker actually changed, so a
         // plain settings-save doesn't kick the network monitor.
@@ -271,7 +280,7 @@ class AndroidEngine(context: Context) : Engine {
         }
         loadSettings()
         if (p.appEnabled() || p.scanEnabled()) RelayService.reconfigure(ctx)
-        appendLog("⚙ настройки сохранены")
+        appendLog("⚙ settings saved")
     }
 
     override fun handshakeModeLabels(): List<String> =
@@ -317,14 +326,14 @@ class AndroidEngine(context: Context) : Engine {
         // Android has no folder-opener; surface the path so the user can pull
         // the file with a file manager from the app's external files dir.
         val p = NetLog.file()?.absolutePath
-        appendLog(if (p != null) "· лог сетевого обмена: $p" else "⚠ путь лога недоступен")
+        appendLog(if (p != null) "· network traffic log: $p" else "⚠ log path unavailable")
     }
 
     override fun dataDirPath(): String = ctx.filesDir.absolutePath
 
     override fun openDataFolder() {
         // No generic folder-opener on Android; just surface the path in the log.
-        appendLog("· папка данных: ${ctx.filesDir.absolutePath}")
+        appendLog("· data folder: ${ctx.filesDir.absolutePath}")
     }
 
     override fun handshakeStats(): List<HandshakeStatRow> =
@@ -352,19 +361,19 @@ class AndroidEngine(context: Context) : Engine {
 
     override fun resetStats() {
         HandshakeStats.resetAll()
-        appendLog("⚙ статистика хитростей сброшена")
+        appendLog("⚙ DPI trick stats reset")
     }
 
     override fun resetCatalogStats() {
         store.resetCatalogStats()
         HandshakeStats.resetAll()
-        appendLog("⚙ каталог и статистика сброшены (хосты и подписки сохранены)")
+        appendLog("⚙ catalog and stats reset (hosts and subscriptions kept)")
     }
 
     override fun clearDownloadedHosts() {
         store.clearDownloadedHosts()
         store.resetSourceStats()   // subscriptions back to "never / zeros"
-        appendLog("⚙ список скачанных хостов очищен — подписки обнулены, качаю заново")
+        appendLog("⚙ downloaded host list cleared — subscriptions reset, re-downloading")
         refreshCatalog(); refreshSources()
         // Pool is empty now — re-download + re-check instead of waiting.
         scope.launch(Dispatchers.IO) { try { scanAndCheck() } catch (_: Throwable) {} }
@@ -381,7 +390,7 @@ class AndroidEngine(context: Context) : Engine {
 
     override fun pin(id: Long, pinned: Boolean) {
         if (RelayManager.INSTANCE == null) {
-            appendLog("⚠ релей не запущен — закрепление недоступно")
+            appendLog("⚠ relay not running — pinning unavailable")
             return
         }
         val entry = store.proxiesByIds(listOf(id)).firstOrNull()
@@ -398,7 +407,7 @@ class AndroidEngine(context: Context) : Engine {
     override fun copyToClipboard(text: String) {
         val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
         cm.setPrimaryClip(ClipData.newPlainText("AutoConnector", text))
-        appendLog("· скопировано в буфер")
+        appendLog("· copied to clipboard")
     }
 
     override fun openLink(url: String) {
@@ -406,7 +415,7 @@ class AndroidEngine(context: Context) : Engine {
             val i = Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             ctx.startActivity(i)
         } catch (t: Throwable) {
-            appendLog("⚠ не удалось открыть: $url")
+            appendLog("⚠ failed to open: $url")
         }
     }
 
@@ -419,7 +428,7 @@ class AndroidEngine(context: Context) : Engine {
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             ctx.startActivity(i)
         } catch (t: Throwable) {
-            appendLog("⚠ не удалось открыть настройки уведомлений")
+            appendLog("⚠ failed to open notification settings")
         }
     }
 
@@ -428,7 +437,7 @@ class AndroidEngine(context: Context) : Engine {
     override fun addSource(url: String) {
         store.upsertSource(url)
         refreshSources()
-        appendLog("✓ источник добавлен: $url", LogCat.SUBS)
+        appendLog("✓ source added: $url", LogCat.SUBS)
     }
 
     override fun removeSource(id: Long) {
@@ -441,7 +450,7 @@ class AndroidEngine(context: Context) : Engine {
         urls.lines().map { it.trim() }
             .filter { it.startsWith("http://") || it.startsWith("https://") }
             .forEach { store.upsertSource(it); n++ }
-        if (n > 0) { refreshSources(); appendLog("✓ добавлено подписок: $n", LogCat.SUBS) }
+        if (n > 0) { refreshSources(); appendLog("✓ subscriptions added: $n", LogCat.SUBS) }
         return n
     }
 
@@ -450,7 +459,7 @@ class AndroidEngine(context: Context) : Engine {
         val added = store.addAll(list)
         if (list.isNotEmpty()) {
             refreshSources()
-            appendLog("✓ добавлено прокси (фикс-список): $added из ${list.size}", LogCat.SUBS)
+            appendLog("✓ proxies added (fixed list): $added of ${list.size}", LogCat.SUBS)
         }
         return added
     }
@@ -466,7 +475,7 @@ class AndroidEngine(context: Context) : Engine {
             ScanGate.setAborted(false)
             downloadingSince[id] = System.currentTimeMillis()
             refreshSources()
-            appendLog("⤓ обновляю подписку: $url", LogCat.SUBS)
+            appendLog("⤓ refreshing subscription: $url", LogCat.SUBS)
             try {
                 val scanner = PageScanner(store) { line -> appendLog(line, LogCat.SUBS) }
                 val r = scanner.scanPage(url)
@@ -475,8 +484,8 @@ class AndroidEngine(context: Context) : Engine {
                     store.setSourceScanResult(sid, r.found, r.bytes, r.error)
                     if (r.found > 0 && r.error == null) store.markSourceRefreshed(sid)
                 }
-                appendLog("⤓ подписка обновлена: найдено ${r.found}" + (if (r.error != null) " (${r.error})" else ""), LogCat.SUBS)
-            } catch (t: Throwable) { appendLog("⚠ обновление подписки: ${t.message}", LogCat.SUBS) }
+                appendLog("⤓ subscription refreshed: found ${r.found}" + (if (r.error != null) " (${r.error})" else ""), LogCat.SUBS)
+            } catch (t: Throwable) { appendLog("⚠ subscription refresh: ${t.message}", LogCat.SUBS) }
             finally { downloadingSince.remove(id); refreshSources() }
         }
     }
@@ -493,10 +502,10 @@ class AndroidEngine(context: Context) : Engine {
             val dir = ctx.getExternalFilesDir(null) ?: ctx.filesDir
             val f = java.io.File(dir, "autoconnector_proxies.txt")
             f.writeText(links.joinToString("\n"))
-            appendLog("⤓ экспортировано ${links.size} ссылок → ${f.absolutePath}")
+            appendLog("⤓ exported ${links.size} links → ${f.absolutePath}")
             f.absolutePath
         } catch (e: Throwable) {
-            appendLog("⚠ экспорт в файл не удался: ${e.message}")
+            appendLog("⚠ export to file failed: ${e.message}")
             null
         }
     }
@@ -512,7 +521,7 @@ class AndroidEngine(context: Context) : Engine {
             if (r.status == null) return "⚠ В тексте нет выбранных разделов"
             if (r.hostsChanged) { refreshCatalog(); refreshSources() }
             else if (r.subsChanged) refreshSources()
-            appendLog("⤒ импорт: ${r.status}")
+            appendLog("⤒ import: ${r.status}")
             "✓ Импортировано: ${r.status}"
         } catch (t: Throwable) {
             "⚠ Ошибка импорта: ${t.message}"
@@ -573,7 +582,7 @@ class AndroidEngine(context: Context) : Engine {
         try {
             if (store.aliveCountForMode(mode) < 20) {
                 ScanGate.setAborted(false)
-                appendLog("⟳ режим → ${mode.label}: формирую список (живых ${store.aliveCountForMode(mode)})", LogCat.SCAN)
+                appendLog("⟳ mode → ${mode.label}: building list (alive ${store.aliveCountForMode(mode)})", LogCat.SCAN)
                 // Seed with the top hosts from the OTHER reportable modes —
                 // good candidates that already work somewhere.
                 val seed = LinkedHashMap<Long, ProxyEntry>()
@@ -586,10 +595,10 @@ class AndroidEngine(context: Context) : Engine {
                 runner.setProbeMode(if (p.dpiApplyProbes()) HandshakeMode.fromOrdinal(p.handshakeMode()) else HandshakeMode.NORMAL)
                 if (seed.isNotEmpty()) runner.runOn(ArrayList(seed.values), "mode-seed:${mode.code}")
                 runner.runOn(store.dueForCheckForMode(mode, 600), "mode-fill:${mode.code}")
-                appendLog("⟳ режим ${mode.label}: живых ${store.aliveCountForMode(mode)} / ${store.count()}", LogCat.SCAN)
+                appendLog("⟳ mode ${mode.label}: alive ${store.aliveCountForMode(mode)} / ${store.count()}", LogCat.SCAN)
             }
         } catch (t: Throwable) {
-            appendLog("⚠ смена режима: ${t.message}", LogCat.SCAN)
+            appendLog("⚠ mode switch: ${t.message}", LogCat.SCAN)
         } finally {
             modeSwitchBusy.set(false)
             refreshCatalog()
@@ -650,8 +659,25 @@ class AndroidEngine(context: Context) : Engine {
         }
     }
 
-    override fun hostHistory(id: Long, limit: Int): List<HistoryRecord> =
-        store.hostHistory(id, limit).map { r ->
+    /** Connector-tab pre-warm table: warming (idle) + in-use prewarmed sockets. */
+    private fun buildPrewarmRows(conns: List<RelayStats.LiveConn>, now: Long): List<PrewarmRow> {
+        val rows = ArrayList<PrewarmRow>()
+        val warm = io.autoconnector.engine.relay.RelayManager.INSTANCE?.prewarm()?.snapshot()
+        if (warm != null) for (w in warm) {
+            var h = w.host; if (h.length > 32) h = h.substring(0, 31) + "…"
+            rows.add(PrewarmRow(h, w.ageSecs, false, "—"))
+        }
+        for (c in conns) if (c.fromPrewarm) {
+            var h = stripPort(c.upstream); if (h.length > 32) h = h.substring(0, 31) + "…"
+            rows.add(PrewarmRow(h, (now - c.startedAt) / 1000, true,
+                "↓${TrafficMeter.human(c.bytesDown.get())} ↑${TrafficMeter.human(c.bytesUp.get())}"))
+        }
+        return rows
+    }
+
+    override fun hostHistory(id: Long, limit: Int): List<HistoryRecord> {
+        val now = System.currentTimeMillis()
+        return store.hostHistory(id, limit).map { r ->
             HistoryRecord(
                 ts = r.ts,
                 isTelegram = r.kind == 1,
@@ -661,8 +687,11 @@ class AndroidEngine(context: Context) : Engine {
                 totalMs = r.totalMs,
                 bytesIn = r.bytesIn,
                 bytesOut = r.bytesOut,
+                sessionMs = r.sessionMs,
+                secondsAgo = if (r.ts > 0) ((now - r.ts) / 1000).coerceAtLeast(0) else -1,
             )
         }
+    }
 
     override fun exportAliveLinksForMode(modeCode: String): List<String> {
         val mode = NetworkMode.fromCode(modeCode)
@@ -679,10 +708,10 @@ class AndroidEngine(context: Context) : Engine {
             val code = if (NetworkMode.fromCode(modeCode) == NetworkMode.UNKNOWN) "auto" else modeCode
             val f = java.io.File(dir, "autoconnector_proxies_$code.txt")
             f.writeText(links.joinToString("\n"))
-            appendLog("⤓ экспортировано ${links.size} ссылок ($code) → ${f.absolutePath}")
+            appendLog("⤓ exported ${links.size} links ($code) → ${f.absolutePath}")
             f.absolutePath
         } catch (e: Throwable) {
-            appendLog("⚠ экспорт в файл не удался: ${e.message}")
+            appendLog("⚠ export to file failed: ${e.message}")
             null
         }
     }
@@ -691,14 +720,14 @@ class AndroidEngine(context: Context) : Engine {
         val mode = NetworkMode.fromCode(modeCode)
         store.resetModeStats(mode)
         refreshCatalog(); pushImmediate()
-        appendLog("⚙ рейтинг хостов обнулён: ${mode.label}")
+        appendLog("⚙ host ratings reset: ${mode.label}")
     }
 
     override fun forgetModeHosts(modeCode: String) {
         val mode = NetworkMode.fromCode(modeCode)
         store.forgetModeHosts(mode)
         refreshCatalog(); pushImmediate()
-        appendLog("⚙ хосты режима забыты: ${mode.label}")
+        appendLog("⚙ mode hosts forgotten: ${mode.label}")
     }
 
     override fun copyModeStats(fromCode: String, toCode: String) {
@@ -706,7 +735,7 @@ class AndroidEngine(context: Context) : Engine {
         val to = NetworkMode.fromCode(toCode)
         store.copyModeStats(from, to)
         refreshCatalog(); pushImmediate()
-        appendLog("⚙ режим ${to.label} ← копия рейтинга из ${from.label}")
+        appendLog("⚙ mode ${to.label} ← rating copied from ${from.label}")
     }
 
     // Global hotkeys are a desktop-only feature — no page/button on Android.
@@ -715,6 +744,51 @@ class AndroidEngine(context: Context) : Engine {
     override fun setHotkeysEnabled(on: Boolean) {}
     override fun hotkeyLetter() = "P"
     override fun setHotkeyLetter(letter: String) {}
+    override fun setLanShareEnabled(enabled: Boolean) {
+        Prefs(ctx).setLanShareEnabled(enabled)
+        io.autoconnector.engine.relay.RelayManager.rebindAll()
+    }
+
+    // Android volume-button pattern trigger (replaces hotkeys page on Android).
+    override fun volPatternSupported() = true
+    override fun volPatternEnabled() = Prefs(ctx).volPatternEnabled()
+    override fun setVolPatternEnabled(on: Boolean) { Prefs(ctx).setVolPatternEnabled(on) }
+    override fun volPatternGapMs() = Prefs(ctx).volPatternGapMs()
+    override fun setVolPatternGapMs(ms: Int) { Prefs(ctx).setVolPatternGapMs(ms) }
+    override fun volPatternIndex() = Prefs(ctx).volPatternIndex()
+    override fun setVolPatternIndex(i: Int) { Prefs(ctx).setVolPatternIndex(i) }
+    override fun accessibilityGranted() = isAccessibilityGranted()
+    override fun openAccessibilitySettings() {
+        try {
+            ctx.startActivity(android.content.Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (_: Throwable) {}
+    }
+    override fun openAppInfo() {
+        try {
+            ctx.startActivity(android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                android.net.Uri.parse("package:" + ctx.packageName))
+                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (_: Throwable) {}
+    }
+    override fun testHostNow(id: Long) {
+        val p = store.byId(id) ?: return
+        io.autoconnector.engine.check.HostTester.start(store, p, Prefs(ctx).relayConnectTimeoutMs())
+    }
+    override fun stopHostTest() { io.autoconnector.engine.check.HostTester.stop() }
+    private fun isAccessibilityGranted(): Boolean = try {
+        val flat = android.provider.Settings.Secure.getString(
+            ctx.contentResolver, android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: ""
+        flat.contains("io.autoconnector.engine.input.VolumePatternService")
+    } catch (_: Throwable) { false }
+    /** LAN URLs neighbours use to reach the relay, or empty when sharing is off /
+     *  no LAN address. */
+    private fun lanUrls(): List<String> {
+        val pp = Prefs(ctx)
+        if (!pp.lanShareEnabled()) return emptyList()
+        val ip = io.autoconnector.engine.relay.LanAddress.bestLanIPv4() ?: return emptyList()
+        return listOf("http://$ip:${pp.relayPortA()}", "http://$ip:${pp.relayPortB()}")
+    }
     override fun hotkeyCopyLabel() = ""
     override fun hotkeyOpenLabel() = ""
 
@@ -724,7 +798,7 @@ class AndroidEngine(context: Context) : Engine {
         // Re-entry guard: ignore extra taps while a manual scan is already in
         // flight, so hammering the button can't stack dozens of 500-host passes.
         if (!scanNowBusy.compareAndSet(false, true)) {
-            appendLog("⚡ скан сейчас уже идёт — подождите завершения", LogCat.SCAN)
+            appendLog("⚡ scan now already running — wait for it to finish", LogCat.SCAN)
             return
         }
         scope.launch(Dispatchers.IO) {
@@ -734,17 +808,17 @@ class AndroidEngine(context: Context) : Engine {
                 ScanGate.setAborted(false)
                 val list = store.dueForCheck(500)
                 if (list.isEmpty()) {
-                    appendLog("⚡ скан сейчас: в базе нет прокси — нечего проверять", LogCat.SCAN)
+                    appendLog("⚡ scan now: no proxies in database — nothing to check", LogCat.SCAN)
                     return@launch
                 }
-                appendLog("⚡ скан сейчас: ${list.size} прокси в 50 потоков", LogCat.SCAN)
+                appendLog("⚡ scan now: ${list.size} proxies in 50 threads", LogCat.SCAN)
                 val p = Prefs(ctx)
                 val runner = CheckRunner(store, { line -> appendLog(line, LogCat.SCAN) }, 50)
                 runner.setProbeMode(if (p.dpiApplyProbes()) HandshakeMode.fromOrdinal(p.handshakeMode()) else HandshakeMode.NORMAL)
                 runner.runOn(list, "scan-now")
-                appendLog("⚡ скан сейчас готов: живых ${store.countAlive()} / ${store.count()}", LogCat.SCAN)
+                appendLog("⚡ scan now done: alive ${store.countAlive()} / ${store.count()}", LogCat.SCAN)
             } catch (t: Throwable) {
-                appendLog("⚠ скан сейчас: ${t.message}", LogCat.SCAN)
+                appendLog("⚠ scan now: ${t.message}", LogCat.SCAN)
             } finally {
                 scanNowBusy.set(false)
             }
@@ -858,6 +932,7 @@ class AndroidEngine(context: Context) : Engine {
                 lastData = if (lastData > 0) Durations.compact((now - lastData) / 1000) else "—",
                 traffic = TrafficMeter.human(bytes),
                 alive = bytes >= MATURE_BYTES && (now - lastData) < IDLE_THRESHOLD_MS,
+                fromPrewarm = c.fromPrewarm,
             )
         }
 
@@ -969,6 +1044,19 @@ class AndroidEngine(context: Context) : Engine {
             totalUp = "↑ ${TrafficMeter.human(up)}",
             latency = latency,
             sessions = sessions,
+            prewarmEnabled = Prefs(ctx).prewarmEnabled(),
+            prewarmHoldSecs = Prefs(ctx).prewarmHoldSecs(),
+            prewarmRows = buildPrewarmRows(conns, now),
+            lanShareEnabled = Prefs(ctx).lanShareEnabled(),
+            lanUrls = lanUrls(),
+            volPatternSupported = true,
+            volPatternEnabled = Prefs(ctx).volPatternEnabled(),
+            volPatternGapMs = Prefs(ctx).volPatternGapMs(),
+            volPatternIndex = Prefs(ctx).volPatternIndex(),
+            accessibilityGranted = isAccessibilityGranted(),
+            testHostId = io.autoconnector.engine.check.HostTester.testingId(),
+            testRunning = io.autoconnector.engine.check.HostTester.running(),
+            testSummary = io.autoconnector.engine.check.HostTester.summary(),
             socketsTgToConnector = maxOf(0, conns.size + pending),
             socketsConnectorToProxy = conns.size,
             currentProxy = currentProxy,
@@ -1275,9 +1363,9 @@ class AndroidEngine(context: Context) : Engine {
                 && !ScanGate.isAborted() && round < maxRounds) {
             round++
             val threads = minOf(32, maxOf(16, pending.size))
-            appendLog("⇣ закачка подписок, проход $round: ${pending.size} шт × $threads потоков", LogCat.SUBS)
+            appendLog("⇣ downloading subscriptions, pass $round: ${pending.size} items × $threads threads", LogCat.SUBS)
             pending = downloadSourcesParallel(pending, threads)
-            appendLog("⇣ проход $round: в базе ${store.count()} прокси, не скачано ${pending.size} подписок", LogCat.SUBS)
+            appendLog("⇣ pass $round: ${store.count()} proxies in database, ${pending.size} subscriptions not downloaded", LogCat.SUBS)
             if (pending.isEmpty()) break
             val backoff = minOf(15_000L, 1500L * round)
             var slept = 0L
@@ -1286,13 +1374,13 @@ class AndroidEngine(context: Context) : Engine {
             }
         }
         if (pending.isNotEmpty())
-            appendLog("✗ после $round проходов не скачано ${pending.size} подписок — повторю при следующем обновлении", LogCat.SUBS)
+            appendLog("✗ after $round passes ${pending.size} subscriptions not downloaded — will retry on next refresh", LogCat.SUBS)
     }
 
     private fun scanAndCheck() {
         val failed = downloadSourcesParallel(store.enabledSourceUrls(), 6)
         if (failed.isNotEmpty() && !ScanGate.isAborted()) {
-            appendLog("↻ повтор ${failed.size} подписок через анонимайзеры", LogCat.SUBS)
+            appendLog("↻ retrying ${failed.size} subscriptions via anonymizers", LogCat.SUBS)
             downloadSourcesParallel(failed, minOf(6, failed.size))
         }
         refreshSources()
@@ -1300,15 +1388,15 @@ class AndroidEngine(context: Context) : Engine {
         val runner = CheckRunner(store, { line -> appendLog(line, LogCat.SCAN) }, p.checkConcurrency())
         runner.setProbeMode(if (p.dpiApplyProbes()) HandshakeMode.fromOrdinal(p.handshakeMode()) else HandshakeMode.NORMAL)
         runner.runBatch(p.checkBatch())
-        appendLog("— проверка готова —", LogCat.SCAN)
+        appendLog("— check complete —", LogCat.SCAN)
     }
 
     private fun bootstrapIntensive() {
         downloadAllSourcesPersistently()
         refreshSources()
         val afterScan = store.count()
-        appendLog("— bootstrap: собрано $afterScan прокси, массовая проверка —", LogCat.SCAN)
-        if (afterScan == 0) { appendLog("— bootstrap: база пуста, проверять нечего —", LogCat.SCAN); return }
+        appendLog("— bootstrap: collected $afterScan proxies, mass check —", LogCat.SCAN)
+        if (afterScan == 0) { appendLog("— bootstrap: database empty, nothing to check —", LogCat.SCAN); return }
         val pp = Prefs(ctx)
         val target = pp.adaptiveAliveThreshold()
         val conc = maxOf(32, minOf(Prefs.CONCURRENCY_CAP, afterScan / 3))
@@ -1320,9 +1408,9 @@ class AndroidEngine(context: Context) : Engine {
             runner.setProbeMode(probeMode)
             runner.runBatch(minOf(store.count(), 600))
             round++
-            appendLog("— bootstrap раунд $round: живых ${store.countAlive()} / ${store.count()} —", LogCat.SCAN)
+            appendLog("— bootstrap round $round: alive ${store.countAlive()} / ${store.count()} —", LogCat.SCAN)
         }
-        appendLog("— bootstrap готов: живых ${store.countAlive()} / ${store.count()} —", LogCat.SCAN)
+        appendLog("— bootstrap done: alive ${store.countAlive()} / ${store.count()} —", LogCat.SCAN)
     }
 
     // === log =============================================================

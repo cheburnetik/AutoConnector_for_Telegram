@@ -17,6 +17,8 @@ public class AttemptRow {
     public int tlsMs = -1;
     /** Total connect+handshake duration, -1 if unknown. */
     public int totalMs = -1;
+    /** Relay-session duration in ms (kind=1 successful connect); 0 otherwise. */
+    public long sessionMs;
     /** Bytes received during this attempt/session (0 if n/a). */
     public long bytesIn;
     /** Bytes sent during this attempt/session (0 if n/a). */

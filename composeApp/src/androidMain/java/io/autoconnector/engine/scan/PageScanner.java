@@ -86,6 +86,13 @@ public final class PageScanner {
             "https://t.me/s/mtprotoF",
             "https://t.me/s/mtproto6",
             "https://t.me/s/mtprotoproxy_telegaram",
+            "https://t.me/s/MTProxy4free",
+            "https://t.me/s/proxytgtestperiod1",
+            "https://t.me/s/MTPROTO_MTPROXY_Telegram",
+            "https://t.me/s/telega_proxies",
+            "https://t.me/s/proxy_telegramo",
+            "https://t.me/s/proxy_telegramt",
+            "https://t.me/s/proxy_Telegram6",
             "https://tgstat.com/channel/@TURKMEN_VPNLAR",
             // GitHub raw plain-text lists
             "https://raw.githubusercontent.com/ALIILAPRO/MTProtoProxy/main/mtproto.txt",
@@ -138,7 +145,7 @@ public final class PageScanner {
         // while a parallelScanAll is in mid-stride; we must respect that
         // between mirror attempts so HTTP fetches stop too.
         if (io.autoconnector.engine.core.ScanGate.isAborted()) {
-            r.error = "сканирование отключено";
+            r.error = "scanning is off";
             return r;
         }
         String body = null;
@@ -147,13 +154,13 @@ public final class PageScanner {
         List<String> alternatives = Mirrors.alternatives(pageUrl);
         for (String alt : alternatives) {
             if (io.autoconnector.engine.core.ScanGate.isAborted()) {
-                r.error = "сканирование отключено";
+                r.error = "scanning is off";
                 return r;
             }
             try {
                 body = fetch(alt);
                 r.usedUrl = alt;
-                log.line("✓ скачано: " + shortUrl(alt));
+                log.line("✓ downloaded: " + shortUrl(alt));
                 break;
             } catch (Exception e) {
                 lastWhy = errorMessage(e);
@@ -162,10 +169,10 @@ public final class PageScanner {
         }
 
         if (body == null) {
-            r.error = "не удалось скачать (попыток " + alternatives.size()
-                    + ", последняя ошибка: "
-                    + (lastWhy != null ? lastWhy : "неизвестная")
-                    + "). Возможно блокировка или ссылка неверна.";
+            r.error = "couldn't download (attempts " + alternatives.size()
+                    + ", last error: "
+                    + (lastWhy != null ? lastWhy : "unknown")
+                    + "). Possibly blocked or a wrong link.";
             log.line("✗ " + shortUrl(pageUrl) + " — " + r.error);
             io.autoconnector.engine.traffic.ScanMetrics.INSTANCE.noteSub(false);
             return r;
@@ -193,15 +200,15 @@ public final class PageScanner {
             List<ProxyEntry> viaScripts = followSameOriginScripts(body,
                     r.usedUrl != null ? r.usedUrl : pageUrl);
             if (!viaScripts.isEmpty()) {
-                log.line("↳ список найден во встроенном скрипте: " + viaScripts.size());
+                log.line("↳ list found in an embedded script: " + viaScripts.size());
                 list = viaScripts;
             }
         }
         r.found = list.size();
         if (r.found == 0) {
-            r.error = "контент скачан (" + body.length()
-                    + " Б), но в нём не найдено ни одного прокси —"
-                    + " возможно сайт сменил формат или контент рендерится через JS.";
+            r.error = "downloaded content (" + body.length()
+                    + " B), but no proxies were found in it —"
+                    + " the site may have changed format or renders content via JS.";
             log.line("⚠ " + shortUrl(pageUrl) + " — " + r.error);
             io.autoconnector.engine.traffic.ScanMetrics.INSTANCE.noteSub(false);
             return r;
@@ -210,9 +217,9 @@ public final class PageScanner {
         r.added = store.addAll(list);
         double secs = (System.currentTimeMillis() - startedAt) / 1000.0;
         long kb = r.bytes / 1024;
-        log.line("→ " + shortUrl(pageUrl) + ": найдено " + r.found
-                + ", новых " + r.added
-                + "  " + String.format("%.1f", secs) + "с · " + kb + "КБ");
+        log.line("→ " + shortUrl(pageUrl) + ": found " + r.found
+                + ", new " + r.added
+                + "  " + String.format("%.1f", secs) + "s · " + kb + "KB");
         io.autoconnector.engine.traffic.ScanMetrics.INSTANCE.noteSub(true);
         return r;
     }
@@ -251,14 +258,14 @@ public final class PageScanner {
             try {
                 body = fetch(url);
             } catch (Exception e) {
-                log.line("↓ дочитка " + shortUrl(url) + " прервана: "
+                log.line("↓ continued read " + shortUrl(url) + " interrupted: "
                         + errorMessage(e));
                 break;
             }
             if (body.isEmpty()) break;
             all.append('\n').append(body);
-            log.line("↓ дочитал старые посты до #" + minId
-                    + " (+" + body.length() + " Б)");
+            log.line("↓ read older posts down to #" + minId
+                    + " (+" + body.length() + " B)");
         }
         return all.toString();
     }
@@ -312,9 +319,9 @@ public final class PageScanner {
                 if (b.isEmpty()) break;
                 io.autoconnector.engine.traffic.ScanMetrics.INSTANCE.addSubBytes(b.length());
                 all.append('\n').append(b);
-                log.line("↓ 4pda: дочитал страницу st=" + targetSt + " (+" + b.length() + " Б)");
+                log.line("↓ 4pda: read page st=" + targetSt + " (+" + b.length() + " B)");
             } catch (Exception e) {
-                log.line("↓ 4pda st=" + targetSt + " прервана: " + errorMessage(e));
+                log.line("↓ 4pda st=" + targetSt + " interrupted: " + errorMessage(e));
                 break;
             }
         }
@@ -385,7 +392,7 @@ public final class PageScanner {
                 try {
                     String body = fetchDirect(fp.wrap(urlStr));
                     if (body != null && !body.isEmpty()) {
-                        log.line("↻ напрямую заблокировано — через анонимайзер "
+                        log.line("↻ direct blocked — via anonymizer "
                                 + fp.label + ": " + shortUrl(urlStr));
                         return body;
                     }
@@ -480,13 +487,13 @@ public final class PageScanner {
     /** Maps a low-level exception into a short, user-readable phrase. */
     private static String errorMessage(Exception e) {
         if (e instanceof UnknownHostException) {
-            return "DNS не нашёл хост (возможно блокировка или нет сети)";
+            return "DNS couldn't resolve host (possibly blocked or no network)";
         }
         if (e instanceof SocketTimeoutException) {
-            return "таймаут соединения";
+            return "connection timeout";
         }
         if (e instanceof ConnectException) {
-            return "не удалось подключиться (возможно заблокировано)";
+            return "couldn't connect (possibly blocked)";
         }
         String m = e.getMessage();
         return m != null ? m : e.getClass().getSimpleName();

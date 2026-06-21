@@ -16,6 +16,7 @@ sourceSets {
             srcDir("../composeApp/src/androidMain/java")
             exclude("io/autoconnector/engine/relay/RelayService.java")
             exclude("io/autoconnector/engine/relay/BootReceiver.java")
+            exclude("io/autoconnector/engine/input/VolumePatternService.java")
             exclude("io/autoconnector/engine/work/**")
         }
     }

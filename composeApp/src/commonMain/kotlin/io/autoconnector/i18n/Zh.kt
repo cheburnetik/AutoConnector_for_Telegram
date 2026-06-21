@@ -360,4 +360,114 @@ object Zh : Strings {
     override val wpHintTitle = "什么是白名单？"
     override val wpHint = "白名单 —— WhitePages：一个手动网络配置。仅手动启用（自动选择从不会选中它）。" +
         "它保留自己的主机评分，独立于 VPN/Wi-Fi/LTE 下载订阅并扫描。"
+
+    override val recentAttempts = "最近的连接与检测"
+    override val kindCheck = "检测"
+    override val kindTg = "Telegram"
+    override val histWho = "谁"
+    override val histWhen = "何时"
+    override val histReq = "请求"
+    override val histSess = "会话"
+    override val histScan = "扫描"
+    override val testNow = "立即测试"
+    override val testShort = "测试"
+    override val testResult = "测试结果"
+    override val testStop = "停止"
+    override val testingNow = "测试中…"
+    override val prewarmTitle = "套接字预热（实验性）"
+    override val prewarmHelp = "提前保持几个到代理的上游套接字处于连接状态，使新的 Telegram " +
+        "连接可以跳过连接/握手。实验性：它会在后台不断重连，因此会消耗流量和少量 CPU。" +
+        "不会发送伪造流量（那会破坏真实会话）—— 套接字只是轮换。配合 FakeTLS 代理时最有用。"
+    override val prewarmEnable = "启用预热"
+    override val prewarmModeDeferred = "延迟（仅 TLS）"
+    override val prewarmModeDeferredSub = "保持 TCP + FakeTLS；在交付时完成初始化。不绑定 DC —— 最逼真。"
+    override val prewarmModeFull = "完整握手"
+    override val prewarmModeFullSub = "在各个 DC 上保持完全连接的套接字；仅在 DC/标签匹配时复用。存活时间更短。"
+    override val prewarmPoolLabel = "备用套接字数"
+    override val prewarmHoldLabel = "各保持，秒"
+    override val prewarmNote = "仅轮换（无应用层 keepalive）。套接字存活数秒到约一分钟，取决于代理/DC。"
+    override val prewarmStatus = "预热"
+    override fun prewarmStatusVal(ready: Int, holdSecs: Int) = "${ready} 个就绪 · 保持 ${holdSecs}秒"
+    override val prewarmStar = "粗橙色 = 从预热池中以热状态交付的套接字（跳过了连接/握手）"
+    override fun prewarmTableTitle(holdSecs: Int) = "套接字预热（保持 ${holdSecs}秒）"
+    override val prewarmTableHelp = "\"套接字预热\"会提前打开几个代理套接字，使新的 Telegram " +
+        "连接可以跳过连接/握手。此表列出正在预热的套接字：每个已存活多少秒、Telegram 是否正在使用，以及流量。" +
+        "可在\"更多 → 设置 → 套接字预热（实验性）\"中开启/关闭并配置（模式、套接字数量、保持时间）。"
+    override val prewarmNoneWarming = "暂时没有正在预热的套接字"
+    override val prewarmColAge = "存活"
+    override val prewarmColUse = "在 TG？"
+    override val prewarmInUse = "在 TG"
+    override val prewarmNew = "新建"
+    override val lanShareTitle = "通过局域网共享（网页门户）"
+    override val lanShareDesc = "让此 Wi-Fi 中的其他设备把此 AutoConnector 当作代理使用；" +
+        "用浏览器打开下面的地址即可获得一个包含最佳代理的页面。"
+    override val lanShareUrlsLabel = "同网络的其他设备从这里连接："
+    override val lanShareNoIp = "没有局域网地址 —— 请连接 Wi-Fi"
+    override val lanFirewallTitle = "在局域网中允许"
+    override val lanFirewallBody = "启用后，中继端口会向你的局域网开放。此时 Windows（或其他）防火墙可能会询问" +
+        "是否允许 AutoConnector —— 请选择\"允许\"/\"是\"。如果拒绝，其他设备到 AutoConnector " +
+        "的流量会被阻止，页面/代理将无法访问。"
+    override val lanFirewallConfirm = "启用"
+    override val lanInfoTitle = "这有什么用？"
+    override val lanInfoBody = "在你的 Wi-Fi 中的某一台电脑或手机上运行 AutoConnector，同一网络中的所有" +
+        "其他设备 —— 包括本应用不直接支持的 iPhone —— 都可以直接在浏览器中打开该地址并使用：" +
+        "一个包含最佳代理的页面，可添加到它们的 Telegram，或者把这台设备本身当作 SOCKS 代理。" +
+        "一台设备负责寻找并保持代理，其余设备通过局域网共享使用。"
+    override val volTriggerTitle = "音量键触发"
+    override val volTriggerSub = "用快速的音量键组合切换代理"
+    override val volEnableLabel = "监听音量键"
+    override val volHelpTitle = "这是什么？"
+    override val volHelpBody = "在 Android 上没有全局键盘热键，因此改用音量键。启用后，AutoConnector " +
+        "会在后台监听快速的音量加/减按键组合（例如 加-加-减-减）。一旦识别到，它就会打开一个随机的" +
+        "优质可用代理的 tg:// 链接，让 Telegram 接收并切换 —— 这是一种快速、隐蔽、无需打开应用即可" +
+        "轮换代理的方式。音量仍正常工作（按键不会被拦截）。这需要辅助功能（Accessibility）权限" +
+        "（以便在后台读取音量键并打开链接）；在你启用开关之前不会请求任何权限。在下方设置两次按键之间的" +
+        "最大时间；可识别的组合列在底部。"
+    override val volGrantTitle = "启用辅助功能（重要）"
+    override val volGrantBody = "Android（尤其是 13+）会阻止非通过 Google Play 安装的应用使用辅助功能 —— " +
+        "这就是为什么 AutoConnector 是灰色的，并显示\"受限设置\"/\"不允许访问\"。\n\n如何解除：\n" +
+        "1. 打开\"应用信息\"（下面的按钮，或：设置 → 应用 → AutoConnector for Telegram）。\n" +
+        "2. 点击 ⋮ 菜单（右上角）→\"允许受限设置\"→ 确认。\n" +
+        "3. 返回：设置 → 辅助功能 → AutoConnector for Telegram → 开启它。\n\n" +
+        "如果看不到\"允许受限设置\"，请先在辅助功能中尝试开启一次开关（会出现被阻止的提示），" +
+        "然后步骤 2 就会出现。\n\n在 Xiaomi/MIUI、Samsung 等设备上路径可能略有不同 —— " +
+        "在\"应用信息\"中寻找相同的 ⋮。在 Android 12 及更早版本通常没有此限制 —— 直接在辅助功能中启用即可。\n\n" +
+        "音量键只会被读取，绝不会被拦截。"
+    override val volOpenAppInfo = "打开\"应用信息\""
+    override val volAccessOn = "辅助功能：已授予"
+    override val volAccessOff = "辅助功能：未授予"
+    override val volOpenAccess = "打开辅助功能设置"
+    override val volGapLabel = "两次按键之间的最大毫秒数"
+    override val volPatternsTitle = "可识别的组合"
+    override val volPatternPick = "组合"
+    override val volPatternsLegend = "↑ = 音量加，↓ = 音量减"
+    override val volNoRights = "应用尚未获得处理音量键的权限 —— 请按本页底部的步骤授予访问权限。"
+    override val volGrantShort = "尚未获得辅助功能访问权限。请阅读本页底部的详细步骤，然后点击\"检查\"。"
+    override val volCheck = "检查"
+    override val volCheckOk = "✓ 完成 —— 已授予权限，触发器可用。"
+    override val volCheckFail = "✗ 仍未获得权限 —— 请完成上述步骤。"
+    override val volPatternsList = "↑↑↓↓ · ↓↓↑↑ · ↑↓↑↓ · ↓↑↓↑ · ↑↑↑↑ · ↓↓↓↓ · ↑↓↓↑ · ↓↑↑↓ · ↑↑↑↓↓↓ · ↓↓↓↑↑↑   （↑ = 音量加，↓ = 音量减）"
+    override val histLegend = "列 —— 谁：✓/✗ TG = 真实的 Telegram 连接，扫描 = 后台检测。何时：多久之前。" +
+        "TCP/TLS/请求：握手与首次请求的延迟，毫秒。会话：中继会话持续了多久。↓/↑：经过该主机接收 / 发送的字节数。"
+    override val tgOkTotalHint = "Telegram 连接次数 / 成功次数 / 总检测次数"
+    override val breadthTitle = "主机选择广度"
+    override val breadthHelp = "左 = 坚持使用最佳的已验证主机；右 = 在所有可用主机中尽可能广泛地尝试。" +
+        "当 Telegram 不断切换中继端口时，应用会自动扩大选择范围。"
+    override val breadthNarrow = "已验证"
+    override val breadthWide = "最广"
+    override val connTimeoutTitle = "单主机连接超时"
+    override val connTimeoutHelp = "在尝试下一个代理之前，等待一个上游（TCP + TLS + 首个 MTProto 响应）多长时间。"
+
+    override val backupExportTitle = "导出数据"
+    override val backupImportTitle = "导入数据"
+    override val backupSelectExport = "导出哪些内容："
+    override val backupSelectImport = "导入哪些内容："
+    override val backupCopyBtn = "复制"
+    override val backupSaveFile = "保存到文件"
+    override val backupLoadFile = "从文件加载"
+    override val backupDoImport = "导入"
+    override val backupPasteLabel = "在此粘贴备份 JSON"
+    override val backupJsonLabel = "备份 JSON"
+    override val backupAndroidFileNote = "此处无法使用文件 —— 请使用复制 / 粘贴。"
+    override val factoryResetDone = "一切已重置。请关闭应用并重新打开。"
 }

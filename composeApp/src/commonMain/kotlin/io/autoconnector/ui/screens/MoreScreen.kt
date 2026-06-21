@@ -1,6 +1,7 @@
 package io.autoconnector.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -81,6 +82,7 @@ import kotlin.math.pow
 import kotlin.math.roundToInt
 import io.autoconnector.i18n.Strings
 import io.autoconnector.ui.components.CardBox
+import io.autoconnector.ui.components.HelpDialog
 import io.autoconnector.ui.components.keyPageScroll
 import io.autoconnector.ui.components.Caption
 import io.autoconnector.ui.components.StatTable
@@ -152,11 +154,19 @@ class MoreCallbacks(
     val onSetHotkeyLetter: (String) -> Unit,
     val appInfo: AppInfo,
     val onOpenUrl: (String) -> Unit,
+    // LAN sharing / web portal toggle (Settings). Default no-op; App wires it to Prefs.
+    val onSetLanShareEnabled: (Boolean) -> Unit = {},
+    // Android volume-button pattern trigger (Hotkeys page, Android variant). No-ops on desktop.
+    val onSetVolPatternEnabled: (Boolean) -> Unit = {},
+    val onSetVolPatternGapMs: (Int) -> Unit = {},
+    val onSetVolPatternIndex: (Int) -> Unit = {},
+    val onOpenAccessibilitySettings: () -> Unit = {},
+    val onOpenAppInfo: () -> Unit = {},
 )
 
 /** The "More" tab body — just the menu. */
 @Composable
-fun MoreScreen(onOpen: (MoreDest) -> Unit, onOpenGuide: () -> Unit, hotkeysSupported: Boolean = false) {
+fun MoreScreen(onOpen: (MoreDest) -> Unit, onOpenGuide: () -> Unit, hotkeysSupported: Boolean = false, volPatternSupported: Boolean = false) {
     val t = LocalStrings.current
     Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         MenuEntry(t.setupPortsTitle, t.setupPortsSub, onOpenGuide)
@@ -164,8 +174,12 @@ fun MoreScreen(onOpen: (MoreDest) -> Unit, onOpenGuide: () -> Unit, hotkeysSuppo
         MenuEntry(t.subscriptions, t.subscriptionsSub) { onOpen(MoreDest.SOURCES) }
         MenuEntry(t.statistics, t.statisticsSub) { onOpen(MoreDest.STATS) }
         MenuEntry(t.export, t.exportSub) { onOpen(MoreDest.EXPORT) }
-        // Desktop-only: global hotkeys page (no such thing on Android).
-        if (hotkeysSupported) MenuEntry(t.hotkeys, t.hotkeysSub) { onOpen(MoreDest.HOTKEYS) }
+        // Hotkeys page: desktop shows keyboard chords; Android shows the
+        // volume-button pattern trigger (same destination, branched inside).
+        if (hotkeysSupported || volPatternSupported) {
+            if (hotkeysSupported) MenuEntry(t.hotkeys, t.hotkeysSub) { onOpen(MoreDest.HOTKEYS) }
+            else MenuEntry(t.volTriggerTitle, t.volTriggerSub) { onOpen(MoreDest.HOTKEYS) }
+        }
         MenuEntry(t.about, t.aboutSub) { onOpen(MoreDest.ABOUT) }
     }
 }
@@ -354,6 +368,15 @@ private fun SettingsPage(cb: MoreCallbacks) {
     var breadth by remember { mutableStateOf(s.relayBreadth) }
     var connTimeout by remember { mutableStateOf(s.relayConnectTimeoutMs) }
     var netLog by remember { mutableStateOf(s.netLogEnabled) }
+    var pwEnabled by remember { mutableStateOf(s.prewarmEnabled) }
+    var pwMode by remember { mutableStateOf(s.prewarmMode) }
+    var pwPool by remember { mutableStateOf(s.prewarmPool.toString()) }
+    var pwHold by remember { mutableStateOf(s.prewarmHoldSecs.toString()) }
+    // LAN sharing / web portal — read initial from EngineState; persisted via a
+    // dedicated callback (the field lives in Prefs/EngineState, not EngineSettings).
+    var lanShare by remember { mutableStateOf(cb.state.lanShareEnabled) }
+    var showLanFirewallDialog by remember { mutableStateOf(false) }
+    var showLanInfoDialog by remember { mutableStateOf(false) }
     var hsExpanded by remember { mutableStateOf(false) }
     var expExpanded by remember { mutableStateOf(false) }
     var connExpanded by remember { mutableStateOf(false) }
@@ -400,6 +423,10 @@ private fun SettingsPage(cb: MoreCallbacks) {
                 relayRaceWidth = raceWidth,
                 relayBreadth = breadth,
                 relayConnectTimeoutMs = connTimeout,
+                prewarmEnabled = pwEnabled,
+                prewarmMode = pwMode,
+                prewarmPool = pwPool.toIntOrNull()?.coerceIn(1, 8) ?: s.prewarmPool,
+                prewarmHoldSecs = pwHold.toIntOrNull()?.coerceIn(5, 120) ?: s.prewarmHoldSecs,
                 scanMode = scanMode,
                 minRescanMin = minRescan.toIntOrNull() ?: s.minRescanMin,
             )
@@ -408,17 +435,8 @@ private fun SettingsPage(cb: MoreCallbacks) {
     androidx.compose.runtime.DisposableEffect(Unit) { onDispose { save() } }
 
     help?.let { (ht, hb) ->
-        AlertDialog(
-            onDismissRequest = { help = null },
-            confirmButton = { TextButton({ help = null }) { Text(t.gotIt) } },
-            title = { Text(ht, fontWeight = FontWeight.Bold) },
-            text = {
-                // Long help bodies must scroll — several overflow a phone height.
-                Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
-                    Text(hb, fontSize = 15.sp)
-                }
-            },
-        )
+        // Long help bodies — wide, scrollable dialog with a visible scrollbar.
+        HelpDialog(title = ht, body = hb, onDismiss = { help = null })
     }
 
     val settingsScroll = rememberScrollState()
@@ -430,27 +448,22 @@ private fun SettingsPage(cb: MoreCallbacks) {
         // languages doesn't inflate the settings page height.
         Section(t.language, null)
         var langExpanded by remember { mutableStateOf(false) }
-        // Labels: English name first, then the native name in parentheses.
-        val langOptions = listOf(
-            "auto" to t.langAuto,
-            "en" to "English",
-            "ru" to "Russian (${t.langRu})",
-            "fa" to "Persian (${t.langFa})",
-            "zh" to "Simplified Chinese (${t.langZh})",
-            "ar" to "Arabic (${t.langAr})",
-            "ur" to "Urdu (${t.langUr})",
-            "tr" to "Turkish (${t.langTr})",
-            "id" to "Indonesian (${t.langId})",
-            "hi" to "Hindi (${t.langHi})",
-            "bn" to "Bengali (${t.langBn})",
-            "my" to "Burmese (${t.langMy})",
-        )
+        // Flags + English name + native name, from the central registry so this
+        // and the header picker stay in sync. "auto" is the only special entry.
+        val langOptions = listOf("auto" to (t.langAuto + "  🌐")) +
+            io.autoconnector.i18n.LANGUAGES.map { it.code to io.autoconnector.i18n.langMenuLabel(it) }
         val curLangLabel = langOptions.firstOrNull { it.first == lang }?.second ?: t.langAuto
         Box {
             OutlinedButton(onClick = { langExpanded = true }, modifier = Modifier.fillMaxWidth()) {
                 Text("Language · ${t.langWord}: $curLangLabel", fontSize = 14.sp)
             }
-            DropdownMenu(expanded = langExpanded, onDismissRequest = { langExpanded = false }) {
+            // Bounded height + the menu's built-in vertical scroll so the now-long
+            // (26-language) list never runs off the screen.
+            DropdownMenu(
+                expanded = langExpanded,
+                onDismissRequest = { langExpanded = false },
+                modifier = Modifier.heightIn(max = 420.dp),
+            ) {
                 langOptions.forEach { (code, label) ->
                     DropdownMenuItem(
                         text = { Text(if (code == lang) "✓ $label" else label) },
@@ -477,12 +490,7 @@ private fun SettingsPage(cb: MoreCallbacks) {
         // Notifications.
         var showNotifInfo by remember { mutableStateOf(false) }
         if (showNotifInfo) {
-            AlertDialog(
-                onDismissRequest = { showNotifInfo = false },
-                confirmButton = { TextButton({ showNotifInfo = false }) { Text(t.gotIt) } },
-                title = { Text(t.notifWhyTitle, fontWeight = FontWeight.Bold) },
-                text = { Text(t.notifWhyBody, fontSize = 15.sp) },
-            )
+            HelpDialog(title = t.notifWhyTitle, body = t.notifWhyBody, onDismiss = { showNotifInfo = false })
         }
         Section(t.notifications, null)
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -677,6 +685,77 @@ private fun SettingsPage(cb: MoreCallbacks) {
                     Text(t.openLogFolder, fontSize = 14.sp)
                 }
                 OutlinedButton(onClick = { cb.onCopy(cb.netLogPath) }) { Text(t.copyPath, fontSize = 14.sp) }
+            }
+        }
+
+        // --- Experimental: pre-warm standby upstream sockets -----------------
+        Section(t.prewarmTitle) { help = t.prewarmTitle to t.prewarmHelp }
+        SwitchRow(t.prewarmEnable, pwEnabled) { pwEnabled = it; save() }
+        if (pwEnabled) {
+            ChoiceRow(t.prewarmModeDeferred, t.prewarmModeDeferredSub, pwMode == 0) { pwMode = 0; save() }
+            ChoiceRow(t.prewarmModeFull, t.prewarmModeFullSub, pwMode == 1) { pwMode = 1; save() }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                NumField(pwPool, { pwPool = it; save() }, t.prewarmPoolLabel, Modifier.weight(1f))
+                NumField(pwHold, { pwHold = it; save() }, t.prewarmHoldLabel, Modifier.weight(1f))
+            }
+            Text(t.prewarmNote, color = AppColors.onSurfaceMuted, fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp))
+        }
+
+        // --- LAN sharing / web portal — let neighbours on this Wi-Fi proxy through us
+        Section(t.lanShareTitle)
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                Text(t.lanShareTitle, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                IconButton(onClick = { showLanInfoDialog = true }, modifier = Modifier.size(26.dp)) {
+                    Icon(Icons.Filled.Info, t.lanInfoTitle, tint = AppColors.onSurfaceMuted, modifier = Modifier.size(20.dp))
+                }
+            }
+            Switch(lanShare, {
+                if (it) {
+                    // Turning ON: first warn about the firewall; enable only on confirm.
+                    showLanFirewallDialog = true
+                } else {
+                    lanShare = false; cb.onSetLanShareEnabled(false)
+                }
+            })
+        }
+        // Purpose explanation (distinct from the firewall WARNING dialog below).
+        if (showLanInfoDialog) {
+            HelpDialog(title = t.lanInfoTitle, body = t.lanInfoBody, onDismiss = { showLanInfoDialog = false })
+        }
+        if (showLanFirewallDialog) {
+            AlertDialog(
+                onDismissRequest = { showLanFirewallDialog = false },
+                confirmButton = { TextButton({ lanShare = true; cb.onSetLanShareEnabled(true); showLanFirewallDialog = false }) { Text(t.lanFirewallConfirm) } },
+                dismissButton = { TextButton({ showLanFirewallDialog = false }) { Text(t.doCancel) } },
+                title = { Text(t.lanFirewallTitle, fontWeight = FontWeight.Bold) },
+                text = { Text(t.lanFirewallBody, fontSize = 15.sp) },
+            )
+        }
+        Text(t.lanShareDesc, color = AppColors.onSurfaceMuted, fontSize = 13.sp)
+        if (lanShare) {
+            Text(t.lanShareUrlsLabel, color = AppColors.onSurface, fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
+            val lanUrls = cb.state.lanUrls
+            if (lanUrls.isEmpty()) {
+                Text(t.lanShareNoIp, color = AppColors.onSurfaceMuted, fontSize = 13.sp)
+            } else {
+                lanUrls.forEach { url ->
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            url,
+                            fontFamily = monospaceFontFamily(),
+                            fontSize = 12.sp,
+                            color = AppColors.onSurfaceMuted,
+                            modifier = Modifier.weight(1f),
+                        )
+                        IconButton(onClick = { cb.onCopy(url) }, modifier = Modifier.size(32.dp)) {
+                            Icon(Icons.Filled.ContentCopy, t.copyPath, tint = AppColors.onSurfaceMuted, modifier = Modifier.size(18.dp))
+                        }
+                        IconButton(onClick = { cb.onOpenUrl(url) }, modifier = Modifier.size(32.dp)) {
+                            Icon(Icons.Filled.OpenInNew, t.lanInfoTitle, tint = AppColors.onSurfaceMuted, modifier = Modifier.size(18.dp))
+                        }
+                    }
+                }
             }
         }
 
@@ -1400,6 +1479,9 @@ private fun AboutPage(cb: MoreCallbacks) {
 
 @Composable
 private fun HotkeysPage(cb: MoreCallbacks) {
+    // On Android there are no keyboard hotkeys — render the volume-button
+    // pattern trigger instead and bail before the desktop chord UI below.
+    if (cb.state.volPatternSupported) { VolumePatternPage(cb); return }
     val t = LocalStrings.current
     var enabled by remember { mutableStateOf(cb.hotkeysEnabled) }
     var letter by remember { mutableStateOf(cb.hotkeyLetter) }
@@ -1443,6 +1525,113 @@ private fun HotkeysPage(cb: MoreCallbacks) {
         }
 
         Text(t.hotkeysNote, fontSize = 13.sp, color = AppColors.onSurfaceMuted)
+        Spacer(Modifier.height(16.dp))
+    }
+}
+
+// === Volume-button pattern trigger (Android variant of Hotkeys) =========
+
+@Composable
+private fun VolumePatternPage(cb: MoreCallbacks) {
+    val t = LocalStrings.current
+    var enabled by remember { mutableStateOf(cb.state.volPatternEnabled) }
+    var gap by remember { mutableStateOf(cb.state.volPatternGapMs.toString()) }
+    var showHelp by remember { mutableStateOf(false) }
+    var showGrant by remember { mutableStateOf(false) }
+    val granted = cb.state.accessibilityGranted
+    val patternLabels = listOf("↑↑↓↓", "↓↓↑↑", "↑↓↑↓", "↓↑↓↑", "↑↑↑↑", "↓↓↓↓", "↑↓↓↑", "↓↑↑↓", "↑↑↑↓↓↓", "↓↓↓↑↑↑")
+    var selIdx by remember { mutableStateOf(cb.state.volPatternIndex) }
+    var patExpanded by remember { mutableStateOf(false) }
+    var checked by remember { mutableStateOf(false) }
+
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        // Top banner: the app has no rights to handle the volume keys yet.
+        if (!granted) {
+            Box(
+                Modifier.fillMaxWidth()
+                    .background(AppColors.red.copy(alpha = 0.10f), RoundedCornerShape(10.dp))
+                    .border(1.dp, AppColors.red.copy(alpha = 0.40f), RoundedCornerShape(10.dp))
+                    .padding(12.dp),
+            ) { Text(t.volNoRights, color = AppColors.red, fontWeight = FontWeight.Bold, fontSize = 14.sp, lineHeight = 19.sp) }
+        }
+        // Title row + an info button opening the detailed help dialog.
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(t.volTriggerTitle, Modifier.weight(1f), fontWeight = FontWeight.Bold, fontSize = 17.sp, color = AppColors.accent)
+            IconButton(onClick = { showHelp = true }, modifier = Modifier.size(26.dp)) {
+                Icon(Icons.Filled.Info, t.volHelpTitle, tint = AppColors.accent, modifier = Modifier.size(20.dp))
+            }
+        }
+        Text(t.volTriggerSub, fontSize = 14.sp, color = AppColors.onSurfaceMuted, lineHeight = 19.sp)
+        if (showHelp) {
+            HelpDialog(title = t.volHelpTitle, body = t.volHelpBody, onDismiss = { showHelp = false })
+        }
+
+        // Enable toggle — turning ON also nudges for Accessibility if missing.
+        SwitchRow(t.volEnableLabel, enabled) {
+            enabled = it
+            if (it) {
+                cb.onSetVolPatternEnabled(true)
+                if (!cb.state.accessibilityGranted) showGrant = true
+            } else {
+                cb.onSetVolPatternEnabled(false)
+            }
+        }
+        if (showGrant) {
+            AlertDialog(
+                onDismissRequest = { showGrant = false },
+                confirmButton = { TextButton({ showGrant = false }) { Text(t.gotIt) } },
+                title = { Text(t.volGrantTitle, fontWeight = FontWeight.Bold) },
+                text = { Text(t.volGrantShort, fontSize = 15.sp, lineHeight = 20.sp) },
+            )
+        }
+
+        // Accessibility status line (the action buttons live in the section below).
+        Text(
+            if (granted) t.volAccessOn else t.volAccessOff,
+            color = if (granted) AppColors.green else AppColors.red,
+            fontWeight = FontWeight.Bold, fontSize = 14.sp,
+        )
+
+        // Max gap between presses (ms).
+        NumField(gap, { gap = it; it.toIntOrNull()?.let { v -> cb.onSetVolPatternGapMs(v) } }, t.volGapLabel, Modifier.fillMaxWidth())
+
+        // Recognised patterns — pick ONE active pattern from a dropdown.
+        Section(t.volPatternsTitle)
+        Box(Modifier.fillMaxWidth()) {
+            OutlinedButton(onClick = { patExpanded = true }, modifier = Modifier.fillMaxWidth()) {
+                Text(t.volPatternPick + ": " + patternLabels[selIdx.coerceIn(0, 9)], fontSize = 16.sp, maxLines = 1)
+            }
+            DropdownMenu(patExpanded, { patExpanded = false }) {
+                patternLabels.forEachIndexed { i, label ->
+                    DropdownMenuItem(
+                        text = { Text("№${i + 1}  $label", fontSize = 16.sp) },
+                        onClick = { selIdx = i; cb.onSetVolPatternIndex(i); patExpanded = false },
+                    )
+                }
+            }
+        }
+        Caption(t.volPatternsLegend)
+
+        // Detailed access-granting instructions — at the bottom, after the pattern pick.
+        Spacer(Modifier.height(8.dp))
+        Section(t.volGrantTitle)
+        Text(t.volGrantBody, fontSize = 14.sp, lineHeight = 20.sp, color = AppColors.onSurface)
+        Spacer(Modifier.height(10.dp))
+        Button(onClick = cb.onOpenAppInfo, modifier = Modifier.fillMaxWidth()) { Text(t.volOpenAppInfo, fontSize = 14.sp) }
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(onClick = cb.onOpenAccessibilitySettings, modifier = Modifier.fillMaxWidth()) { Text(t.volOpenAccess, fontSize = 14.sp) }
+        Spacer(Modifier.height(8.dp))
+        Button(onClick = { checked = true }, modifier = Modifier.fillMaxWidth()) { Text(t.volCheck, fontSize = 15.sp, fontWeight = FontWeight.Bold) }
+        if (checked) {
+            Text(
+                if (granted) t.volCheckOk else t.volCheckFail,
+                color = if (granted) AppColors.green else AppColors.red,
+                fontWeight = FontWeight.Bold, fontSize = 15.sp,
+            )
+        }
         Spacer(Modifier.height(16.dp))
     }
 }

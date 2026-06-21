@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -173,6 +174,12 @@ fun App(engine: Engine) {
             hotkeyLetter = engine.hotkeyLetter(),
             onSetHotkeysEnabled = engine::setHotkeysEnabled,
             onSetHotkeyLetter = engine::setHotkeyLetter,
+            onSetLanShareEnabled = engine::setLanShareEnabled,
+            onSetVolPatternEnabled = engine::setVolPatternEnabled,
+            onSetVolPatternGapMs = engine::setVolPatternGapMs,
+            onSetVolPatternIndex = engine::setVolPatternIndex,
+            onOpenAccessibilitySettings = engine::openAccessibilitySettings,
+            onOpenAppInfo = engine::openAppInfo,
             appInfo = engine.appInfo(),
             onOpenUrl = engine::openLink,
         )
@@ -189,6 +196,11 @@ fun App(engine: Engine) {
                 onCopy = { engine.tgLink(detailItem.id)?.let(engine::copyToClipboard) },
                 onOpen = { engine.tgLink(detailItem.id)?.let(engine::openLink) },
                 onMakeRelay = { engine.pin(detailItem.id, true); detail = null },
+                onTest = { engine.testHostNow(detailItem.id) },
+                onStopTest = { engine.stopHostTest() },
+                testingThis = state.testHostId == detailItem.id,
+                testRunning = state.testRunning,
+                testSummary = state.testSummary,
                 onBack = { detail = null },
             )
             return@CompositionLocalProvider
@@ -284,7 +296,7 @@ fun App(engine: Engine) {
                         errorsOnly = logErrorsOnly,
                         onErrorsOnly = { logErrorsOnly = it },
                     )
-                    Tabs.MORE -> item { MoreScreen(onOpen = { morePage = it }, onOpenGuide = { showGuide = true }, hotkeysSupported = engine.hotkeysSupported()) }
+                    Tabs.MORE -> item { MoreScreen(onOpen = { morePage = it }, onOpenGuide = { showGuide = true }, hotkeysSupported = engine.hotkeysSupported(), volPatternSupported = engine.volPatternSupported()) }
                 }
             }
         }
@@ -310,20 +322,21 @@ private fun TitleRow(langCode: String, onPickLang: (String) -> Unit) {
         )
         Spacer(Modifier.weight(1f))
         var expanded by remember { mutableStateOf(false) }
-        // English name first, then native — same labels as Settings.
-        val langs = listOf(
-            "auto" to "Auto (system)", "en" to "English", "ru" to "Russian (Русский)",
-            "fa" to "Persian (فارسی)", "zh" to "Simplified Chinese (简体中文)", "ar" to "Arabic (العربية)",
-            "ur" to "Urdu (اردو)", "tr" to "Turkish (Türkçe)", "id" to "Indonesian (Bahasa Indonesia)",
-            "hi" to "Hindi (हिन्दी)", "bn" to "Bengali (বাংলা)", "my" to "Burmese (မြန်မာ)",
-        )
+        // Flags + English + native, from the shared registry — same list as Settings.
+        val langs = listOf("auto" to (LocalStrings.current.langAuto + "  🌐")) +
+            io.autoconnector.i18n.LANGUAGES.map { it.code to io.autoconnector.i18n.langMenuLabel(it) }
         Box {
             // Compact (33dp vs the default 40dp) so the language button doesn't
             // inflate the title row height (~7px back).
             IconButton(onClick = { expanded = true }, modifier = Modifier.size(33.dp)) {
                 Icon(Icons.Filled.Language, contentDescription = "Language", tint = AppColors.accent, modifier = Modifier.size(22.dp))
             }
-            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            // Bounded height + built-in scroll so the 26-language list stays on screen.
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false },
+                modifier = Modifier.heightIn(max = 420.dp),
+            ) {
                 langs.forEach { (code, label) ->
                     DropdownMenuItem(
                         text = { Text(if (code == langCode) "✓ $label" else label) },

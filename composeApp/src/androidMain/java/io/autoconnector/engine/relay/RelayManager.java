@@ -47,6 +47,10 @@ public final class RelayManager {
     private RelayServer serverA;
     private RelayServer serverB;
 
+    /** Experimental standby-socket pool (self-gates on Prefs.prewarmEnabled). */
+    private volatile PrewarmPool prewarm;
+    public PrewarmPool prewarm() { return prewarm; }
+
     public RelayManager(int portA, int portB, ProxyStore store,
                         RelayServer.Listener listener, Context appContext) {
         this.portA = portA;
@@ -78,10 +82,36 @@ public final class RelayManager {
             else upstreamB.set(top.get(0));
         }
         INSTANCE = this;
+        prewarm = new PrewarmPool(store, appContext);
+        prewarm.start();
+    }
+
+    /** Re-creates and restarts the two listeners so they pick up a changed bind
+     *  address (loopback ↔ 0.0.0.0) when "share over LAN" is toggled. In-flight
+     *  relayed connections keep running on their own sockets; only the accept
+     *  sockets swap. SO_REUSEADDR lets us re-bind the same port immediately. */
+    public void rebindListeners() {
+        try {
+            if (serverA != null) serverA.stop();
+            if (serverB != null) serverB.stop();
+            serverA = new RelayServer(portA, store, this, listener);
+            serverB = new RelayServer(portB, store, this, listener);
+            serverA.start();
+            serverB.start();
+        } catch (Exception e) {
+            if (listener != null) listener.event("relay rebind failed: " + e.getMessage());
+        }
+    }
+
+    /** Rebinds the running relay's listeners (no-op if the relay isn't running). */
+    public static void rebindAll() {
+        RelayManager m = INSTANCE;
+        if (m != null) m.rebindListeners();
     }
 
     public void stop() {
         if (INSTANCE == this) INSTANCE = null;
+        if (prewarm != null) { prewarm.stop(); prewarm = null; }
         if (serverA != null) serverA.stop();
         if (serverB != null) serverB.stop();
     }

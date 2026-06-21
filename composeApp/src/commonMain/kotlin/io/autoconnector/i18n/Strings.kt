@@ -83,6 +83,83 @@ interface Strings {
     val recentAttempts: String get() = "Recent connects & checks"
     val kindCheck: String get() = "check"
     val kindTg: String get() = "telegram"
+    // History table column headers + short "scan" kind label.
+    val histWho: String get() = "Who"
+    val histWhen: String get() = "When"
+    val histReq: String get() = "Req"
+    val histSess: String get() = "Session"
+    val histScan: String get() = "scan"
+    // On-demand "test this host now" UX on the host-detail page.
+    val testNow: String get() = "Test now"
+    val testShort: String get() = "Test"
+    val testResult: String get() = "Test result"
+    val testStop: String get() = "Stop"
+    val testingNow: String get() = "testing…"
+    // Experimental pre-warm standby-sockets feature.
+    val prewarmTitle: String get() = "Pre-warm sockets (experimental)"
+    val prewarmHelp: String get() = "Hold a few upstream proxy sockets connected in " +
+        "advance so a new Telegram connection can skip the connect/handshake. Experimental: it " +
+        "keeps reconnecting in the background, so it spends traffic and a little CPU. No fake " +
+        "traffic is sent (that would corrupt the real session) — sockets are just rotated. Most " +
+        "useful with FakeTLS proxies."
+    val prewarmEnable: String get() = "Enable pre-warm"
+    val prewarmModeDeferred: String get() = "Deferred (TLS only)"
+    val prewarmModeDeferredSub: String get() = "Hold TCP + FakeTLS; finish the init at hand-off. No DC committed — most realistic."
+    val prewarmModeFull: String get() = "Full handshake"
+    val prewarmModeFullSub: String get() = "Hold fully-connected sockets across DCs; reused only on a DC/tag match. Shorter-lived."
+    val prewarmPoolLabel: String get() = "Standby sockets"
+    val prewarmHoldLabel: String get() = "Hold each, s"
+    val prewarmNote: String get() = "Rotation only (no app-level keepalive). A socket lasts seconds to ~a minute depending on the proxy/DC."
+    // Connector-tab pre-warm status + footnote.
+    val prewarmStatus: String get() = "Pre-warm"
+    fun prewarmStatusVal(ready: Int, holdSecs: Int): String = "$ready ready · hold ${holdSecs}s"
+    val prewarmStar: String get() = "Bold orange = socket handed over warm from the pre-warm pool (skipped connect/handshake)"
+    // Connector-tab pre-warm table (bottom).
+    fun prewarmTableTitle(holdSecs: Int): String = "Pre-warm sockets (hold ${holdSecs}s)"
+    val prewarmTableHelp: String get() = "\"Pre-warm sockets\" opens a few proxy sockets in advance so a new " +
+        "Telegram connection can skip the connect/handshake. This table lists the sockets being warmed: how long " +
+        "each has lived, whether Telegram is using it, and traffic. Turn it on/off and configure it (mode, number " +
+        "of sockets, hold time) in More → Settings → \"Pre-warm sockets (experimental)\"."
+    val prewarmNoneWarming: String get() = "no sockets warming yet"
+    val prewarmColAge: String get() = "age"
+    val prewarmColUse: String get() = "in TG?"
+    val prewarmInUse: String get() = "in TG"
+    val prewarmNew: String get() = "new"
+    // LAN sharing / web portal (Settings).
+    val lanShareTitle: String get() = "Share over LAN (web portal)"
+    val lanShareDesc: String get() = "Let other devices on this Wi-Fi use this AutoConnector as a proxy; a browser opening the address below gets a page of the best proxies."
+    val lanShareUrlsLabel: String get() = "Neighbours connect at:"
+    val lanShareNoIp: String get() = "no local-network address — connect to Wi-Fi"
+    val lanFirewallTitle: String get() = "Allow on the local network"
+    val lanFirewallBody: String get() = "Enabling this opens the relay ports to your local network. Windows (or another) firewall may now ask whether to allow AutoConnector — choose Allow / Yes. If you deny it, neighbours' traffic to AutoConnector will be blocked and the page/proxy won't be reachable."
+    val lanFirewallConfirm: String get() = "Enable"
+    // "What is this for?" info dialog for LAN sharing.
+    val lanInfoTitle: String get() = "What is this for?"
+    val lanInfoBody: String get() = "Run AutoConnector on ONE computer or phone on your Wi-Fi, and every other device on the same network — including an iPhone, which this app does not support directly — can just open the address in a browser and use it: a page of the best proxies to add to their Telegram, or this device itself as a SOCKS proxy. One device finds and holds the proxies; the rest borrow it over the LAN."
+    // Android volume-button pattern trigger (Hotkeys page, Android variant).
+    val volTriggerTitle: String get() = "Volume-button trigger"
+    val volTriggerSub: String get() = "Switch proxy with a fast volume-key pattern"
+    val volEnableLabel: String get() = "Watch volume buttons"
+    val volHelpTitle: String get() = "What is this?"
+    val volHelpBody: String get() = "On Android there are no global keyboard hotkeys, so this uses the VOLUME buttons instead. While enabled, AutoConnector watches for a fast pattern of Volume-Up/Down presses (e.g. up-up-down-down) in the background. When it recognises one, it opens a tg:// link of a random good, alive proxy so Telegram picks it up and switches — a quick, discreet way to rotate proxy without opening the app. Volume keeps working normally (the presses aren't swallowed). This needs Accessibility access (to read the volume keys in the background and to launch the link); nothing is requested until you enable the toggle. Set the max time between presses below; the recognised patterns are listed at the bottom."
+    val volGrantTitle: String get() = "Enable Accessibility (important)"
+    val volGrantBody: String get() = "Android (especially 13+) blocks Accessibility for apps NOT installed from Google Play — that's why AutoConnector is greyed out and says \"Restricted setting\" / \"access not allowed\".\n\nHow to unblock:\n1. Open \"App info\" (button below, or Settings → Apps → AutoConnector for Telegram).\n2. Tap the ⋮ menu (top-right) → \"Allow restricted settings\" → confirm.\n3. Go back: Settings → Accessibility → AutoConnector for Telegram → turn it on.\n\nIf you don't see \"Allow restricted settings\", first try toggling it on once in Accessibility (you'll get the blocked message), then step 2 appears.\n\nOn Xiaomi/MIUI, Samsung, etc. the path can differ slightly — look for the same ⋮ in \"App info\". On Android 12 and older there is usually no restriction — just enable it in Accessibility.\n\nVolume keys are only observed, never blocked."
+    val volOpenAppInfo: String get() = "Open App info"
+    val volAccessOn: String get() = "Accessibility: granted"
+    val volAccessOff: String get() = "Accessibility: not granted"
+    val volOpenAccess: String get() = "Open Accessibility settings"
+    val volGapLabel: String get() = "Max ms between presses"
+    val volPatternsTitle: String get() = "Recognised patterns"
+    val volPatternPick: String get() = "Pattern"
+    val volPatternsLegend: String get() = "↑ = volume up, ↓ = volume down"
+    val volNoRights: String get() = "The app does NOT yet have permission to handle the volume buttons — grant access using the steps at the bottom of this page."
+    val volGrantShort: String get() = "No Accessibility access yet. Read the detailed steps at the bottom of this page, then tap \"Check\"."
+    val volCheck: String get() = "Check"
+    val volCheckOk: String get() = "✓ Done — access granted, the trigger works."
+    val volCheckFail: String get() = "✗ Still no access — complete the steps above."
+    val volPatternsList: String get() = "↑↑↓↓ · ↓↓↑↑ · ↑↓↑↓ · ↓↑↓↑ · ↑↑↑↑ · ↓↓↓↓ · ↑↓↓↑ · ↓↑↑↓ · ↑↑↑↓↓↓ · ↓↓↓↑↑↑   (↑ = volume up, ↓ = volume down)"
+    // Catalog host-card history: legend explaining the columns / units.
+    val histLegend: String get() = "Columns — Who: ✓/✗ TG = real Telegram connect, scan = background check. When: time ago. TCP/TLS/Req: handshake & first-request latency, ms. Session: how long the relay session lasted. ↓/↑: bytes received / sent through the host."
     val tgOkTotalHint: String get() = "Telegram connects / successful / total checks"
     val breadthTitle: String get() = "Host selection breadth"
     val breadthHelp: String get() = "Left = stick to the best proven hosts; right = try as widely as possible across all alive hosts. When Telegram keeps switching relay ports the app widens the search automatically."
@@ -289,6 +366,12 @@ fun isRtl(code: String): Boolean {
 private fun byCode(code: String): Strings? = when (code) {
     "ru" -> Ru; "en" -> En; "fa" -> Fa; "zh" -> Zh; "ar" -> Ar; "ur" -> Ur
     "tr" -> Tr; "id" -> Id; "hi" -> Hi; "bn" -> Bn; "my" -> My
+    "es" -> Es; "fr" -> Fr; "pt" -> Pt; "de" -> De; "ja" -> Ja; "ko" -> Ko
+    "vi" -> Vi; "it" -> It; "pl" -> Pl; "uk" -> Uk; "th" -> Th
+    "ta" -> Ta; "te" -> Te; "mr" -> Mr; "pa" -> Pa
+    // Censorship-priority additions: Central Asia, Afghanistan, Ethiopia, Nigeria.
+    "uz" -> Uz; "az" -> Az; "kk" -> Kk; "ps" -> Ps; "prs" -> Prs
+    "am" -> Am; "ti" -> Ti; "ha" -> Ha
     else -> null
 }
 

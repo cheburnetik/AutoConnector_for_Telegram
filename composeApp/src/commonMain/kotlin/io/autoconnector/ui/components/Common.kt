@@ -16,6 +16,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
@@ -34,8 +35,18 @@ fun StatusDot(color: Color, sizeDp: Int = 12, modifier: Modifier = Modifier) {
  * Slow "breathing" opacity that completes one full cycle every [periodMs]
  * (default 2 s) — used for the setup warning and the connection circle.
  */
+/**
+ * True while the app window is on-screen. When false (minimised / hidden to
+ * tray) animated composables render a STATIC frame instead of driving the
+ * 60 fps frame clock — the desktop sets it from windowState.isMinimized. Default
+ * true (Android always "active").
+ */
+val LocalUiActive = staticCompositionLocalOf { true }
+
 @Composable
 fun blinkAlpha(periodMs: Int = 2000, min: Float = 0.25f): Float {
+    // Window not visible → no infinite transition, no 60 fps redraw.
+    if (!LocalUiActive.current) return 1f
     val t = rememberInfiniteTransition(label = "blink")
     val a by t.animateFloat(
         initialValue = 1f,
