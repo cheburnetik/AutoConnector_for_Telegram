@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.NetworkCheck
 import androidx.compose.material.icons.filled.Numbers
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Schedule
@@ -50,12 +51,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -67,6 +71,8 @@ import io.autoconnector.i18n.LocalStrings
 import io.autoconnector.i18n.Strings
 import io.autoconnector.i18n.modeLabel
 import io.autoconnector.ui.components.Caption
+import io.autoconnector.ui.components.StatTable
+import io.autoconnector.ui.components.cell
 import io.autoconnector.ui.components.RatingBars
 import io.autoconnector.ui.components.StatusDot
 import io.autoconnector.ui.theme.AppColors
@@ -327,34 +333,18 @@ private fun humanBytes(b: Long): String = when {
     else -> "${b / (1024L * 1024 * 1024)}G"
 }
 
-/** One past attempt row in the detail card's history list. */
-@Composable
-private fun HistoryRow(r: io.autoconnector.engine.HistoryRecord, t: Strings) {
-    Column(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                if (r.success) "✓" else "✗",
-                color = if (r.success) AppColors.green else AppColors.red,
-                fontWeight = FontWeight.Bold, fontSize = 13.sp,
-            )
-            Spacer(Modifier.width(6.dp))
-            Text(fmtStamp(r.ts), fontFamily = monospaceFontFamily(), fontSize = 13.sp, color = AppColors.onSurface)
-            Spacer(Modifier.width(8.dp))
-            Text(
-                if (r.isTelegram) t.kindTg else t.kindCheck,
-                fontSize = 12.sp,
-                color = if (r.isTelegram) AppColors.blue else AppColors.onSurfaceMuted,
-                fontWeight = FontWeight.Bold,
-            )
-        }
-        Text(
-            "TCP ${msOrDash(r.tcpMs, t)} · TLS ${msOrDash(r.tlsMs, t)} · ${msOrDash(r.totalMs, t)} · ↓${humanBytes(r.bytesIn)} ↑${humanBytes(r.bytesOut)}",
-            fontSize = 12.sp, color = AppColors.onSurfaceMuted, fontFamily = monospaceFontFamily(),
-        )
-    }
+/** Compact duration/"ago" formatter for the history table, e.g. "3м20с", "45с",
+ *  "2ч5м", "3д". Uses the locale's short units (с / м / ч / д). */
+private fun fmtSecsShort(s: Long, t: Strings): String = when {
+    s < 0 -> t.dash
+    s < 60 -> "$s${t.secShort}"
+    s < 3600 -> "${s / 60}${t.agoMin}${s % 60}${t.secShort}"
+    s < 86400 -> "${s / 3600}${t.agoHour}${(s % 3600) / 60}${t.agoMin}"
+    else -> "${s / 86400}${t.agoDay}"
 }
 
 /** Full-screen, scrollable per-host detail with icons (same as the tile) + actions. */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun CatalogDetailPage(
     p: CatalogItem,
@@ -362,10 +352,21 @@ fun CatalogDetailPage(
     onCopy: () -> Unit,
     onOpen: () -> Unit,
     onMakeRelay: () -> Unit,
+    onTest: () -> Unit = {},
+    onStopTest: () -> Unit = {},
+    testingThis: Boolean = false,
+    testRunning: Boolean = false,
+    testSummary: String = "",
     onBack: () -> Unit,
 ) {
     val t = LocalStrings.current
+    val scroll = rememberScrollState()
+    val scope = rememberCoroutineScope()
+    // Anchor placed just above the test-result / table block, so the "Тест" button
+    // scrolls there (rather than to the very bottom).
+    val testAnchor = remember { androidx.compose.foundation.relocation.BringIntoViewRequester() }
     Surface(Modifier.fillMaxSize(), color = AppColors.background) {
+        Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
             // Top bar with back button.
             Box(Modifier.fillMaxWidth().background(Brush.horizontalGradient(listOf(AppColors.accent, AppColors.accentDark)))) {
@@ -378,7 +379,7 @@ fun CatalogDetailPage(
             }
 
             Column(
-                Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()).padding(16.dp),
+                Modifier.fillMaxWidth().weight(1f).verticalScroll(scroll).padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 // Compact one-line actions: copy / open / make-relay.
@@ -415,16 +416,118 @@ fun CatalogDetailPage(
                     }
                 }
 
+                // Scroll anchor: just above the test-result / history table.
+                Spacer(
+                    Modifier.height(1.dp).fillMaxWidth().bringIntoViewRequester(testAnchor),
+                )
+
+                // Live "test this host now" status + compact summary, shown while a
+                // test is in progress (or has just produced a summary for this host).
+                if (testingThis) {
+                    Spacer(Modifier.height(12.dp))
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(t.testResult, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = AppColors.accent)
+                        if (testRunning) {
+                            Spacer(Modifier.width(8.dp))
+                            androidx.compose.material3.CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = AppColors.accent,
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(t.testingNow, color = AppColors.onSurfaceMuted, fontSize = 13.sp)
+                            Spacer(Modifier.weight(1f))
+                            androidx.compose.material3.TextButton(onClick = onStopTest) { Text(t.testStop) }
+                        }
+                    }
+                    if (testSummary.isNotBlank()) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(testSummary, fontSize = 13.sp, color = AppColors.onSurface)
+                    }
+                }
+
                 // Last 25 attempts (checks + Telegram connects) with per-attempt
                 // timings and bytes — the most recent first.
                 if (history.isNotEmpty()) {
                     Spacer(Modifier.height(12.dp))
                     Text(t.recentAttempts, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = AppColors.accent)
-                    Spacer(Modifier.height(4.dp))
-                    history.forEach { r -> HistoryRow(r, t) }
+                    Spacer(Modifier.height(6.dp))
+                    // 8-column table: who (TG/scan) · when · TCP ms · TLS ms ·
+                    // request ms (post-handshake = total−tcp−tls) · session · ↓in · ↑out.
+                    val rows = buildList {
+                        add(
+                            listOf(
+                                cell(t.histWho, bold = true), cell(t.histWhen, bold = true),
+                                cell("TCP", bold = true), cell("TLS", bold = true),
+                                cell(t.histReq, bold = true), cell(t.histSess, bold = true),
+                                cell("↓", bold = true), cell("↑", bold = true),
+                            ),
+                        )
+                        history.forEach { r ->
+                            val reqMs = if (r.totalMs >= 0 && r.tcpMs >= 0 && r.tlsMs >= 0)
+                                (r.totalMs - r.tcpMs - r.tlsMs).coerceAtLeast(0) else -1
+                            val okColor = if (r.success) AppColors.green else AppColors.red
+                            add(
+                                listOf(
+                                    cell(
+                                        (if (r.success) "✓" else "✗") + " " + (if (r.isTelegram) "TG" else t.histScan),
+                                        color = okColor, bold = true,
+                                    ),
+                                    cell(fmtSecsShort(r.secondsAgo, t), mono = true),
+                                    cell(if (r.tcpMs >= 0) "${r.tcpMs}" else t.dash, mono = true),
+                                    cell(if (r.tlsMs >= 0) "${r.tlsMs}" else t.dash, mono = true),
+                                    cell(if (reqMs >= 0) "$reqMs" else t.dash, mono = true),
+                                    cell(if (r.sessionMs > 0) fmtSecsShort(r.sessionMs / 1000, t) else t.dash, mono = true),
+                                    cell(humanBytes(r.bytesIn), mono = true),
+                                    cell(humanBytes(r.bytesOut), mono = true),
+                                ),
+                            )
+                        }
+                    }
+                    StatTable(rows, fontSize = 11, weights = listOf(1.0f, 1.1f, 0.8f, 0.8f, 0.85f, 1.05f, 0.8f, 0.8f))
+                    // Plain muted legend explaining the column names and units.
+                    Spacer(Modifier.height(6.dp))
+                    Text(t.histLegend, color = AppColors.onSurfaceMuted, fontSize = 11.sp, lineHeight = 15.sp)
                 }
-                Spacer(Modifier.height(16.dp))
+                // Extra bottom padding so the last rows aren't hidden behind the
+                // sticky bottom action bar.
+                Spacer(Modifier.height(76.dp))
             }
+        }
+
+        // Sticky bottom action bar: copy / open, pinned over the scrollable
+        // content so it is always reachable without scrolling.
+        Surface(
+            modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
+            color = AppColors.card,
+            shadowElevation = 8.dp,
+        ) {
+            Box(Modifier.fillMaxWidth()) {
+                Box(Modifier.fillMaxWidth().height(1.dp).background(AppColors.cardBorder))
+                Row(
+                    Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    androidx.compose.material3.IconButton(onClick = onCopy) {
+                        Icon(Icons.Filled.ContentCopy, contentDescription = t.actCopy, tint = AppColors.accent, modifier = Modifier.size(24.dp))
+                    }
+                    androidx.compose.material3.IconButton(onClick = onOpen) {
+                        Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = t.actOpen, tint = AppColors.accent, modifier = Modifier.size(24.dp))
+                    }
+                    // Small "Тест" action: kick off an on-demand test and scroll to
+                    // the test-result block (just above the history table).
+                    Button(
+                        onClick = { onTest(); scope.launch { testAnchor.bringIntoView() } },
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                    ) {
+                        Icon(Icons.Filled.NetworkCheck, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text(t.testShort, fontSize = 13.sp, maxLines = 1)
+                    }
+                }
+            }
+        }
         }
     }
 }

@@ -122,8 +122,8 @@ android {
         applicationId = "io.autoconnector"
         minSdk = 24
         targetSdk = 34
-        versionCode = 63
-        versionName = "1.1.5"
+        versionCode = 77
+        versionName = "1.1.20"
         buildConfigField("String", "BUILD_DATE", "\"$buildDate\"")
     }
 
@@ -193,12 +193,15 @@ compose.desktop {
         // pages back to the OS. Result: RSS drops to roughly a third.
         jvmArgs += listOf(
             "-Djava.awt.headless=false",
-            "-Xmx512m",
+            "-Xmx384m",
             "-XX:MaxMetaspaceSize=192m",
             "-XX:+UseG1GC",
             "-XX:MaxGCPauseMillis=200",
             "-XX:G1PeriodicGCInterval=30000",
             "-XX:+G1PeriodicGCInvokesConcurrent",
+            // The minimise-time System.gc() (DesktopEngine.setUiActive) runs as a
+            // concurrent G1 cycle — low pause, and it hands committed pages back.
+            "-XX:+ExplicitGCInvokesConcurrent",
         )
         nativeDistributions {
             targetFormats(

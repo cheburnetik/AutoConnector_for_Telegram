@@ -15,6 +15,7 @@ import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import io.autoconnector.i18n.deviceLanguage
 import io.autoconnector.ui.App
+import io.autoconnector.ui.components.LocalUiActive
 import java.awt.Font
 import java.awt.SystemTray
 import java.awt.Toolkit
@@ -93,6 +94,11 @@ fun main() = application {
     }
     var windowVisible by remember { mutableStateOf(true) }
     val state = rememberWindowState(size = initialWindowSize())
+    // Tell the engine when the UI is actually on-screen so its UI-only loops
+    // (state poll, sparkline ingest) back off while minimised or hidden to tray.
+    LaunchedEffect(windowVisible, state.isMinimized) {
+        engine.setUiActive(windowVisible && !state.isMinimized)
+    }
     // Live handle to the underlying AWT window, captured once the Compose Window
     // is on screen. The tray needs it to raise an ALREADY-visible window above
     // other apps — toggling `windowVisible` alone is a no-op in that case.
@@ -266,6 +272,8 @@ fun main() = application {
         androidx.compose.runtime.CompositionLocalProvider(
             androidx.compose.ui.platform.LocalDensity provides
                 androidx.compose.ui.unit.Density(d.density, d.fontScale * 0.88f),
+            // Minimised → animated composables go static (no 60 fps frame clock).
+            LocalUiActive provides !state.isMinimized,
         ) {
             App(engine)
         }

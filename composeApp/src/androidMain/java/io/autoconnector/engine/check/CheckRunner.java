@@ -80,7 +80,7 @@ public final class CheckRunner {
      */
     public void runOn(List<ProxyEntry> list, String label, ExecutorService pool) {
         if (list.isEmpty()) {
-            log.line("Нет прокси для проверки в " + label + ".");
+            log.line("No proxies to check in " + label + ".");
             return;
         }
         io.autoconnector.engine.core.ScanProgress.begin(list.size());
@@ -93,7 +93,7 @@ public final class CheckRunner {
 
     private void runOnInner(List<ProxyEntry> list, String label, ExecutorService pool) {
         try { store.purgeOldChecks(); } catch (Exception ignored) {}
-        log.line("— проверка " + list.size() + " прокси (" + label + ") —");
+        log.line("— checking " + list.size() + " proxies (" + label + ") —");
 
         AtomicInteger full = new AtomicInteger();
         AtomicInteger stealth = new AtomicInteger();
@@ -135,8 +135,8 @@ public final class CheckRunner {
                 f.cancel(true);
             }
         }
-        log.line("— готово: живых " + full + ", stealth " + stealth
-                + ", мёртвых " + dead + " —");
+        log.line("— done: live " + full + ", stealth " + stealth
+                + ", dead " + dead + " —");
     }
 
     private void probeOne(ProxyEntry p,
@@ -172,7 +172,7 @@ public final class CheckRunner {
                 // logged separately by the relay.
                 try {
                     if (!r.ok() || (AL_SAMPLE.incrementAndGet() & 0x7) == 0L) {
-                        store.logAttempt(p.id, 0, r.ok(), -1, -1, r.ok() ? pingMs : -1, 0, 0);
+                        store.logAttempt(p.id, 0, r.ok(), -1, -1, r.ok() ? pingMs : -1, 0, 0, 0);
                     }
                 } catch (Exception ignored) {}
                 // Per-mode record — what the relay actually uses to pick
@@ -189,8 +189,8 @@ public final class CheckRunner {
                 default: dead.incrementAndGet(); break;
             }
             log.line(badge(r.grade) + " " + p.host + ":" + p.port
-                    + "  " + (r.ok() ? "успех" : "нет")
-                    + "  " + String.format("%.1f", durMs / 1000.0) + "с");
+                    + "  " + (r.ok() ? "ok" : "no")
+                    + "  " + String.format("%.1f", durMs / 1000.0) + "s");
         } finally {
             ScanState.probing.remove(p.id);
         }

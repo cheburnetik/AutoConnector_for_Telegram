@@ -18,9 +18,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -44,6 +46,7 @@ import io.autoconnector.i18n.Strings
 import io.autoconnector.i18n.modeLabel
 import io.autoconnector.ui.components.Caption
 import io.autoconnector.ui.components.Cell
+import io.autoconnector.ui.components.HelpDialog
 import io.autoconnector.ui.components.LiveBarGraph
 import io.autoconnector.ui.components.PulseCircle
 import io.autoconnector.ui.components.StatTable
@@ -59,12 +62,7 @@ fun ConnectorContent(s: EngineState, onOpenGuide: () -> Unit, onOpenQuick: () ->
     val t = LocalStrings.current
     var showModeHelp by remember { mutableStateOf(false) }
     if (showModeHelp) {
-        AlertDialog(
-            onDismissRequest = { showModeHelp = false },
-            confirmButton = { TextButton(onClick = { showModeHelp = false }) { Text(t.gotIt) } },
-            title = { Text(t.modeWord) },
-            text = { Text(t.connModeHelp) },
-        )
+        HelpDialog(title = t.modeWord, body = t.connModeHelp, onDismiss = { showModeHelp = false })
     }
     Column(
         Modifier.fillMaxWidth().padding(12.dp),
@@ -187,7 +185,51 @@ fun ConnectorContent(s: EngineState, onOpenGuide: () -> Unit, onOpenQuick: () ->
 
         ActiveSocketsTable(s, t)
 
+        // Experimental pre-warm pool — the very bottom table.
+        PrewarmTable(s, t)
+
         Spacer(Modifier.height(8.dp))
+    }
+}
+
+/**
+ * Bottom-most table on the Connector tab: standby ("pre-warm") sockets. Each row
+ * is a host being kept warm — how long the socket has lived, whether Telegram is
+ * already using it (vs an idle/new standby), and the traffic carried once in use.
+ * Shown only when the experimental pre-warm feature is enabled.
+ */
+@Composable
+internal fun PrewarmTable(s: EngineState, t: Strings) {
+    if (!s.prewarmEnabled) return
+    var showPrewarmHelp by remember { mutableStateOf(false) }
+    if (showPrewarmHelp) {
+        HelpDialog(title = t.prewarmTitle, body = t.prewarmTableHelp, onDismiss = { showPrewarmHelp = false })
+    }
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(t.prewarmTableTitle(s.prewarmHoldSecs), Modifier.weight(1f), fontWeight = FontWeight.Bold, fontSize = 14.sp)
+        IconButton(onClick = { showPrewarmHelp = true }, modifier = Modifier.size(26.dp)) {
+            Icon(Icons.Filled.Info, t.prewarmTitle, tint = AppColors.accent, modifier = Modifier.size(20.dp))
+        }
+    }
+    if (s.prewarmRows.isEmpty()) {
+        Caption(t.prewarmNoneWarming)
+    } else {
+        val rows = ArrayList<List<Cell>>()
+        rows.add(listOf(
+            cell(t.colHost, AppColors.onSurfaceMuted, bold = true),
+            cell(t.prewarmColAge, AppColors.onSurfaceMuted, bold = true),
+            cell(t.prewarmColUse, AppColors.onSurfaceMuted, bold = true),
+            cell("↓↑", AppColors.onSurfaceMuted, bold = true),
+        ))
+        for (r in s.prewarmRows) {
+            rows.add(listOf(
+                cell(r.host, AppColors.amber, bold = true, mono = true),
+                cell("${r.ageSecs}${t.secShort}", mono = true),
+                cell(if (r.inUse) t.prewarmInUse else t.prewarmNew, if (r.inUse) AppColors.green else AppColors.onSurfaceMuted),
+                cell(r.traffic, mono = true),
+            ))
+        }
+        StatTable(rows = rows, weights = listOf(2.2f, 0.9f, 1f, 1.3f), fontSize = 13, bg = Color.White, border = Color(0xFF999999))
     }
 }
 
@@ -229,13 +271,17 @@ internal fun ActiveSocketsTable(s: EngineState, t: Strings) {
         val rows = ArrayList<List<Cell>>()
         rows.add(listOf(cell(t.colHost, AppColors.onSurfaceMuted, bold = true), cell(t.colTime, AppColors.onSurfaceMuted, bold = true), cell("↓↑", AppColors.onSurfaceMuted, bold = true)))
         for (c in s.sessions) {
+            // Pre-warmed sockets (handed over warm from the pool) are shown bold + orange.
+            val pw = c.fromPrewarm
             rows.add(listOf(
-                cell(c.host, if (c.alive) AppColors.green else AppColors.blue, mono = true),
+                cell(c.host, if (pw) AppColors.amber else if (c.alive) AppColors.green else AppColors.blue, bold = pw, mono = true),
                 cell(c.connectedFor, mono = true),
                 cell(c.traffic, mono = true),
             ))
         }
         StatTable(rows = rows, weights = listOf(2.2f, 1f, 1f), fontSize = 14, bg = Color.White, border = Color(0xFF999999))
+        // Footnote explaining the * marker (only when a warm socket is present).
+        if (s.sessions.any { it.fromPrewarm }) Caption(t.prewarmStar)
     }
 }
 

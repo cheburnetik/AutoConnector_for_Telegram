@@ -56,6 +56,8 @@ public final class RelayStats {
         /** Closer hook — set by RelayConnection so RelayManager can yank a
          *  whole port's worth of sockets when Telegram migrates away. */
         public volatile Runnable killer;
+        /** True if this connection's upstream came from the pre-warm pool. */
+        public volatile boolean fromPrewarm;
 
         public LiveConn(int localPort, String upstream, long upstreamProxyId,
                         int dcId, boolean upstreamMtproto, int rttMs,

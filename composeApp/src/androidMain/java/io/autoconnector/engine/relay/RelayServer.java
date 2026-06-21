@@ -37,11 +37,18 @@ public final class RelayServer {
         this.listener = listener;
     }
 
-    /** Binds {@code 127.0.0.1:port} and starts accepting Telegram connections. */
+    /** Starts accepting Telegram connections. Binds {@code 127.0.0.1:port}
+     *  (loopback only) by default so Windows/Linux firewalls never prompt; binds
+     *  {@code 0.0.0.0:port} (all interfaces, LAN-reachable) ONLY when the user
+     *  enables "share over LAN" — that's when the firewall question is expected.
+     *  A toggle rebinds via {@link RelayManager#rebindListeners()}. */
     public void start() throws IOException {
+        boolean lan = false;
+        try { lan = new io.autoconnector.engine.core.Prefs(manager.appContext).lanShareEnabled(); } catch (Exception ignored) {}
         serverSocket = new ServerSocket();
         serverSocket.setReuseAddress(true);
-        serverSocket.bind(new InetSocketAddress("127.0.0.1", port));
+        serverSocket.bind(lan ? new InetSocketAddress(port)
+                              : new InetSocketAddress("127.0.0.1", port));
         running = true;
 
         acceptThread = new Thread(() -> {

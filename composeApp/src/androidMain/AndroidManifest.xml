@@ -38,6 +38,18 @@
                 android:value="mtproto_proxy_relay" />
         </service>
 
+        <service
+            android:name="io.autoconnector.engine.input.VolumePatternService"
+            android:exported="false"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/volume_pattern_service" />
+        </service>
+
         <receiver
             android:name="io.autoconnector.engine.relay.BootReceiver"
             android:exported="true">

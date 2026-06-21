@@ -487,6 +487,17 @@ public class Prefs {
     public boolean proxyLinkHttp() { return sp.getBoolean("proxy_link_http", false); }
     public void setProxyLinkHttp(boolean v) { sp.edit().putBoolean("proxy_link_http", v).apply(); }
 
+    /** Android volume-button pattern trigger (replaces desktop hotkeys on Android). */
+    public boolean volPatternEnabled() { return sp.getBoolean("vol_pattern_enabled", false); }
+    public void setVolPatternEnabled(boolean v) { sp.edit().putBoolean("vol_pattern_enabled", v).apply(); }
+    /** Max ms allowed between consecutive presses of a pattern (clamped 80..2000). */
+    public int volPatternGapMs() { return clampVolGap(sp.getInt("vol_pattern_gap_ms", 800)); }
+    public void setVolPatternGapMs(int ms) { sp.edit().putInt("vol_pattern_gap_ms", clampVolGap(ms)).apply(); }
+    private static int clampVolGap(int ms) { return ms < 80 ? 80 : (ms > 2000 ? 2000 : ms); }
+    /** Which pattern (index into VolumePatterns.PATTERNS) is the active trigger. */
+    public int volPatternIndex() { int v = sp.getInt("vol_pattern_index", 0); return (v < 0 || v > 9) ? 0 : v; }
+    public void setVolPatternIndex(int i) { sp.edit().putInt("vol_pattern_index", (i < 0 || i > 9) ? 0 : i).apply(); }
+
     /** Diagnostic network-exchange log (metadata only — no payload bytes). */
     public boolean netLogEnabled() { return sp.getBoolean("net_log_enabled", false); }
     public void setNetLogEnabled(boolean v) {
@@ -547,6 +558,30 @@ public class Prefs {
     public void setRelayConnectTimeoutMs(int ms) {
         sp.edit().putInt("relay_connect_timeout_ms", clampConnTimeout(ms)).apply();
     }
+
+    // --- Experimental: pre-warm standby upstream sockets (default OFF) --------
+    // Hold a small pool of already-connected upstream sockets so a Telegram
+    // connect can skip the (expensive) connect/handshake. See PrewarmPool.
+    public boolean prewarmEnabled() { return sp.getBoolean("prewarm_enabled", true); }
+    public void setPrewarmEnabled(boolean v) { sp.edit().putBoolean("prewarm_enabled", v).apply(); }
+
+    /** LAN sharing / web portal: when on, the relay ports bind 0.0.0.0 so other
+     *  devices on the local network can use this AutoConnector as a SOCKS proxy
+     *  and a browser hitting the port gets an HTML page of the best hosts. */
+    public boolean lanShareEnabled() { return sp.getBoolean("lan_share_enabled", false); }
+    public void setLanShareEnabled(boolean v) { sp.edit().putBoolean("lan_share_enabled", v).apply(); }
+    /** 0 = deferred-obf2 (hold TCP+FakeTLS only; DC committed at hand-off),
+     *  1 = full handshake (DC committed at warm-up, matched per dcId+tag). */
+    public int prewarmMode() { return sp.getInt("prewarm_mode", 0) == 1 ? 1 : 0; }
+    public void setPrewarmMode(int v) { sp.edit().putInt("prewarm_mode", v == 1 ? 1 : 0).apply(); }
+    /** How many standby sockets to keep warm (1..8). */
+    public int prewarmPool() { return clampPrewarmPool(sp.getInt("prewarm_pool", 5)); }
+    public void setPrewarmPool(int v) { sp.edit().putInt("prewarm_pool", clampPrewarmPool(v)).apply(); }
+    private static int clampPrewarmPool(int n) { return n < 1 ? 1 : (n > 8 ? 8 : n); }
+    /** How long to hold each standby socket before rotating it (5..120 s). */
+    public int prewarmHoldSecs() { return clampPrewarmHold(sp.getInt("prewarm_hold_secs", 20)); }
+    public void setPrewarmHoldSecs(int v) { sp.edit().putInt("prewarm_hold_secs", clampPrewarmHold(v)).apply(); }
+    private static int clampPrewarmHold(int s) { return s < 5 ? 5 : (s > 120 ? 120 : s); }
 
     private static int clampConnTimeout(int ms) {
         if (ms < 100) return 100;

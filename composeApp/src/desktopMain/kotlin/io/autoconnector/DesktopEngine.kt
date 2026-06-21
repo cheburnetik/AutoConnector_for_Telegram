@@ -8,6 +8,7 @@ import io.autoconnector.engine.Engine
 import io.autoconnector.engine.EngineSettings
 import io.autoconnector.engine.HistoryRecord
 import io.autoconnector.engine.EngineState
+import io.autoconnector.engine.PrewarmRow
 import io.autoconnector.engine.ExpEngineOption
 import io.autoconnector.engine.ScanParams
 import io.autoconnector.engine.HandshakeOption
@@ -96,6 +97,14 @@ class DesktopEngine(private val dataDir: File) : Engine {
 
     @Volatile private var relayManager: RelayManager? = null
 
+    // True while the window is on-screen (not minimised, not tray-hidden). When
+    // false the UI-only work backs off: the state poll slows right down and the
+    // sparkline ingest pauses, so a minimised window costs ~no CPU/disk. The
+    // relay and scanner keep running — only UI-driven churn stops. Set from
+    // main.kt via setUiActive(); the Compose animations gate themselves on the
+    // matching LocalUiActive.
+    @Volatile private var uiActive = true
+
     // Desktop network label (Android's ConnectivityManager shim can't detect it),
     // derived from java.net.NetworkInterface and cached so we don't enumerate
     // every poll tick.
@@ -172,8 +181,8 @@ class DesktopEngine(private val dataDir: File) : Engine {
                             RelayStats.closeOnPort(pr.relayPortA())
                             RelayStats.closeOnPort(pr.relayPortB())
                             appendLog(
-                                if (bypass) "🔌 VPN активен — прямой режим (без прокси)"
-                                else "🔌 прокси-режим восстановлен", LogCat.TELEGRAM,
+                                if (bypass) "🔌 VPN active — direct mode (no proxy)"
+                                else "🔌 proxy mode restored", LogCat.TELEGRAM,
                             )
                             pushImmediate()
                         }
@@ -207,7 +216,7 @@ class DesktopEngine(private val dataDir: File) : Engine {
 
     override fun setProxyEnabled(on: Boolean) {
         Prefs(ctx).setAppEnabled(on)
-        appendLog(if (on) "⏻ прокси включён — открываю порты" else "⏻ прокси отключён — закрываю порты")
+        appendLog(if (on) "⏻ proxy enabled — opening ports" else "⏻ proxy disabled — closing ports")
         applyRelayState()
         pushImmediate()
     }
@@ -225,7 +234,7 @@ class DesktopEngine(private val dataDir: File) : Engine {
             io.autoconnector.engine.traffic.ScanPingBuffer.INSTANCE.reset()
             io.autoconnector.engine.traffic.ThreadsBuffer.INSTANCE.reset()
         }
-        appendLog(if (on) "✓ фоновое сканирование включено" else "⏸ фоновое сканирование отключено — останавливаю фоновые задачи", LogCat.SCAN)
+        appendLog(if (on) "✓ background scanning enabled" else "⏸ background scanning disabled — stopping background tasks", LogCat.SCAN)
         applyRelayState()
         pushImmediate()
         // On enable: don't wait for the scheduled loop — kick an immediate pass so
@@ -250,7 +259,7 @@ class DesktopEngine(private val dataDir: File) : Engine {
                 relayManager = m
                 RelayLog.emit("⏻ релей запущен, порты $a/$b")
             } catch (e: Throwable) {
-                appendLog("⚠ ошибка запуска релея: ${e.message}")
+                appendLog("⚠ relay start error: ${e.message}")
                 relayManager = null
             }
         } else if (!proxyOn && relayManager != null) {
@@ -306,6 +315,10 @@ class DesktopEngine(private val dataDir: File) : Engine {
             relayRaceWidth = p.relayRaceWidth(),
             relayBreadth = p.relayBreadth(),
             relayConnectTimeoutMs = p.relayConnectTimeoutMs(),
+            prewarmEnabled = p.prewarmEnabled(),
+            prewarmMode = p.prewarmMode(),
+            prewarmPool = p.prewarmPool(),
+            prewarmHoldSecs = p.prewarmHoldSecs(),
         )
     }
 
@@ -364,6 +377,10 @@ class DesktopEngine(private val dataDir: File) : Engine {
         p.setRelayRaceWidth(s.relayRaceWidth)
         p.setRelayBreadth(s.relayBreadth)
         p.setRelayConnectTimeoutMs(s.relayConnectTimeoutMs)
+        p.setPrewarmEnabled(s.prewarmEnabled)
+        p.setPrewarmMode(s.prewarmMode)
+        p.setPrewarmPool(s.prewarmPool)
+        p.setPrewarmHoldSecs(s.prewarmHoldSecs)
         NetLog.setEnabled(s.netLogEnabled)
         // Re-apply the manual mode override when the user changed it here, and
         // seed-scan the freshly selected mode if its pool is thin.
@@ -380,7 +397,7 @@ class DesktopEngine(private val dataDir: File) : Engine {
                 io.autoconnector.engine.core.ScanGate.setProbesPaused(true)
                 kotlinx.coroutines.delay(400)
                 io.autoconnector.engine.core.ScanGate.setProbesPaused(false)
-                appendLog("⚙ интенсивность изменена — текущий проход прерван, перезапуск", LogCat.SCAN)
+                appendLog("⚙ intensity changed — current pass aborted, restarting", LogCat.SCAN)
             }
         }
         // Ports may have changed — restart the relay if it's running.
@@ -389,7 +406,7 @@ class DesktopEngine(private val dataDir: File) : Engine {
             relayManager = null
             applyRelayState()
         }
-        appendLog("⚙ настройки сохранены")
+        appendLog("⚙ settings saved")
     }
 
     override fun handshakeModeLabels(): List<String> =
@@ -438,7 +455,7 @@ class DesktopEngine(private val dataDir: File) : Engine {
             dir.mkdirs()
             java.awt.Desktop.getDesktop().open(dir)
         } catch (t: Throwable) {
-            appendLog("⚠ не удалось открыть папку лога: ${t.message}")
+            appendLog("⚠ couldn't open log folder: ${t.message}")
         }
     }
 
@@ -449,7 +466,7 @@ class DesktopEngine(private val dataDir: File) : Engine {
             dataDir.mkdirs()
             java.awt.Desktop.getDesktop().open(dataDir)
         } catch (t: Throwable) {
-            appendLog("⚠ не удалось открыть папку данных: ${t.message}")
+            appendLog("⚠ couldn't open data folder: ${t.message}")
         }
     }
 
@@ -478,13 +495,13 @@ class DesktopEngine(private val dataDir: File) : Engine {
 
     override fun resetStats() {
         HandshakeStats.resetAll()
-        appendLog("⚙ статистика хитростей сброшена")
+        appendLog("⚙ tricks statistics reset")
     }
 
     override fun resetCatalogStats() {
         store.resetCatalogStats()
         HandshakeStats.resetAll()
-        appendLog("⚙ каталог и статистика сброшены (хосты и подписки сохранены)", LogCat.SCAN)
+        appendLog("⚙ catalog and statistics reset (hosts and subscriptions kept)", LogCat.SCAN)
     }
 
     override fun clearDownloadedHosts() {
@@ -494,7 +511,7 @@ class DesktopEngine(private val dataDir: File) : Engine {
         // "already fetched". Then kick an immediate intensive re-download
         // instead of waiting for a restart (the pool is empty right now).
         store.resetSourceStats()
-        appendLog("⚙ список скачанных хостов очищен — подписки обнулены, качаю заново", LogCat.SCAN)
+        appendLog("⚙ downloaded hosts list cleared — subscriptions reset, downloading again", LogCat.SCAN)
         refreshCatalog(); refreshSources()
         scope.launch(Dispatchers.IO) {
             try { if (Prefs(ctx).scanEnabled()) aggressiveBootstrap() }
@@ -542,7 +559,7 @@ class DesktopEngine(private val dataDir: File) : Engine {
 
     override fun pin(id: Long, pinned: Boolean) {
         if (RelayManager.INSTANCE == null) {
-            appendLog("⚠ релей не запущен — закрепление недоступно")
+            appendLog("⚠ relay not running — pinning unavailable")
             return
         }
         val entry = store.proxiesByIds(listOf(id)).firstOrNull()
@@ -561,9 +578,9 @@ class DesktopEngine(private val dataDir: File) : Engine {
         try {
             Toolkit.getDefaultToolkit().systemClipboard
                 .setContents(StringSelection(text), null)
-            appendLog("· скопировано в буфер")
+            appendLog("· copied to clipboard")
         } catch (t: Throwable) {
-            appendLog("⚠ не удалось скопировать")
+            appendLog("⚠ couldn't copy")
         }
     }
 
@@ -578,10 +595,10 @@ class DesktopEngine(private val dataDir: File) : Engine {
                 os.contains("mac") -> ProcessBuilder("open", url).start()
                 else -> ProcessBuilder("xdg-open", url).start()
             }
-            appendLog("· открываю: $url")
+            appendLog("· opening: $url")
         } catch (t: Throwable) {
             try { java.awt.Desktop.getDesktop().browse(java.net.URI(url)) }
-            catch (_: Throwable) { appendLog("⚠ не удалось открыть: $url") }
+            catch (_: Throwable) { appendLog("⚠ couldn't open: $url") }
         }
     }
 
@@ -594,7 +611,7 @@ class DesktopEngine(private val dataDir: File) : Engine {
     override fun addSource(url: String) {
         store.upsertSource(url)
         refreshSources()
-        appendLog("✓ источник добавлен: $url", LogCat.SUBS)
+        appendLog("✓ source added: $url", LogCat.SUBS)
     }
 
     override fun removeSource(id: Long) {
@@ -607,7 +624,7 @@ class DesktopEngine(private val dataDir: File) : Engine {
         urls.lines().map { it.trim() }
             .filter { it.startsWith("http://") || it.startsWith("https://") }
             .forEach { store.upsertSource(it); n++ }
-        if (n > 0) { refreshSources(); appendLog("✓ добавлено подписок: $n", LogCat.SUBS) }
+        if (n > 0) { refreshSources(); appendLog("✓ subscriptions added: $n", LogCat.SUBS) }
         return n
     }
 
@@ -616,7 +633,7 @@ class DesktopEngine(private val dataDir: File) : Engine {
         val added = store.addAll(list)
         if (list.isNotEmpty()) {
             refreshSources()
-            appendLog("✓ добавлено прокси (фикс-список): $added из ${list.size}", LogCat.SUBS)
+            appendLog("✓ proxies added (fixed list): $added of ${list.size}", LogCat.SUBS)
         }
         return added
     }
@@ -633,14 +650,14 @@ class DesktopEngine(private val dataDir: File) : Engine {
             io.autoconnector.engine.core.ScanGate.setAborted(false)
             downloadingSince[id] = System.currentTimeMillis()
             refreshSources()   // show "Загружаю…" at once
-            appendLog("⤓ обновляю подписку: $url", LogCat.SUBS)
+            appendLog("⤓ updating subscription: $url", LogCat.SUBS)
             try {
                 val scanner = PageScanner(store, PageScanner.Log { line -> appendLog(line, LogCat.SUBS) })
                 val r = scanner.scanPage(url)
                 val sid = store.upsertSource(url)
                 if (sid > 0) { store.markSourceRefreshed(sid); store.setSourceScanResult(sid, r.found, r.bytes, r.error) }
-                appendLog("⤓ подписка обновлена: найдено ${r.found}" + (if (r.error != null) " (${r.error})" else ""), LogCat.SUBS)
-            } catch (t: Throwable) { appendLog("⚠ обновление подписки: ${t.message}", LogCat.SUBS) }
+                appendLog("⤓ subscription updated: found ${r.found}" + (if (r.error != null) " (${r.error})" else ""), LogCat.SUBS)
+            } catch (t: Throwable) { appendLog("⚠ subscription update: ${t.message}", LogCat.SUBS) }
             finally { downloadingSince.remove(id); refreshSources() }
         }
     }
@@ -655,10 +672,10 @@ class DesktopEngine(private val dataDir: File) : Engine {
             val home = System.getProperty("user.home") ?: dataDir.absolutePath
             val f = java.io.File(home, "autoconnector_proxies.txt")
             f.writeText(links.joinToString("\n"))
-            appendLog("⤓ экспортировано ${links.size} ссылок → ${f.absolutePath}")
+            appendLog("⤓ exported ${links.size} links → ${f.absolutePath}")
             f.absolutePath
         } catch (e: Throwable) {
-            appendLog("⚠ экспорт в файл не удался: ${e.message}")
+            appendLog("⚠ export to file failed: ${e.message}")
             null
         }
     }
@@ -674,7 +691,7 @@ class DesktopEngine(private val dataDir: File) : Engine {
             if (r.status == null) return "⚠ В тексте нет выбранных разделов"
             if (r.hostsChanged) { refreshCatalog(); refreshSources() }
             else if (r.subsChanged) refreshSources()
-            appendLog("⤒ импорт: ${r.status}", LogCat.OTHER)
+            appendLog("⤒ import: ${r.status}", LogCat.OTHER)
             "✓ Импортировано: ${r.status}"
         } catch (t: Throwable) {
             "⚠ Ошибка импорта: ${t.message}"
@@ -685,7 +702,7 @@ class DesktopEngine(private val dataDir: File) : Engine {
         return try {
             val f = chooseBackupFile(suggestedName, true) ?: return "Сохранение отменено"
             f.writeText(text)
-            appendLog("⤓ сохранено в файл → ${f.absolutePath}", LogCat.OTHER)
+            appendLog("⤓ saved to file → ${f.absolutePath}", LogCat.OTHER)
             "✓ Сохранено: ${f.name}"
         } catch (t: Throwable) {
             "⚠ Ошибка сохранения: ${t.message}"
@@ -697,7 +714,7 @@ class DesktopEngine(private val dataDir: File) : Engine {
             val f = chooseBackupFile("autoconnector_backup.json", false) ?: return null
             if (!f.exists()) null else f.readText()
         } catch (t: Throwable) {
-            appendLog("⚠ не удалось прочитать файл: ${t.message}", LogCat.OTHER)
+            appendLog("⚠ couldn't read file: ${t.message}", LogCat.OTHER)
             null
         }
     }
@@ -726,7 +743,7 @@ class DesktopEngine(private val dataDir: File) : Engine {
     override fun factoryReset() {
         scope.launch(Dispatchers.IO) {
             try {
-                appendLog("⚙ полный сброс: стираю ВСЕ данные…", LogCat.SCAN)
+                appendLog("⚙ factory reset: wiping ALL data…", LogCat.SCAN)
                 // Stop everything holding the data dir: the relay (its SQLite reads),
                 // the global-hotkey native hook, and close the DB so its file handles
                 // release. We do NOT call dispose() — it cancels `scope`, which would
@@ -744,7 +761,7 @@ class DesktopEngine(private val dataDir: File) : Engine {
                 // (the SQLite WAL/SHM sidecars, an open prefs handle, a recreated db).
                 // No relaunch — the user restarts manually, as the alert tells them.
                 runCatching { scheduleWipeOnExit() }
-                appendLog("✓ всё стёрто — перезапустите приложение вручную", LogCat.SCAN)
+                appendLog("✓ everything wiped — restart the app manually", LogCat.SCAN)
             } catch (t: Throwable) {
                 appendLog("⚠ factory reset: ${t.message}", LogCat.SCAN)
             }
@@ -815,7 +832,7 @@ class DesktopEngine(private val dataDir: File) : Engine {
         try {
             val alive = store.aliveCountForMode(mode)
             if (alive < 20) {
-                appendLog("⟳ режим ${mode.label}: живых $alive (<20) — интенсивный сид-скан", LogCat.SCAN)
+                appendLog("⟳ mode ${mode.label}: alive $alive (<20) — intensive seed scan", LogCat.SCAN)
                 io.autoconnector.engine.core.ScanGate.setAborted(false)
                 // Seed candidates from the best hosts of every OTHER mode.
                 val seed = LinkedHashMap<Long, ProxyEntry>()
@@ -828,10 +845,10 @@ class DesktopEngine(private val dataDir: File) : Engine {
                 runner.setProbeMode(if (p.dpiApplyProbes()) HandshakeMode.fromOrdinal(p.handshakeMode()) else HandshakeMode.NORMAL)
                 if (seed.isNotEmpty()) runner.runOn(ArrayList(seed.values), "seed-${mode.code}")
                 runner.runOn(store.dueForCheckForMode(mode, 600), "due-${mode.code}")
-                appendLog("⟳ сид-скан ${mode.label} готов: живых ${store.aliveCountForMode(mode)}", LogCat.SCAN)
+                appendLog("⟳ seed scan ${mode.label} done: alive ${store.aliveCountForMode(mode)}", LogCat.SCAN)
             }
         } catch (t: Throwable) {
-            appendLog("⚠ сид-скан режима ${mode.label}: ${t.message}", LogCat.SCAN)
+            appendLog("⚠ seed scan for mode ${mode.label}: ${t.message}", LogCat.SCAN)
         } finally {
             modeSwitchBusy.set(false)
             refreshCatalog()
@@ -893,8 +910,9 @@ class DesktopEngine(private val dataDir: File) : Engine {
         }
     }
 
-    override fun hostHistory(id: Long, limit: Int): List<HistoryRecord> =
-        store.hostHistory(id, limit).map { r ->
+    override fun hostHistory(id: Long, limit: Int): List<HistoryRecord> {
+        val now = System.currentTimeMillis()
+        return store.hostHistory(id, limit).map { r ->
             HistoryRecord(
                 ts = r.ts,
                 isTelegram = r.kind == 1,
@@ -904,8 +922,11 @@ class DesktopEngine(private val dataDir: File) : Engine {
                 totalMs = r.totalMs,
                 bytesIn = r.bytesIn,
                 bytesOut = r.bytesOut,
+                sessionMs = r.sessionMs,
+                secondsAgo = if (r.ts > 0) ((now - r.ts) / 1000).coerceAtLeast(0) else -1,
             )
         }
+    }
 
     override fun exportAliveLinksForMode(modeCode: String): List<String> {
         val list = if (modeCode == "auto" || modeCode == "unk")
@@ -921,31 +942,31 @@ class DesktopEngine(private val dataDir: File) : Engine {
             val home = System.getProperty("user.home") ?: dataDir.absolutePath
             val f = java.io.File(home, "autoconnector_proxies_$modeCode.txt")
             f.writeText(links.joinToString("\n"))
-            appendLog("⤓ экспортировано ${links.size} ссылок ($modeCode) → ${f.absolutePath}")
+            appendLog("⤓ exported ${links.size} links ($modeCode) → ${f.absolutePath}")
             f.absolutePath
         } catch (e: Throwable) {
-            appendLog("⚠ экспорт в файл не удался: ${e.message}")
+            appendLog("⚠ export to file failed: ${e.message}")
             null
         }
     }
 
     override fun resetModeStats(modeCode: String) {
         store.resetModeStats(NetworkMode.fromCode(modeCode))
-        appendLog("⚙ рейтинг хостов режима «$modeCode» обнулён", LogCat.SCAN)
+        appendLog("⚙ host ratings for mode «$modeCode» reset", LogCat.SCAN)
         refreshCatalog()
         pushImmediate()
     }
 
     override fun forgetModeHosts(modeCode: String) {
         store.forgetModeHosts(NetworkMode.fromCode(modeCode))
-        appendLog("⚙ хосты режима «$modeCode» забыты", LogCat.SCAN)
+        appendLog("⚙ hosts for mode «$modeCode» forgotten", LogCat.SCAN)
         refreshCatalog()
         pushImmediate()
     }
 
     override fun copyModeStats(fromCode: String, toCode: String) {
         store.copyModeStats(NetworkMode.fromCode(fromCode), NetworkMode.fromCode(toCode))
-        appendLog("⚙ режим $toCode ← копия рейтинга из $fromCode", LogCat.SCAN)
+        appendLog("⚙ mode $toCode ← rating copy from $fromCode", LogCat.SCAN)
         refreshCatalog()
         pushImmediate()
     }
@@ -957,14 +978,14 @@ class DesktopEngine(private val dataDir: File) : Engine {
                 val links = exportAliveLinks()
                 if (links.isNotEmpty()) {
                     copyToClipboard(links.random())
-                    appendLog("⌨ хоткей: tg-ссылка скопирована в буфер")
+                    appendLog("⌨ hotkey: tg link copied to clipboard")
                 }
             },
             onOpen = {
                 val links = exportAliveLinks()
                 if (links.isNotEmpty()) {
                     openLink(links.random())
-                    appendLog("⌨ хоткей: открываю прокси в Telegram")
+                    appendLog("⌨ hotkey: opening proxy in Telegram")
                 }
             },
         )
@@ -982,6 +1003,27 @@ class DesktopEngine(private val dataDir: File) : Engine {
     override fun setHotkeyLetter(letter: String) {
         Prefs(ctx).setHotkeyLetter(letter)
         hotkeys.apply(Prefs(ctx).hotkeysEnabled(), Prefs(ctx).hotkeyLetter())
+    }
+    override fun setLanShareEnabled(enabled: Boolean) {
+        Prefs(ctx).setLanShareEnabled(enabled)
+        // Rebind the relay ports: 0.0.0.0 (LAN) when on, 127.0.0.1 when off — so
+        // the firewall only prompts when the user actually enables sharing.
+        io.autoconnector.engine.relay.RelayManager.rebindAll()
+        pushImmediate()
+    }
+    override fun testHostNow(id: Long) {
+        val p = store.byId(id) ?: return
+        io.autoconnector.engine.check.HostTester.start(store, p, Prefs(ctx).relayConnectTimeoutMs())
+        pushImmediate()
+    }
+    override fun stopHostTest() { io.autoconnector.engine.check.HostTester.stop(); pushImmediate() }
+    /** LAN URLs neighbours use to reach the relay (web portal / SOCKS), or empty
+     *  when sharing is off or the device has no LAN address. */
+    private fun lanUrls(): List<String> {
+        val pp = Prefs(ctx)
+        if (!pp.lanShareEnabled()) return emptyList()
+        val ip = io.autoconnector.engine.relay.LanAddress.bestLanIPv4() ?: return emptyList()
+        return listOf("http://$ip:${pp.relayPortA()}", "http://$ip:${pp.relayPortB()}")
     }
     // ⌃ Control · ⇧ Shift · ⌥ Option · ⌘ Command on macOS; Windows uses words.
     override fun hotkeyCopyLabel() = (if (isMac()) "⌃⇧⌥ " else "Ctrl + Shift + Alt + ") + Prefs(ctx).hotkeyLetter()
@@ -1001,7 +1043,7 @@ class DesktopEngine(private val dataDir: File) : Engine {
         // Re-entry guard: ignore extra taps while a manual scan is already in
         // flight, so hammering the button can't stack dozens of 500-host passes.
         if (!scanNowBusy.compareAndSet(false, true)) {
-            appendLog("⚡ скан сейчас уже идёт — подождите завершения", LogCat.SCAN)
+            appendLog("⚡ scan now already running — wait for it to finish", LogCat.SCAN)
             return
         }
         scope.launch(Dispatchers.IO) {
@@ -1011,17 +1053,17 @@ class DesktopEngine(private val dataDir: File) : Engine {
                 io.autoconnector.engine.core.ScanGate.setAborted(false)
                 val list = store.dueForCheck(500)
                 if (list.isEmpty()) {
-                    appendLog("⚡ скан сейчас: в базе нет прокси — нечего проверять", LogCat.SCAN)
+                    appendLog("⚡ scan now: no proxies in the database — nothing to check", LogCat.SCAN)
                     return@launch
                 }
-                appendLog("⚡ скан сейчас: ${list.size} прокси в 50 потоков", LogCat.SCAN)
+                appendLog("⚡ scan now: ${list.size} proxies across 50 threads", LogCat.SCAN)
                 val p = Prefs(ctx)
                 val runner = CheckRunner(store, CheckRunner.Log { line -> appendLog(line, LogCat.SCAN) }, 50)
                 runner.setProbeMode(if (p.dpiApplyProbes()) HandshakeMode.fromOrdinal(p.handshakeMode()) else HandshakeMode.NORMAL)
                 runner.runOn(list, "scan-now")
-                appendLog("⚡ скан сейчас готов: живых ${store.countAlive()} / ${store.count()}", LogCat.SCAN)
+                appendLog("⚡ scan now done: alive ${store.countAlive()} / ${store.count()}", LogCat.SCAN)
             } catch (t: Throwable) {
-                appendLog("⚠ скан сейчас: ${t.message}", LogCat.SCAN)
+                appendLog("⚠ scan now: ${t.message}", LogCat.SCAN)
             } finally {
                 scanNowBusy.set(false)
             }
@@ -1029,6 +1071,23 @@ class DesktopEngine(private val dataDir: File) : Engine {
     }
 
     // === polling =========================================================
+
+    /** Connector-tab pre-warm table: sockets being warmed (idle/new) + warmed
+     *  sockets now carrying Telegram (in use, with traffic). */
+    private fun buildPrewarmRows(conns: List<RelayStats.LiveConn>, now: Long): List<PrewarmRow> {
+        val rows = ArrayList<PrewarmRow>()
+        val warm = io.autoconnector.engine.relay.RelayManager.INSTANCE?.prewarm()?.snapshot()
+        if (warm != null) for (w in warm) {
+            var h = w.host; if (h.length > 32) h = h.substring(0, 31) + "…"
+            rows.add(PrewarmRow(h, w.ageSecs, false, "—"))
+        }
+        for (c in conns) if (c.fromPrewarm) {
+            var h = stripPort(c.upstream); if (h.length > 32) h = h.substring(0, 31) + "…"
+            rows.add(PrewarmRow(h, (now - c.startedAt) / 1000, true,
+                "↓${TrafficMeter.human(c.bytesDown.get())} ↑${TrafficMeter.human(c.bytesUp.get())}"))
+        }
+        return rows
+    }
 
     private suspend fun pollLoop() {
         var i = 0
@@ -1040,11 +1099,22 @@ class DesktopEngine(private val dataDir: File) : Engine {
             } catch (t: Throwable) {
                 // Don't stay silent — a recurring failure here used to hide real
                 // problems (e.g. a broken DB after a profile wipe). Throttled log.
-                if (i % 30 == 0) appendLog("⚠ цикл состояния: ${t.message}", LogCat.OTHER)
+                if (i % 30 == 0) appendLog("⚠ state loop: ${t.message}", LogCat.OTHER)
             }
             i++
-            delay(2000)   // graph advances strictly once per 2 s
+            // On-screen: refresh once per 2 s (graphs advance). Minimised/tray:
+            // back off to 12 s — the tray labels stay roughly current while the
+            // per-2 s DB aggregates (the periodic disk I/O) all but stop.
+            delay(if (uiActive) 2000 else 12000)
         }
+    }
+
+    override fun setUiActive(active: Boolean) {
+        val was = uiActive
+        uiActive = active
+        // Returning to a minimised state: nudge a GC so the heap (and the OS
+        // working set) shrink back instead of sitting near -Xmx while idle.
+        if (was && !active) scope.launch(Dispatchers.IO) { runCatching { System.gc() } }
     }
 
     /** Desktop has no ConnectivityManager — derive the detected transport from
@@ -1065,7 +1135,11 @@ class DesktopEngine(private val dataDir: File) : Engine {
         while (true) {
             try {
                 val p = Prefs(ctx)
-                if (p.appEnabled() || p.scanEnabled()) {
+                // Sparklines are UI-only. When minimised/hidden nobody sees them,
+                // so skip the per-second ingest entirely — this also freezes the
+                // graph "tick", so LiveBarGraph stops its 60 fps frame-pump (the
+                // main idle-CPU offender when the window isn't visible).
+                if (uiActive && (p.appEnabled() || p.scanEnabled())) {
                     SparkBuffer.INSTANCE.tickFromRelay()
                     LatencyBuffer.INSTANCE.tick()
                     CheckRateBuffer.INSTANCE.tick()
@@ -1237,9 +1311,9 @@ class DesktopEngine(private val dataDir: File) : Engine {
             // so a fresh start floods the anonymizer cascade immediately instead of
             // trickling 12 at a time. Later rounds re-pull just the stragglers.
             val threads = if (round == 1) minOf(32, maxOf(16, pending.size)) else minOf(16, pending.size)
-            appendLog("⇣ закачка подписок, проход $round: ${pending.size} шт × $threads потоков", LogCat.SUBS)
+            appendLog("⇣ downloading subscriptions, pass $round: ${pending.size} × $threads threads", LogCat.SUBS)
             pending = downloadSourcesParallel(pending, threads)
-            appendLog("⇣ проход $round: в базе ${store.count()} прокси, не скачано ${pending.size} подписок", LogCat.SUBS)
+            appendLog("⇣ pass $round: ${store.count()} proxies in the database, ${pending.size} subscriptions not downloaded", LogCat.SUBS)
             if (pending.isEmpty()) break
             val backoff = minOf(15_000L, 1500L * round)
             var slept = 0L
@@ -1248,7 +1322,7 @@ class DesktopEngine(private val dataDir: File) : Engine {
                     && Prefs(ctx).scanEnabled()) { Thread.sleep(500); slept += 500 }
         }
         if (pending.isNotEmpty())
-            appendLog("✗ после $round проходов не скачано ${pending.size} подписок — повторю при следующем запуске", LogCat.SUBS)
+            appendLog("✗ after $round passes ${pending.size} subscriptions not downloaded — will retry on next launch", LogCat.SUBS)
     }
 
     /** Downloads every enabled subscription, in parallel, then retries the ones
@@ -1256,7 +1330,7 @@ class DesktopEngine(private val dataDir: File) : Engine {
     private fun refreshAllSources() {
         val failed = downloadSourcesParallel(store.enabledSourceUrls(), 6)
         if (failed.isNotEmpty() && !io.autoconnector.engine.core.ScanGate.isAborted()) {
-            appendLog("↻ повтор ${failed.size} подписок через анонимайзеры", LogCat.SUBS)
+            appendLog("↻ retrying ${failed.size} subscriptions via anonymizers", LogCat.SUBS)
             downloadSourcesParallel(failed, minOf(6, failed.size))
         }
         refreshSources()
@@ -1289,23 +1363,23 @@ class DesktopEngine(private val dataDir: File) : Engine {
         for (d in due) if (combined.none { it.id == d.id }) combined.add(d)
         if (combined.isEmpty()) return
 
-        appendLog("⟳ проверка: главных ${mains.size} + новых ${combined.size - mains.size}", LogCat.SCAN)
+        appendLog("⟳ check: mains ${mains.size} + new ${combined.size - mains.size}", LogCat.SCAN)
         val runner = CheckRunner(store, CheckRunner.Log { line -> appendLog(line, LogCat.SCAN) }, minOf(conc, combined.size))
         runner.runOn(combined, "mains+due")
 
         val after = if (ids.isEmpty()) ArrayList() else store.proxiesByIds(ids)
         var aliveMains = 0
         for (p in after) if (p.alive) aliveMains++
-        appendLog("⟳ главные: $aliveMains/${after.size} · в базе живых: ${store.aliveCount()}", LogCat.SCAN)
+        appendLog("⟳ mains: $aliveMains/${after.size} · alive in database: ${store.aliveCount()}", LogCat.SCAN)
 
         relayManager?.refreshStickies()
 
         if (mains.isNotEmpty() && aliveMains == 0) {
-            appendLog("⚠ все главные мертвы — широкая проверка топ-200", LogCat.SCAN)
+            appendLog("⚠ all mains dead — wide check of top-200", LogCat.SCAN)
             val wide = CheckRunner(store, CheckRunner.Log { line -> appendLog(line, LogCat.SCAN) }, 16)
             wide.runOn(store.top(200), "wide-after-cascade")
             relayManager?.refreshStickies()
-            appendLog("⟳ широкая проверка готова · живых: ${store.aliveCount()}", LogCat.SCAN)
+            appendLog("⟳ wide check done · alive: ${store.aliveCount()}", LogCat.SCAN)
         }
     }
 
@@ -1395,6 +1469,7 @@ class DesktopEngine(private val dataDir: File) : Engine {
                 lastData = if (lastData > 0) Durations.compact((now - lastData) / 1000) else "—",
                 traffic = TrafficMeter.human(bytes),
                 alive = bytes >= MATURE_BYTES && (now - lastData) < IDLE_THRESHOLD_MS,
+                fromPrewarm = c.fromPrewarm,
             )
         }
 
@@ -1492,6 +1567,14 @@ class DesktopEngine(private val dataDir: File) : Engine {
             totalUp = "↑ ${TrafficMeter.human(up)}",
             latency = latency,
             sessions = sessions,
+            prewarmEnabled = p.prewarmEnabled(),
+            prewarmHoldSecs = p.prewarmHoldSecs(),
+            prewarmRows = buildPrewarmRows(conns, now),
+            lanShareEnabled = p.lanShareEnabled(),
+            lanUrls = lanUrls(),
+            testHostId = io.autoconnector.engine.check.HostTester.testingId(),
+            testRunning = io.autoconnector.engine.check.HostTester.running(),
+            testSummary = io.autoconnector.engine.check.HostTester.summary(),
             socketsTgToConnector = maxOf(0, conns.size + pending),
             socketsConnectorToProxy = conns.size,
             currentProxy = currentProxy,
@@ -1729,10 +1812,10 @@ class DesktopEngine(private val dataDir: File) : Engine {
             // keep retrying through every anonymizer instead of trickling them in.
             val neverDownloaded = store.listSources().none { it.lastRefreshAt > 0 }
             if (neverDownloaded || hostBase < 500) {
-                appendLog("— ПЕРВЫЙ ЗАПУСК: агрессивная закачка подписок (хостов в базе $hostBase) —", LogCat.SCAN)
+                appendLog("— FIRST LAUNCH: aggressive subscription download (hosts in database $hostBase) —", LogCat.SCAN)
                 aggressiveBootstrap()
             } else {
-                appendLog("— автозапуск: скан и проверка —", LogCat.SCAN)
+                appendLog("— autostart: scan and check —", LogCat.SCAN)
                 scanAndCheck()
             }
         } catch (t: Throwable) {
@@ -1743,7 +1826,7 @@ class DesktopEngine(private val dataDir: File) : Engine {
     private fun scanAndCheck() {
         val failed = downloadSourcesParallel(store.enabledSourceUrls(), 6)
         if (failed.isNotEmpty() && !io.autoconnector.engine.core.ScanGate.isAborted()) {
-            appendLog("↻ повтор ${failed.size} подписок через анонимайзеры", LogCat.SUBS)
+            appendLog("↻ retrying ${failed.size} subscriptions via anonymizers", LogCat.SUBS)
             downloadSourcesParallel(failed, minOf(6, failed.size))
         }
         refreshSources()
@@ -1751,7 +1834,7 @@ class DesktopEngine(private val dataDir: File) : Engine {
         val runner = CheckRunner(store, CheckRunner.Log { line -> appendLog(line, LogCat.SCAN) }, p.checkConcurrency())
         runner.setProbeMode(if (p.dpiApplyProbes()) HandshakeMode.fromOrdinal(p.handshakeMode()) else HandshakeMode.NORMAL)
         runner.runBatch(p.checkBatch())
-        appendLog("— проверка готова —", LogCat.SCAN)
+        appendLog("— check done —", LogCat.SCAN)
     }
 
     /** Fresh start (subscriptions never downloaded AND host base < 2000): pull
@@ -1778,7 +1861,7 @@ class DesktopEngine(private val dataDir: File) : Engine {
         downloader.start()
 
         val pp = Prefs(ctx)
-        appendLog("— bootstrap: качаю подписки и параллельно проверяю прилетающие хосты —", LogCat.SCAN)
+        appendLog("— bootstrap: downloading subscriptions and checking incoming hosts in parallel —", LogCat.SCAN)
         val target = pp.adaptiveAliveThreshold()
         val probeMode = if (pp.dpiApplyProbes()) HandshakeMode.fromOrdinal(pp.handshakeMode()) else HandshakeMode.NORMAL
         var round = 0
@@ -1796,10 +1879,10 @@ class DesktopEngine(private val dataDir: File) : Engine {
             runner.setProbeMode(probeMode)
             runner.runBatch(minOf(store.count(), 600))
             round++
-            appendLog("— bootstrap раунд $round: живых ${store.countAlive()} / ${store.count()} (потоков $conc) —", LogCat.SCAN)
+            appendLog("— bootstrap round $round: alive ${store.countAlive()} / ${store.count()} (threads $conc) —", LogCat.SCAN)
             if (!downloader.isAlive && store.countAlive() >= target) break
         }
-        appendLog("— bootstrap готов: живых ${store.countAlive()} / ${store.count()} —", LogCat.SCAN)
+        appendLog("— bootstrap done: alive ${store.countAlive()} / ${store.count()} —", LogCat.SCAN)
     }
 
     // === log =============================================================
@@ -1848,6 +1931,6 @@ class DesktopEngine(private val dataDir: File) : Engine {
     companion object {
         // Single dotted-semver version line for the desktop build (matches the
         // GitHub release tag vX.Y.Z). Build date is injected at launch — see appInfo().
-        private const val DESKTOP_VERSION = "1.1.5"
+        private const val DESKTOP_VERSION = "1.1.20"
     }
 }
