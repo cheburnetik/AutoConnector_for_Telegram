@@ -139,6 +139,11 @@ object Ru : Strings {
     override val volCheckOk = "✓ Готово — доступ выдан, триггер работает."
     override val volCheckFail = "✗ Доступа пока нет — выполните шаги выше."
     override val volPatternsList = "↑↑↓↓ · ↓↓↑↑ · ↑↓↑↓ · ↓↑↓↑ · ↑↑↑↑ · ↓↓↓↓ · ↑↓↓↑ · ↓↑↑↓ · ↑↑↑↓↓↓ · ↓↓↓↑↑↑   (↑ = громкость вверх, ↓ = вниз)"
+    override val volIntro = "Нажмите комбинацию клавиш громкости вверх/вниз несколько раз, чтобы AutoConnector имитировал клик на очередной живой прокси, из-за чего на вашем телефоне откроется Telegram и предложит добавить этот прокси. Так не придётся открывать AutoConnector, чтобы копировать прокси. Этот режим работы подойдёт тем, кто решил держать AutoConnector только ради каталога, но не включает режим релея, а хочет лишь скопировать прокси."
+    override val volAiTitle = "Всё равно не работает?"
+    override val volAiBody = "Если советы по выдаче разрешений выше не помогли — откройте ChatGPT или Gemini и отправьте этот запрос, он подскажет точные шаги именно для вашей модели телефона:"
+    override val volAiPrompt = "Как на Android выдать приложению, установленному НЕ из Google Play (неподписанному приложению из APK-файла), разрешение «Специальные возможности» (Accessibility)? Android блокирует его как «ограниченную настройку». Опиши пошагово, как снять эту блокировку и включить службу спец.возможностей для приложения. Мой телефон: [укажите марку, модель и версию Android], оболочка: [MIUI / One UI / ColorOS / стоковый Android — если знаете]. Приложение называется «AutoConnector for Telegram». Опиши точные шаги именно для моей модели и версии."
+    override val volAiCopy = "Скопировать запрос"
     override val histLegend = "Колонки — Кто: ✓/✗ TG = реальный коннект Telegram, скан = фоновая проверка. Когда: сколько назад. TCP/TLS/Запрос: задержки хендшейка и первого запроса, мс. Сессия: сколько длилась сессия релея. ↓/↑: принято / отправлено байт через хост."
     override val tgOkTotalHint = "Подключений Telegram / успешных / всего проверок"
     override val breadthTitle = "Широта выбора хостов"
@@ -454,4 +459,21 @@ object Ru : Strings {
     override val wpHintTitle = "Что такое White?"
     override val wpHint = "White — WhitePages: ручной режим сети. Включается только вручную (авто-выбор его не ставит). " +
         "Ведёт отдельный рейтинг хостов, качает подписки и сканирует независимо от VPN/Wi-Fi/LTE."
+    // tray
+    override val trayOpenWindow = "Открыть окно"
+    override val trayRefreshSubs = "Обновить подписки"
+    override val trayExit = "Выход"
+    override fun trayConnectorLabel(on: Boolean) =
+        if (on) "Коннектор: ВКЛ (выключить)" else "Коннектор: ВЫКЛ (включить)"
+    override fun trayScanLabel(on: Boolean) =
+        if (on) "Сканирование: ВКЛ (выключить)" else "Сканирование: ВЫКЛ (включить)"
+    override fun trayLive(n: Int) = "Живых прокси: $n"
+
+    override val appearance = "Оформление"
+    override val themeLabel = "Тема"
+    override val themeAuto = "Авто (как в системе)"
+    override val themeLight = "Светлая"
+    override val themeDark = "Тёмная"
+    override val drawGraphsLabel = "Рисовать графики"
+    override val drawGraphsSub = "Живые графики на вкладках «Коннектор» и «Скан» — выключите для экономии батареи"
 }

@@ -374,4 +374,21 @@ object Am : Strings by En {
     override val wpHintTitle = "White ምንድን ነው?"
     override val wpHint = "White — WhitePages: በእጅ የሚሰራ የአውታረ መረብ መገለጫ። የሚነቃው በእጅ ብቻ ነው (ራስ-ሰር ምርጫ ፈጽሞ አይመርጠውም)። " +
         "የራሱን የሆስት ደረጃዎች ይይዛል፣ ምዝገባዎችን ያወርዳል እና ከVPN/Wi-Fi/LTE ነጻ ሆኖ ያስሳል።"
+
+    // tray
+    override val trayOpenWindow = "መስኮት ክፈት"
+    override val trayRefreshSubs = "ምዝገባዎችን አድስ"
+    override val trayExit = "ውጣ"
+    override fun trayConnectorLabel(on: Boolean) =
+        if (on) "አያያዥ: በርቷል (አጥፋ)" else "አያያዥ: ጠፍቷል (አብራ)"
+    override fun trayScanLabel(on: Boolean) =
+        if (on) "ቅኝት: በርቷል (አጥፋ)" else "ቅኝት: ጠፍቷል (አብራ)"
+    override fun trayLive(n: Int) = "ሕያው ፕሮክሲዎች: ${n}"
+    override val appearance = "መልክ"
+    override val themeLabel = "ገጽታ"
+    override val themeAuto = "ራስ-ሰር (ከስርዓቱ ጋር)"
+    override val themeLight = "ብሩህ"
+    override val themeDark = "ጨለማ"
+    override val drawGraphsLabel = "ግራፎችን ሣል"
+    override val drawGraphsSub = "በአገናኝ እና በቅኝት ትሮች ላይ ቀጥታ ግራፎች — ባትሪ ለመቆጠብ ያጥፉት"
 }

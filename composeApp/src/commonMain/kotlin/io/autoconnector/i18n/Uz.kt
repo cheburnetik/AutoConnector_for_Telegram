@@ -458,4 +458,21 @@ object Uz : Strings by En {
     override val wpHintTitle = "White nima?"
     override val wpHint = "White — WhitePages: qo‘ldagi tarmoq rejimi. Faqat qo‘lda yoqiladi (avto-tanlash uni qo‘ymaydi). " +
         "Alohida xost reytingini yuritadi, obunalarni yuklaydi va VPN/Wi-Fi/LTE dan mustaqil ravishda skanlaydi."
+
+    // tray
+    override val trayOpenWindow = "Oynani ochish"
+    override val trayRefreshSubs = "Obunalarni yangilash"
+    override val trayExit = "Chiqish"
+    override fun trayConnectorLabel(on: Boolean) =
+        if (on) "Konnektor: YONIQ (o‘chirish)" else "Konnektor: O‘CHIQ (yoqish)"
+    override fun trayScanLabel(on: Boolean) =
+        if (on) "Skan: YONIQ (o‘chirish)" else "Skan: O‘CHIQ (yoqish)"
+    override fun trayLive(n: Int) = "Tirik proksilar: ${n}"
+    override val appearance = "Ko‘rinish"
+    override val themeLabel = "Mavzu"
+    override val themeAuto = "Avto (tizimga mos)"
+    override val themeLight = "Yorug‘"
+    override val themeDark = "Qorong‘i"
+    override val drawGraphsLabel = "Grafiklarni chizish"
+    override val drawGraphsSub = "Ulagich va Skanerlash bo‘limlarida jonli grafiklar — batareyani tejash uchun o‘chiring"
 }

@@ -1,12 +1,12 @@
 package io.autoconnector.ui.components
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -21,17 +21,23 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.sp
-import io.autoconnector.ui.theme.AppColors
 import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.roundToLong
+
+/** Settings-driven master switch for the live sparkline charts. Provided in App
+ *  from `EngineSettings.drawGraphs`; when false the graph rows draw only their
+ *  numeric readings and skip the per-frame Canvas animation (saves battery). */
+val LocalDrawGraphs = staticCompositionLocalOf { true }
 
 // ── tuning ────────────────────────────────────────────────────────────────────
 // One new bucket per frame: the whole strip slides right by exactly one slot
@@ -43,6 +49,13 @@ private val PanelColor = Color(0x0C808080)
 private val GridColor = Color(0x2E000000)
 private val LabelFill = Color(0xFF333A44)
 private val LabelHalo = Color(0xFFFFFFFF)
+
+// Frame-invariant gridline label styling — these never change, so they are hoisted
+// out of the per-frame draw lambda (they used to be reallocated on every frame).
+private val GRID_STYLE_DARK = TextStyle(color = LabelFill, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+private val GRID_STYLE_HALO = TextStyle(color = LabelHalo, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+// The four 1px offsets that paint the white halo around each label (constant set).
+private val HALO_OFFSETS = arrayOf(Offset(-1f, 0f), Offset(1f, 0f), Offset(0f, -1f), Offset(0f, 1f))
 
 /** cubic ease-in-out: slow → fast → slow. */
 private fun easeInOut(t: Float): Float =
@@ -68,6 +81,104 @@ private fun roundNice(v: Double): Long {
         f < 5.5 -> 5.0; f < 7.0 -> 6.0; f < 9.0 -> 8.0; else -> 10.0
     }
     return (nice * mag).roundToLong()
+}
+
+// ── frame-invariant geometry / gridline memoization ───────────────────────────
+// The Canvas draw lambda re-runs on every animation frame (~18 fps over the 0.3 s
+// slide, for up to 12 graphs every 2 s). Bar-slot geometry depends only on the
+// canvas size + density, and the gridline set (values, labels, measured text
+// layouts) only on that plus scaleMax — none of it changes frame-to-frame during
+// the slide. We compute each once and reuse it via [GraphCache], so a slide frame
+// only re-positions bar rectangles. This is pure caching: identical pixels, no
+// behaviour change, and it does NOT gate the animation in any way.
+
+/** Bar-slot geometry: slot count + left edges (pos, length n+1) + widths (wid). */
+private class BarGeom(val n: Int, val pos: FloatArray, val wid: FloatArray)
+
+/** first bar 5× wide → normal by the 5th; depends only on width + density. */
+private fun computeBarGeom(w: Float, d: Float): BarGeom {
+    var s5 = 0.0
+    for (i in 0 until 5) s5 += 5.0.pow(1 - i / 4.0)            // ≈13.07
+    var normalW = 4 * d
+    val n = max(6, (w / normalW - s5 + 5).toInt())
+    normalW = (w / (s5 + (n - 5))).toFloat()                  // exact fit
+    val pos = FloatArray(n + 1)
+    val wid = FloatArray(n)
+    var cx = 0f
+    for (i in 0 until n) {
+        val f = if (i < 5) 5.0.pow(1 - i / 4.0).toFloat() else 1f
+        wid[i] = f * normalW; pos[i] = cx; cx += wid[i]
+    }
+    pos[n] = cx
+    return BarGeom(n, pos, wid)
+}
+
+/** One drawn gridline: its y, label anchor, and the two pre-measured text layouts
+ *  (dark fill + white halo) — measuring is the costly part we cache. */
+private class GridLine(
+    val gy: Float, val lx: Float, val ly: Float,
+    val mDark: TextLayoutResult, val mHalo: TextLayoutResult,
+)
+
+/** Gridline values + formatted labels + measured layouts; depends on size, density,
+ *  scaleMax and logBase only — recomputed only when one of those changes. */
+private fun computeGridLines(
+    w: Float, h: Float, d: Float, scaleMax: Double, logBase: Double,
+    measurer: TextMeasurer, gridLabel: (Long) -> String,
+): List<GridLine> {
+    fun fracRaw(v: Double): Float {
+        val cl = v.coerceIn(logBase, scaleMax)
+        val lg = (ln(cl) - ln(logBase)) / (ln(scaleMax) - ln(logBase))
+        val lin = (cl - logBase) / (scaleMax - logBase)
+        return (LOG_MIX * lg + (1 - LOG_MIX) * lin).toFloat()
+    }
+    // 22-iteration binary search to invert fracRaw — was run every frame before.
+    fun invFrac(target: Float): Long {
+        var lo = logBase; var hi = scaleMax
+        repeat(22) { val mid = (lo + hi) / 2; if (fracRaw(mid) < target) lo = mid else hi = mid }
+        return ((lo + hi) / 2).roundToLong()
+    }
+    val out = ArrayList<GridLine>(2)
+    val seen = HashSet<Long>()
+    for (target in floatArrayOf(0.66f, 0.33f)) {
+        val gv = roundNice(invFrac(target).toDouble())
+        if (gv < 1 || gv.toDouble() >= scaleMax || !seen.add(gv)) continue
+        val gy = h - fracRaw(gv.toDouble()) * h
+        if (gy <= 2 * d || gy >= h - 2 * d) continue
+        val text = gridLabel(gv)
+        val mDark = measurer.measure(text, GRID_STYLE_DARK)
+        val mHalo = measurer.measure(text, GRID_STYLE_HALO)
+        val lx = w - 3 * d - mDark.size.width
+        val ly = gy - 2 * d - mDark.size.height
+        out.add(GridLine(gy, lx, ly, mDark, mHalo))
+    }
+    return out
+}
+
+/** Per-graph memo of the two frame-invariant pieces; remembered across frames so the
+ *  draw lambda recomputes only when its keys (size/density/scaleMax/logBase) change.
+ *  Keyed by direct field compare to avoid any per-frame allocation. */
+private class GraphCache {
+    private var gw = Float.NaN; private var gh = Float.NaN; private var gd = Float.NaN
+    private var geom: BarGeom? = null
+    fun geomFor(w: Float, h: Float, d: Float): BarGeom {
+        val g = geom
+        if (g != null && gw == w && gh == h && gd == d) return g
+        val ng = computeBarGeom(w, d); geom = ng; gw = w; gh = h; gd = d; return ng
+    }
+
+    private var rw = Float.NaN; private var rh = Float.NaN; private var rd = Float.NaN
+    private var rScale = Double.NaN; private var rBase = Double.NaN
+    private var grid: List<GridLine>? = null
+    fun gridFor(
+        w: Float, h: Float, d: Float, scaleMax: Double, logBase: Double,
+        measurer: TextMeasurer, gridLabel: (Long) -> String,
+    ): List<GridLine> {
+        val g = grid
+        if (g != null && rw == w && rh == h && rd == d && rScale == scaleMax && rBase == logBase) return g
+        val ng = computeGridLines(w, h, d, scaleMax, logBase, measurer, gridLabel)
+        grid = ng; rw = w; rh = h; rd = d; rScale = scaleMax; rBase = logBase; return ng
+    }
 }
 
 /**
@@ -99,6 +210,9 @@ fun LiveBarGraph(
 ) {
     val d = LocalDensity.current.density
     val measurer = rememberTextMeasurer()
+    // Survives across frames/recompositions; holds the memoized bar geometry and
+    // gridline layouts so the per-frame draw only moves bar rectangles.
+    val cache = remember { GraphCache() }
 
     var peak = 0L
     for (v in values) if (v > peak) peak = v
@@ -162,21 +276,10 @@ fun LiveBarGraph(
             val r = 8 * d
             drawRoundRect(PanelColor, Offset(0f, 0f), Size(w, h), CornerRadius(r, r))
 
-            // bar slot geometry: first bar 5× wide → normal by the 5th.
-            var s5 = 0.0
-            for (i in 0 until 5) s5 += 5.0.pow(1 - i / 4.0)            // ≈13.07
-            var normalW = 4 * d
-            val n = max(6, (w / normalW - s5 + 5).toInt())
-            normalW = (w / (s5 + (n - 5))).toFloat()                  // exact fit
-
-            val pos = FloatArray(n + 1)
-            val wid = FloatArray(n)
-            var cx = 0f
-            for (i in 0 until n) {
-                val f = if (i < 5) 5.0.pow(1 - i / 4.0).toFloat() else 1f
-                wid[i] = f * normalW; pos[i] = cx; cx += wid[i]
-            }
-            pos[n] = cx
+            // bar slot geometry (first bar 5× wide → normal by the 5th): size+density
+            // only, so it's memoized and reused frame-to-frame.
+            val geom = cache.geomFor(w, h, d)
+            val n = geom.n; val pos = geom.pos; val wid = geom.wid
 
             val minH = max(7 * d, 0.16f * h)
             val zeroH = 4 * d   // a zero sample still shows a 4 px stub and animates
@@ -241,28 +344,13 @@ fun LiveBarGraph(
                 }
             }
 
-            // gridlines + haloed bold labels with units, at round values.
-            val styleDark = TextStyle(color = LabelFill, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-            val styleHalo = TextStyle(color = LabelHalo, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-            fun invFrac(target: Float): Long {
-                var lo = logBase; var hi = scaleMax
-                repeat(22) { val mid = (lo + hi) / 2; if (fracRaw(mid) < target) lo = mid else hi = mid }
-                return ((lo + hi) / 2).roundToLong()
-            }
-            val seen = HashSet<Long>()
-            for (target in floatArrayOf(0.66f, 0.33f)) {
-                val gv = roundNice(invFrac(target).toDouble())
-                if (gv < 1 || gv.toDouble() >= scaleMax || !seen.add(gv)) continue
-                val gy = h - fracRaw(gv.toDouble()) * h
-                if (gy <= 2 * d || gy >= h - 2 * d) continue
-                drawLine(GridColor, Offset(2 * d, gy), Offset(w - 2 * d, gy), strokeWidth = max(1f, 1.1f * d))
-                val text = gridLabel(gv)
-                val m = measurer.measure(text, styleDark)
-                val lx = w - 3 * d - m.size.width
-                val ly = gy - 2 * d - m.size.height
-                for (off in arrayOf(Offset(-1f, 0f), Offset(1f, 0f), Offset(0f, -1f), Offset(0f, 1f)))
-                    drawText(measurer, text, Offset(lx + off.x, ly + off.y), styleHalo)
-                drawText(measurer, text, Offset(lx, ly), styleDark)
+            // gridlines + haloed bold labels with units, at round values. Values,
+            // labels and the two measured text layouts depend only on scaleMax/size/
+            // density, so they're memoized; a slide frame just re-draws them in place.
+            for (g in cache.gridFor(w, h, d, scaleMax, logBase, measurer, gridLabel)) {
+                drawLine(GridColor, Offset(2 * d, g.gy), Offset(w - 2 * d, g.gy), strokeWidth = max(1f, 1.1f * d))
+                for (off in HALO_OFFSETS) drawText(g.mHalo, topLeft = Offset(g.lx + off.x, g.ly + off.y))
+                drawText(g.mDark, topLeft = Offset(g.lx, g.ly))
             }
 
             // strong rounded frame on top.
@@ -280,14 +368,6 @@ fun fmtSpeed(b: Long): String = when {
     b >= 1_000_000 -> "${b / 1_000_000} MB/s"
     b >= 1_000 -> "${b / 1_000} KB/s"
     else -> "$b B/s"
-}
-
-/** bytes-volume → "200 KB" / "1 MB". */
-fun fmtVolume(b: Long): String = when {
-    b >= 1_000_000_000 -> "${b / 1_000_000_000} GB"
-    b >= 1_000_000 -> "${b / 1_000_000} MB"
-    b >= 1_000 -> "${b / 1_000} KB"
-    else -> "$b B"
 }
 
 /** latency ms → roll over to seconds once ≥ 1000 ms ("1.5 s"), else "450 ms". */
@@ -319,50 +399,10 @@ private fun bytesPair(a: Long, b: Long, suffix: String): String {
 /** "3 · 43 KB/s" — per-second · per-minute speed, shared unit. */
 fun fmtSpeedPair(a: Long, b: Long): String = bytesPair(a, b, "/s")
 
-/** "1 · 60 KB" — per-second · per-minute volume, shared unit. */
-fun fmtVolumePair(a: Long, b: Long): String = bytesPair(a, b, "")
-
 /** "200 · 210 ms" or "1.2 · 1.5 s" — per-second · per-minute latency. */
 fun fmtLatencyPair(a: Long, b: Long): String {
     val m = max(a, b)
     return if (m >= 1000) "${fmtNum(a / 1000.0)} · ${fmtNum(b / 1000.0)} s" else "$a · $b ms"
-}
-
-/** Two-sided check-rate sparkline: ok up (green), fail down (gray). */
-@Composable
-fun CheckRateSparkline(
-    ok: IntArray,
-    fail: IntArray,
-    modifier: Modifier = Modifier,
-) {
-    val d = LocalDensity.current.density
-    Box(
-        modifier
-            .clip(RoundedCornerShape(8.dp(d)))
-            .border(1.dp(d), FrameColor, RoundedCornerShape(8.dp(d)))
-    ) {
-        Canvas(Modifier.fillMaxSize()) {
-            val n = minOf(ok.size, fail.size)
-            if (n == 0) return@Canvas
-            var maxOk = 0; var maxFail = 0
-            for (i in 0 until n) {
-                if (ok[i] > maxOk) maxOk = ok[i]
-                if (fail[i] > maxFail) maxFail = fail[i]
-            }
-            val normOk = max(1, maxOk)
-            val normFail = max(1, maxFail)
-            val zeroY = size.height / 2f
-            val halfH = size.height / 2f - 2f
-            val barW = size.width / n
-            for (i in 0 until n) {
-                val x = i * barW
-                val bw = max(1f, barW - 0.5f)
-                if (ok[i] > 0) drawRect(AppColors.green, Offset(x, zeroY - ok[i] / normOk.toFloat() * halfH), Size(bw, ok[i] / normOk.toFloat() * halfH))
-                if (fail[i] > 0) drawRect(AppColors.gray, Offset(x, zeroY), Size(bw, fail[i] / normFail.toFloat() * halfH))
-            }
-            drawLine(GridColor, Offset(0f, zeroY), Offset(size.width, zeroY), strokeWidth = 1f)
-        }
-    }
 }
 
 // local dp helper (Dp value; density only taken to keep call sites uniform)

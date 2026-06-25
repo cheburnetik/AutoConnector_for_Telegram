@@ -52,11 +52,6 @@ public class Prefs {
         sp.edit().putInt("relay_port_b", port).apply();
     }
 
-    /** Telegram SOCKS5 proxy link for a port (no secret — SOCKS5). */
-    public String relayLink(int port) {
-        return "tg://socks?server=127.0.0.1&port=" + port;
-    }
-
     // --- checking schedule -------------------------------------------------
 
     /**
@@ -354,31 +349,7 @@ public class Prefs {
         sp.edit().putBoolean("skip_low_battery", v).apply();
     }
 
-    // --- automatic-schedule tracking --------------------------------------
-
-    public long lastScanRunMs() {
-        return sp.getLong("last_scan_run", 0);
-    }
-
-    public void setLastScanRun(long ms) {
-        sp.edit().putLong("last_scan_run", ms).apply();
-    }
-
-    public long lastCheckRunMs() {
-        return sp.getLong("last_check_run", 0);
-    }
-
-    public void setLastCheckRun(long ms) {
-        sp.edit().putLong("last_check_run", ms).apply();
-    }
-
-    public long lastRescheduleMs() {
-        return sp.getLong("last_reschedule", 0);
-    }
-
-    public void setLastReschedule(long ms) {
-        sp.edit().putLong("last_reschedule", ms).apply();
-    }
+    // --- Telegram-connect tracking ----------------------------------------
 
     /** Process-wide "Telegram has ever connected through the relay" timestamp. */
     public long lastTelegramConnectMs() {
@@ -411,9 +382,9 @@ public class Prefs {
 
     /** Index into {@link io.autoconnector.engine.net.HandshakeMode#values()}. */
     public int handshakeMode() {
-        // Default anti-DPI trick = OFF («Обычный»/NORMAL) — user request 2026-06-16.
+        // Default anti-DPI trick = «Авто» (AUTO_RANDOM) — user request 2026-06-24.
         return sp.getInt("handshake_mode",
-                io.autoconnector.engine.net.HandshakeMode.NORMAL.ordinal());
+                io.autoconnector.engine.net.HandshakeMode.AUTO_RANDOM.ordinal());
     }
 
     public void setHandshakeMode(int ordinal) {
@@ -498,6 +469,14 @@ public class Prefs {
     public int volPatternIndex() { int v = sp.getInt("vol_pattern_index", 0); return (v < 0 || v > 9) ? 0 : v; }
     public void setVolPatternIndex(int i) { sp.edit().putInt("vol_pattern_index", (i < 0 || i > 9) ? 0 : i).apply(); }
 
+    /** UI theme mode: 0 = auto (follow OS), 1 = light, 2 = dark. */
+    public int themeMode() { int v = sp.getInt("theme_mode", 0); return (v < 0 || v > 2) ? 0 : v; }
+    public void setThemeMode(int v) { sp.edit().putInt("theme_mode", (v < 0 || v > 2) ? 0 : v).apply(); }
+
+    /** Draw the live sparkline graphs on the Connector/Scan tabs (default on). */
+    public boolean drawGraphs() { return sp.getBoolean("draw_graphs", true); }
+    public void setDrawGraphs(boolean v) { sp.edit().putBoolean("draw_graphs", v).apply(); }
+
     /** Diagnostic network-exchange log (metadata only — no payload bytes). */
     public boolean netLogEnabled() { return sp.getBoolean("net_log_enabled", false); }
     public void setNetLogEnabled(boolean v) {
@@ -510,7 +489,7 @@ public class Prefs {
      * reference serial trial. Non-zero modes change how fast the relay finds a
      * working upstream proxy for a fresh Telegram connection.
      */
-    public int relayConnectMode() { return sp.getInt("relay_connect_mode", 0); }
+    public int relayConnectMode() { return sp.getInt("relay_connect_mode", 1); }
     public void setRelayConnectMode(int code) {
         sp.edit().putInt("relay_connect_mode", Math.max(0, code)).apply();
     }
@@ -520,7 +499,7 @@ public class Prefs {
      * Allowed values are {@code 5 / 8 / 12} (default 5); any other stored value
      * is normalised to the nearest allowed width on both read and write.
      */
-    public int relayRaceWidth() { return clampRaceWidth(sp.getInt("relay_race_width", 8)); }
+    public int relayRaceWidth() { return clampRaceWidth(sp.getInt("relay_race_width", 20)); }
     public void setRelayRaceWidth(int width) {
         sp.edit().putInt("relay_race_width", clampRaceWidth(width)).apply();
     }
@@ -538,7 +517,7 @@ public class Prefs {
      * {@code 100} = try as widely as possible across all alive hosts. Default
      * {@code 30} (leans toward proven). Used by the relay's next-upstream picker.
      */
-    public int relayBreadth() { return clampBreadth(sp.getInt("relay_breadth", 30)); }
+    public int relayBreadth() { return clampBreadth(sp.getInt("relay_breadth", 50)); }
     public void setRelayBreadth(int v) {
         sp.edit().putInt("relay_breadth", clampBreadth(v)).apply();
     }
@@ -692,6 +671,18 @@ public class Prefs {
             // Re-apply the platform default proxying engine, which is now COALESCE
             // on desktop (SHIPPED_EXP_ENGINE=4) and OFF on Android (native path).
             sp.edit().putInt("exp_engine_mode", SHIPPED_EXP_ENGINE).putInt("defaults_v", 11).apply();
+        }
+        if (v < 12) {
+            // v12 (user request 2026-06-24): refreshed connect defaults —
+            // upstream race ON, 20 parallel race connects, host-selection breadth
+            // 50 %, anti-DPI trick = «Авто». Applied once so existing installs pick
+            // it up; afterwards the user's own Settings edits are respected.
+            sp.edit()
+              .putInt("relay_connect_mode", 1)
+              .putInt("relay_race_width", 20)
+              .putInt("relay_breadth", 50)
+              .putInt("handshake_mode", io.autoconnector.engine.net.HandshakeMode.AUTO_RANDOM.ordinal())
+              .putInt("defaults_v", 12).apply();
         }
     }
 }

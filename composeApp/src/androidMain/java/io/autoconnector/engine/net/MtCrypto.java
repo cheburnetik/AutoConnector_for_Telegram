@@ -54,6 +54,29 @@ public final class MtCrypto {
             return out;
         }
 
+        /**
+         * Zero-allocation variant of {@link #process(byte[], int, int)}: XORs the
+         * same CTR keystream directly into {@code buf[off..off+len)} in place,
+         * advancing the keystream identically. Used on the relay's per-chunk
+         * re-cipher hot path to avoid a fresh {@code byte[]} per direction per
+         * chunk (CPU/GC pressure under sustained download). The keystream advance
+         * is bit-identical to {@code process}, so the two are interchangeable.
+         */
+        public void processInPlace(byte[] buf, int off, int len) {
+            for (int i = 0; i < len; i++) {
+                if (ksPos >= keystream.length) {
+                    try {
+                        keystream = ecb.doFinal(counter);
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                    incrementCounter();
+                    ksPos = 0;
+                }
+                buf[off + i] ^= keystream[ksPos++];
+            }
+        }
+
         private void incrementCounter() {
             for (int i = 15; i >= 0; i--) {
                 if (++counter[i] != 0) break;

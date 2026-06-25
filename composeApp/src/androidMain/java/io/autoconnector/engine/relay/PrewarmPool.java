@@ -11,8 +11,10 @@ import io.autoconnector.engine.net.HandshakeMode;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Set;
 
 /**
  * EXPERIMENTAL standby-socket pool ("pre-warm"). Off by default.
@@ -52,6 +54,31 @@ public final class PrewarmPool {
     private volatile int lastTag = 0;
     private int dcRoundRobin = 1;                        // full mode: spread DC 1..5
 
+    /** Battery: while no Telegram client has been connected within this window we
+     *  stop building speculative sockets and drain the pool. Telegram reconnects
+     *  often, so the grace keeps the fast path ready across its frequent
+     *  reconnects without warming sockets during true idle. */
+    private static final long IDLE_GRACE_MS = 90_000L;
+    /** The per-socket liveness peek (a blocking 5 ms read) is expensive, so it
+     *  runs at most this often instead of every 1 s loop tick — the cheap
+     *  aged/stale bookkeeping still runs every tick. */
+    private static final long DEAD_PEEK_INTERVAL_MS = 4_000L;
+    /** Last time {@link #isDeadSocket} peeks were performed (worker thread only). */
+    private long lastDeadPeekAt = 0L;
+
+    // Battery: when Telegram is sitting STABLY on a single relay port with only a
+    // few long-lived sockets (it is NOT thrashing / migrating between ports), the
+    // fast-failover value of a big warm pool is near zero — so we shrink the
+    // target to a single insurance socket. As soon as Telegram starts churning
+    // (more sockets, a second port, fresh connections) the target jumps back to
+    // the user's full prewarmPool() and the pool refills.
+    /** At most this many live sockets still counts as "not thrashing". */
+    private static final int STABLE_MAX_CONNS = 3;
+    /** A connection must have lived this long to count toward "stable". */
+    private static final long STABLE_MIN_AGE_MS = 30_000L;
+    /** Warm-pool target while Telegram is stable (just one insurance socket). */
+    private static final int STABLE_POOL = 1;
+
     private static final class Entry {
         final UpstreamConnector.Channel ch;
         final long bornAt;
@@ -67,11 +94,6 @@ public final class PrewarmPool {
     public PrewarmPool(ProxyStore store, Context ctx) {
         this.store = store;
         this.ctx = ctx;
-    }
-
-    /** Standby sockets ready for instant hand-off right now. */
-    public int readyCount() {
-        synchronized (lock) { return pool.size(); }
     }
 
     /** One warming socket for the Connector-tab table. */
@@ -156,11 +178,38 @@ public final class PrewarmPool {
     private void tick() {
         final Prefs p = new Prefs(ctx);
         if (!p.prewarmEnabled() || !p.appEnabled()) { drain(); return; }
+        // Direct/bypass mode (ProxyMode DISABLED, or DISABLED_ON_VPN while VPN is
+        // up): Telegram is forwarded STRAIGHT to the DC and no upstream proxy is
+        // ever used, so a warm proxy pool serves nothing — don't build it.
+        if (p.shouldBypassProxies()) { drain(); return; }
         final boolean deferred = p.prewarmMode() == 0;
-        final int want = p.prewarmPool();
         final long holdMs = p.prewarmHoldSecs() * 1000L;
         final String cfg = cfgSig(p);
         final long now = System.currentTimeMillis();
+
+        // Target pool size: the user's full prewarmPool() while Telegram is
+        // actively switching upstreams, but shrunk to a single insurance socket
+        // when it is stably glued to one port with only a few mature sockets.
+        final int want = stablyConnected(now) ? Math.min(p.prewarmPool(), STABLE_POOL)
+                                              : p.prewarmPool();
+
+        // Battery: don't build speculative sockets while the relay is idle. We
+        // keep warming only while a Telegram client is connected (active > 0) or
+        // was connected within the recent grace window — Telegram reconnects
+        // frequently, so a short grace keeps the fast path ready across those
+        // reconnects. Past the grace with zero live connections we DRAIN and stop
+        // building; the pool resumes on demand once a client connects again
+        // (take() just falls back to a normal connect meanwhile, which is fine).
+        boolean clientActive = RelayStats.active.get() > 0
+                || (now - RelayStats.lastClientActivityMs.get()) < IDLE_GRACE_MS;
+        if (!clientActive) { drain(); return; }
+
+        // The per-socket liveness peek (isDeadSocket) does a blocking 5 ms read
+        // per socket — too heavy to run on every 1 s loop tick. Throttle it to
+        // ~DEAD_PEEK_INTERVAL_MS; the cheap aged/stale bookkeeping below still
+        // runs every tick so config changes / hold expiry are handled promptly.
+        boolean peekLiveness = (now - lastDeadPeekAt) >= DEAD_PEEK_INTERVAL_MS;
+        if (peekLiveness) lastDeadPeekAt = now;
 
         // Prune aged-out / stale / dead entries. Liveness is probed OUTSIDE the
         // lock — a peer FIN does NOT flip Socket.isClosed()/isInputShutdown(), so
@@ -173,7 +222,9 @@ public final class PrewarmPool {
         for (Entry e : snapshot) {
             boolean aged = (now - e.bornAt) >= holdMs;
             boolean stale = !cfg.equals(e.cfg) || e.deferred != deferred;
-            if (aged || stale || isDeadSocket(e.ch)) drop.add(e);
+            // Only do the expensive socket peek on the throttled cadence.
+            boolean dead = peekLiveness && isDeadSocket(e.ch);
+            if (aged || stale || dead) drop.add(e);
         }
         if (!drop.isEmpty()) {
             synchronized (lock) { for (Entry e : drop) if (pool.remove(e)) closeQuietly(e.ch); }
@@ -181,6 +232,18 @@ public final class PrewarmPool {
 
         int have;
         synchronized (lock) { have = pool.size(); }
+        // Shrink at once when the target just dropped (e.g. Telegram stabilised) —
+        // close the oldest surplus sockets instead of waiting for them to age out.
+        if (have > want) {
+            synchronized (lock) {
+                while (pool.size() > want) {
+                    Entry old = pool.pollFirst();
+                    if (old == null) break;
+                    closeQuietly(old.ch);
+                }
+                have = pool.size();
+            }
+        }
         final int need = want - have;
         if (need <= 0) return;
         // Build the missing slots IN PARALLEL — one slow/failing handshake must not
@@ -212,6 +275,23 @@ public final class PrewarmPool {
         for (Thread t : builders) {
             try { t.join(12000); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); break; }
         }
+    }
+
+    /** True when Telegram is sitting STABLY on a single relay port with only a few
+     *  mature sockets — i.e. it is NOT thrashing between ports/upstreams, so the
+     *  big warm pool would serve no failover and is shrunk to one socket. */
+    private boolean stablyConnected(long now) {
+        List<RelayStats.LiveConn> live = RelayStats.liveConnections();
+        int n = live.size();
+        if (n < 1 || n > STABLE_MAX_CONNS) return false;   // idle, or thrashing with many sockets
+        Set<Integer> ports = new HashSet<>();
+        boolean anyMature = false;
+        for (RelayStats.LiveConn c : live) {
+            ports.add(c.localPort);
+            long started = c.firstDataAt.get();
+            if (started > 0 && (now - started) >= STABLE_MIN_AGE_MS) anyMature = true;
+        }
+        return ports.size() <= 1 && anyMature;   // one port + at least one long-lived socket
     }
 
     private Entry buildOne(Prefs p, boolean deferred, String cfg, ProxyEntry proxy) {

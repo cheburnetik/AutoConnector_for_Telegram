@@ -21,8 +21,10 @@ import io.autoconnector.engine.ScanParams
 import io.autoconnector.engine.HandshakeOption
 import io.autoconnector.engine.HandshakeStatRow
 import io.autoconnector.engine.LogCat
-import io.autoconnector.engine.LogLevel
 import io.autoconnector.engine.LogLine
+import io.autoconnector.engine.classify
+import io.autoconnector.engine.portOf
+import io.autoconnector.engine.stripPort
 import io.autoconnector.engine.ProxyInfo
 import io.autoconnector.engine.Session
 import io.autoconnector.engine.SourceItem
@@ -96,6 +98,13 @@ class AndroidEngine(context: Context) : Engine {
     private var prevUp = 0L
     private var prevDown = 0L
     private var lastDataAt = 0L
+
+    // True while the Activity is in the foreground (between onStart/onStop). The
+    // poll loop runs its heavy per-2 s SQLite aggregation only when the UI is
+    // actually visible; off-screen it backs off to save battery (mirrors the
+    // desktop engine). Defaults to true so a fresh launch isn't throttled before
+    // MainActivity.onStart() fires.
+    @Volatile private var uiActive = true
 
     // source id -> epoch ms when a manual out-of-queue download started.
     private val downloadingSince = java.util.concurrent.ConcurrentHashMap<Long, Long>()
@@ -222,6 +231,8 @@ class AndroidEngine(context: Context) : Engine {
             prewarmMode = p.prewarmMode(),
             prewarmPool = p.prewarmPool(),
             prewarmHoldSecs = p.prewarmHoldSecs(),
+            themeMode = p.themeMode(),
+            drawGraphs = p.drawGraphs(),
         )
     }
 
@@ -272,6 +283,8 @@ class AndroidEngine(context: Context) : Engine {
         p.setPrewarmMode(s.prewarmMode)
         p.setPrewarmPool(s.prewarmPool)
         p.setPrewarmHoldSecs(s.prewarmHoldSecs)
+        p.setThemeMode(s.themeMode)
+        p.setDrawGraphs(s.drawGraphs)
         NetLog.setEnabled(s.netLogEnabled)
         // Re-apply the override only when the mode picker actually changed, so a
         // plain settings-save doesn't kick the network monitor.
@@ -594,7 +607,9 @@ class AndroidEngine(context: Context) : Engine {
                 val runner = CheckRunner(store, { line -> appendLog(line, LogCat.SCAN) }, 100)
                 runner.setProbeMode(if (p.dpiApplyProbes()) HandshakeMode.fromOrdinal(p.handshakeMode()) else HandshakeMode.NORMAL)
                 if (seed.isNotEmpty()) runner.runOn(ArrayList(seed.values), "mode-seed:${mode.code}")
-                runner.runOn(store.dueForCheckForMode(mode, 600), "mode-fill:${mode.code}")
+                // Honour the user's anti-flood floor: don't re-probe hosts checked
+                // more recently than minRescanMin (was ignored on Android before).
+                runner.runOn(store.dueForCheckForMode(mode, 600, p.minRescanMin() * 60_000L), "mode-fill:${mode.code}")
                 appendLog("⟳ mode ${mode.label}: alive ${store.aliveCountForMode(mode)} / ${store.count()}", LogCat.SCAN)
             }
         } catch (t: Throwable) {
@@ -832,12 +847,27 @@ class AndroidEngine(context: Context) : Engine {
         while (true) {
             try {
                 pushState()
-                if (i % 4 == 0) { refreshCatalog(); refreshSources() }
+                // The catalog/sources refresh is the heaviest part (extra DB
+                // reads). On-screen run it every 4th tick as before; off-screen
+                // run it far less often (every 5th backed-off tick ≈ once/minute)
+                // so the tray/notification stays roughly current without churning
+                // the disk while the screen is off.
+                val refreshEvery = if (uiActive) 4 else 5
+                if (i % refreshEvery == 0) { refreshCatalog(); refreshSources() }
             } catch (_: Throwable) {
             }
             i++
-            delay(2000)   // graph advances strictly once per 2 s
+            // On-screen: advance the graphs once per 2 s. Off-screen (Activity
+            // stopped / screen off): back off to 12 s so the per-2 s SQLite
+            // aggregation in pushState() all but stops — the big battery win.
+            delay(if (uiActive) 2000L else 12000L)
         }
+    }
+
+    /** Called by MainActivity.onStart/onStop. Lets the poll loop back off its
+     *  heavy DB work while the UI isn't visible (battery). */
+    override fun setUiActive(active: Boolean) {
+        uiActive = active
     }
 
     private fun pushImmediate() = try { pushState() } catch (_: Throwable) {}
@@ -1195,12 +1225,6 @@ class AndroidEngine(context: Context) : Engine {
         return ProxyInfo(entry.host, entry.port, type, tls, secret, dpi, obf)
     }
 
-    private fun portOf(hp: String?): Int {
-        if (hp == null) return 0
-        val c = hp.lastIndexOf(':')
-        return if (c > 0) hp.substring(c + 1).toIntOrNull() ?: 0 else 0
-    }
-
     private fun modeBadge(p: Prefs): String {
         val net = NetworkMonitor.currentMode()
         if (p.shouldBypassProxies())
@@ -1437,29 +1461,5 @@ class AndroidEngine(context: Context) : Engine {
         }
     }
 
-    private fun classify(line: String): LogLevel {
-        val c = line.firstOrNull() ?: ' '
-        return when (c) {
-            '✓', '≈', '→' -> LogLevel.OK
-            '✗', '⨂' -> LogLevel.FAIL
-            '↪' -> LogLevel.ROUTE
-            '·' -> LogLevel.MUTED
-            '⟳', '⚠', '⏸' -> LogLevel.WARN
-            else -> LogLevel.INFO
-        }
-    }
-
     private fun rate(bps: Long) = "${TrafficMeter.human(bps)}/с"
-    private fun stripPort(hp: String?): String {
-        if (hp == null) return ""
-        val c = hp.lastIndexOf(':')
-        return if (c > 0) hp.substring(0, c) else hp
-    }
-    private fun plural(n: Int, one: String, few: String, many: String): String {
-        val m10 = n % 10; val m100 = n % 100
-        if (m100 in 11..14) return many
-        if (m10 == 1) return one
-        if (m10 in 2..4) return few
-        return many
-    }
 }

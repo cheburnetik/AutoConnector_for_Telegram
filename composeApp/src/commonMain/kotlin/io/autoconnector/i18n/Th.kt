@@ -456,4 +456,21 @@ object Th : Strings {
     override val connTimeoutTitle = "ไทม์เอาต์การเชื่อมต่อต่อโฮสต์"
     override val connTimeoutHelp = "รอ upstream หนึ่งตัว (TCP + TLS + คำตอบ MTProto แรก) นานเท่าไรก่อนจะข้ามไปยังพร็อกซีถัดไป"
     override val factoryResetDone = "รีเซ็ตทุกอย่างแล้ว โปรดปิดแอปแล้วเปิดใหม่อีกครั้ง"
+
+    // tray
+    override val trayOpenWindow = "เปิดหน้าต่าง"
+    override val trayRefreshSubs = "รีเฟรชการสมัครรับข้อมูล"
+    override val trayExit = "ออก"
+    override fun trayConnectorLabel(on: Boolean) =
+        if (on) "ตัวเชื่อมต่อ: เปิด (ปิด)" else "ตัวเชื่อมต่อ: ปิด (เปิด)"
+    override fun trayScanLabel(on: Boolean) =
+        if (on) "สแกน: เปิด (ปิด)" else "สแกน: ปิด (เปิด)"
+    override fun trayLive(n: Int) = "พร็อกซีที่ใช้งานได้: ${n}"
+    override val appearance = "รูปลักษณ์"
+    override val themeLabel = "ธีม"
+    override val themeAuto = "อัตโนมัติ (ตามระบบ)"
+    override val themeLight = "สว่าง"
+    override val themeDark = "มืด"
+    override val drawGraphsLabel = "วาดกราฟ"
+    override val drawGraphsSub = "กราฟแบบเรียลไทม์ในแท็บตัวเชื่อมต่อและสแกน — ปิดเพื่อประหยัดแบตเตอรี่"
 }

@@ -157,6 +157,11 @@ data class EngineSettings(
     val prewarmMode: Int = 0,            // 0 = deferred-obf2 (TLS-only), 1 = full handshake
     val prewarmPool: Int = 5,            // standby sockets to hold (1..8)
     val prewarmHoldSecs: Int = 20,       // hold each before rotation (5..120 s)
+    // UI appearance. themeMode: 0 = auto (follow OS), 1 = light, 2 = dark.
+    val themeMode: Int = 0,
+    // Draw the live sparkline charts on the Connector/Scan tabs. Off = the numeric
+    // readings stay but the per-frame canvas animation is skipped (saves battery).
+    val drawGraphs: Boolean = true,
 )
 
 /** One past attempt against a host, for the detail card's history list. */

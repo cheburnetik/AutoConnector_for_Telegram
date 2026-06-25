@@ -60,7 +60,6 @@ import io.autoconnector.engine.Engine
 import io.autoconnector.engine.EngineState
 import io.autoconnector.i18n.LocalStrings
 import io.autoconnector.i18n.stringsFor
-import io.autoconnector.ui.components.blinkAlpha
 import io.autoconnector.ui.components.keyPageScroll
 import io.autoconnector.ui.screens.CatalogDetailPage
 import io.autoconnector.ui.screens.CatalogModeManagePage
@@ -88,15 +87,20 @@ private enum class Tabs(val label: String, val icon: ImageVector) {
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun App(engine: Engine) {
-    AppTheme {
+    val settings by engine.settings.collectAsState()
+    // themeMode: 0 = auto (follow OS), 1 = light, 2 = dark.
+    val dark = when (settings.themeMode) {
+        1 -> false
+        2 -> true
+        else -> androidx.compose.foundation.isSystemInDarkTheme()
+    }
+    AppTheme(dark) {
         val state by engine.state.collectAsState()
         val logs by engine.logs.collectAsState()
         val catalog by engine.catalog.collectAsState()
         val sources by engine.sources.collectAsState()
-        val settings by engine.settings.collectAsState()
         var tab by remember { mutableStateOf(Tabs.CONNECTOR) }
         var logTab by remember { mutableStateOf(io.autoconnector.ui.screens.LogTab.TELEGRAM) }
-        var logErrorsOnly by remember { mutableStateOf(false) }
         val expandedSessions = remember { androidx.compose.runtime.mutableStateListOf<String>() }
         var showGuide by remember { mutableStateOf(false) }
         var detail by remember { mutableStateOf<CatalogItem?>(null) }
@@ -113,6 +117,7 @@ fun App(engine: Engine) {
       CompositionLocalProvider(
           LocalStrings provides stringsFor(settings.langCode),
           androidx.compose.ui.platform.LocalLayoutDirection provides layoutDir,
+          io.autoconnector.ui.components.LocalDrawGraphs provides settings.drawGraphs,
       ) {
         val t = LocalStrings.current
 
@@ -293,8 +298,6 @@ fun App(engine: Engine) {
                         onToggleSession = { k ->
                             if (k in expandedSessions) expandedSessions.remove(k) else expandedSessions.add(k)
                         },
-                        errorsOnly = logErrorsOnly,
-                        onErrorsOnly = { logErrorsOnly = it },
                     )
                     Tabs.MORE -> item { MoreScreen(onOpen = { morePage = it }, onOpenGuide = { showGuide = true }, hotkeysSupported = engine.hotkeysSupported(), volPatternSupported = engine.volPatternSupported()) }
                 }
@@ -424,8 +427,6 @@ private fun ToggleRow(s: EngineState, engine: Engine) {
         BareSwitch("${tr.scan} ${tr.onOff(s.scanEnabled)}", s.scanEnabled, Modifier.weight(0.4f), switchFirst = false) { engine.setScanEnabled(it) }
     }
 }
-
-private fun onOff(v: Boolean) = if (v) "ON" else "OFF"
 
 @Composable
 private fun BareSwitch(label: String, value: Boolean, modifier: Modifier, switchFirst: Boolean, onChange: (Boolean) -> Unit) {

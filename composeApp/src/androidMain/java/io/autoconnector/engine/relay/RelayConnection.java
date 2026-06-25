@@ -883,8 +883,15 @@ public final class RelayConnection implements Runnable {
         try {
             int n;
             while ((n = src.read(buf)) > 0) {
-                byte[] plain = dec.process(buf, 0, n);
-                dst.write(enc.process(plain));
+                // Re-cipher the [0,n) chunk IN PLACE to avoid two fresh byte[]
+                // allocations per chunk on the relay hot path (CPU/GC under a
+                // sustained download). dec and enc are independent CTR keystreams
+                // and we own `buf` (written out immediately below), so
+                // deobfuscate-then-reobfuscate over the same bytes is correct.
+                // Only the n bytes actually read are touched.
+                dec.processInPlace(buf, 0, n);
+                enc.processInPlace(buf, 0, n);
+                dst.write(buf, 0, n);
                 dst.flush();
                 if (upDirection) NetLog.up(session, n); else NetLog.down(session, n);
                 long now = System.currentTimeMillis();

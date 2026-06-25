@@ -456,4 +456,21 @@ object Pa : Strings {
     override val connTimeoutTitle = "ਹੋਸਟ ਕਨੈਕਟ ਟਾਈਮਆਊਟ"
     override val connTimeoutHelp = "ਅਗਲੀ ਪ੍ਰੌਕਸੀ ਅਜ਼ਮਾਉਣ ਤੋਂ ਪਹਿਲਾਂ ਇੱਕ ਅੱਪਸਟ੍ਰੀਮ (TCP + TLS + ਪਹਿਲਾ MTProto ਜਵਾਬ) ਲਈ ਕਿੰਨਾ ਉਡੀਕਣਾ ਹੈ।"
     override val factoryResetDone = "ਸਭ ਕੁਝ ਰੀਸੈੱਟ ਹੋ ਗਿਆ। ਐਪ ਬੰਦ ਕਰਕੇ ਮੁੜ ਚਾਲੂ ਕਰੋ।"
+
+    // tray
+    override val trayOpenWindow = "ਵਿੰਡੋ ਖੋਲ੍ਹੋ"
+    override val trayRefreshSubs = "ਸਬਸਕ੍ਰਿਪਸ਼ਨਾਂ ਤਾਜ਼ਾ ਕਰੋ"
+    override val trayExit = "ਬਾਹਰ ਜਾਓ"
+    override fun trayConnectorLabel(on: Boolean) =
+        if (on) "ਕਨੈਕਟਰ: ਚਾਲੂ (ਬੰਦ ਕਰੋ)" else "ਕਨੈਕਟਰ: ਬੰਦ (ਚਾਲੂ ਕਰੋ)"
+    override fun trayScanLabel(on: Boolean) =
+        if (on) "ਸਕੈਨ: ਚਾਲੂ (ਬੰਦ ਕਰੋ)" else "ਸਕੈਨ: ਬੰਦ (ਚਾਲੂ ਕਰੋ)"
+    override fun trayLive(n: Int) = "ਚਾਲੂ ਪ੍ਰੌਕਸੀਆਂ: ${n}"
+    override val appearance = "ਦਿੱਖ"
+    override val themeLabel = "ਥੀਮ"
+    override val themeAuto = "ਆਟੋ (ਸਿਸਟਮ ਨਾਲ ਮੇਲ)"
+    override val themeLight = "ਹਲਕਾ"
+    override val themeDark = "ਗੂੜ੍ਹਾ"
+    override val drawGraphsLabel = "ਗ੍ਰਾਫ਼ ਬਣਾਓ"
+    override val drawGraphsSub = "ਕਨੈਕਟਰ ਅਤੇ ਸਕੈਨ ਟੈਬਾਂ 'ਤੇ ਲਾਈਵ ਚਾਰਟ — ਬੈਟਰੀ ਬਚਾਉਣ ਲਈ ਬੰਦ ਕਰੋ"
 }

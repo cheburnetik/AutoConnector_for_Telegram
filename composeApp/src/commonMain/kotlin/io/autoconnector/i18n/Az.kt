@@ -451,4 +451,21 @@ object Az : Strings by En {
     override val wpHintTitle = "White nədir?"
     override val wpHint = "White — WhitePages: əl ilə şəbəkə rejimi. Yalnız əl ilə açılır (avto-seçim onu qoymur). " +
         "Ayrıca host reytinqi aparır, abunəlikləri yükləyir və VPN/Wi-Fi/LTE-dən asılı olmayaraq skan edir."
+
+    // tray
+    override val trayOpenWindow = "Pəncərəni aç"
+    override val trayRefreshSubs = "Abunəlikləri yenilə"
+    override val trayExit = "Çıxış"
+    override fun trayConnectorLabel(on: Boolean) =
+        if (on) "Konnektor: AÇIQ (söndür)" else "Konnektor: SÖNÜLÜ (aç)"
+    override fun trayScanLabel(on: Boolean) =
+        if (on) "Skan: AÇIQ (söndür)" else "Skan: SÖNÜLÜ (aç)"
+    override fun trayLive(n: Int) = "Canlı proksilər: ${n}"
+    override val appearance = "Görünüş"
+    override val themeLabel = "Tema"
+    override val themeAuto = "Avtomatik (sistemə uyğun)"
+    override val themeLight = "İşıqlı"
+    override val themeDark = "Qaranlıq"
+    override val drawGraphsLabel = "Qrafikləri çək"
+    override val drawGraphsSub = "Bağlayıcı və Skan tablarında canlı qrafiklər — batareyaya qənaət üçün söndürün"
 }

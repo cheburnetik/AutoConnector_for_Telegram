@@ -122,8 +122,8 @@ android {
         applicationId = "io.autoconnector"
         minSdk = 24
         targetSdk = 34
-        versionCode = 77
-        versionName = "1.1.20"
+        versionCode = 79
+        versionName = "1.1.22"
         buildConfigField("String", "BUILD_DATE", "\"$buildDate\"")
     }
 
@@ -143,14 +143,26 @@ android {
     val keystoreProps = Properties().apply {
         if (hasKeystore) FileInputStream(keystorePropsFile).use { load(it) }
     }
+    // Signing source resolution (the file never holds secrets when env is used):
+    //  1) keystore.properties (legacy, git-ignored) if present, else
+    //  2) environment variables ACTG_STORE_FILE / ACTG_STORE_PASSWORD /
+    //     ACTG_KEY_ALIAS / ACTG_KEY_PASSWORD — lets a release APK be built+signed
+    //     on a server WITHOUT ever writing credentials to a file on disk.
+    val envStoreFile = System.getenv("ACTG_STORE_FILE")
+    val hasEnvSigning = !hasKeystore && envStoreFile != null && envStoreFile.isNotBlank()
+    val signStoreFile = if (hasKeystore) keystoreProps.getProperty("storeFile") else envStoreFile
+    val signStorePw = if (hasKeystore) keystoreProps.getProperty("storePassword") else System.getenv("ACTG_STORE_PASSWORD")
+    val signKeyAlias = if (hasKeystore) keystoreProps.getProperty("keyAlias") else System.getenv("ACTG_KEY_ALIAS")
+    val signKeyPw = if (hasKeystore) keystoreProps.getProperty("keyPassword") else System.getenv("ACTG_KEY_PASSWORD")
+    val canSign = hasKeystore || hasEnvSigning
 
     signingConfigs {
-        if (hasKeystore) {
+        if (canSign) {
             create("release") {
-                storeFile = file(keystoreProps.getProperty("storeFile"))
-                storePassword = keystoreProps.getProperty("storePassword")
-                keyAlias = keystoreProps.getProperty("keyAlias")
-                keyPassword = keystoreProps.getProperty("keyPassword")
+                storeFile = file(signStoreFile)
+                storePassword = signStorePw
+                keyAlias = signKeyAlias
+                keyPassword = signKeyPw
                 enableV1Signing = true
                 enableV2Signing = true
                 enableV3Signing = true
@@ -161,7 +173,7 @@ android {
     buildTypes {
         getByName("release") {
             isMinifyEnabled = false
-            if (hasKeystore) signingConfig = signingConfigs.getByName("release")
+            if (canSign) signingConfig = signingConfigs.getByName("release")
         }
     }
 

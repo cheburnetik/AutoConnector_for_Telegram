@@ -454,4 +454,21 @@ object Mr : Strings {
     override val connTimeoutTitle = "होस्ट कनेक्ट टाइमआउट"
     override val connTimeoutHelp = "पुढील प्रॉक्सी वापरून पाहण्यापूर्वी एका अपस्ट्रीमसाठी (TCP + TLS + पहिले MTProto उत्तर) किती वेळ थांबायचे."
     override val factoryResetDone = "सर्वकाही रीसेट झाले. अॅप बंद करा आणि पुन्हा सुरू करा."
+
+    // tray
+    override val trayOpenWindow = "विंडो उघडा"
+    override val trayRefreshSubs = "सबस्क्रिप्शन रिफ्रेश करा"
+    override val trayExit = "बाहेर पडा"
+    override fun trayConnectorLabel(on: Boolean) =
+        if (on) "कनेक्टर: चालू (बंद करा)" else "कनेक्टर: बंद (चालू करा)"
+    override fun trayScanLabel(on: Boolean) =
+        if (on) "स्कॅन: चालू (बंद करा)" else "स्कॅन: बंद (चालू करा)"
+    override fun trayLive(n: Int) = "जिवंत प्रॉक्सी: ${n}"
+    override val appearance = "स्वरूप"
+    override val themeLabel = "थीम"
+    override val themeAuto = "स्वयं (सिस्टमनुसार)"
+    override val themeLight = "उजळ"
+    override val themeDark = "गडद"
+    override val drawGraphsLabel = "आलेख काढा"
+    override val drawGraphsSub = "Connector आणि Scan टॅबवर थेट आलेख — बॅटरी वाचवण्यासाठी बंद करा"
 }

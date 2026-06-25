@@ -446,4 +446,21 @@ object Ha : Strings by En {
     override val wpHintTitle = "Menene White?"
     override val wpHint = "White — WhitePages: yanayin sadarwa na hannu. Ana kunna shi da hannu kawai (zaɓe na atomatik ba ya zaɓarsa). " +
         "Yana riƙe ƙimar host nasa, yana sauke rajista kuma yana bincike ba tare da dogaro ga VPN/Wi-Fi/LTE ba."
+
+    // tray
+    override val trayOpenWindow = "Buɗe taga"
+    override val trayRefreshSubs = "Sabunta rajista"
+    override val trayExit = "Fita"
+    override fun trayConnectorLabel(on: Boolean) =
+        if (on) "Mahaɗi: KUNNE (kashe)" else "Mahaɗi: KASHE (kunna)"
+    override fun trayScanLabel(on: Boolean) =
+        if (on) "Bincike: KUNNE (kashe)" else "Bincike: KASHE (kunna)"
+    override fun trayLive(n: Int) = "Wakilai masu rai: ${n}"
+    override val appearance = "Kamanni"
+    override val themeLabel = "Jigo"
+    override val themeAuto = "Atomatik (daidai da tsarin)"
+    override val themeLight = "Haske"
+    override val themeDark = "Duhu"
+    override val drawGraphsLabel = "Zana jadawali"
+    override val drawGraphsSub = "Jadawalin kai tsaye a shafukan Connector da Scan — kashe don adana baturi"
 }

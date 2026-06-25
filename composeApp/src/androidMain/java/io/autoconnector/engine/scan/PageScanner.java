@@ -224,15 +224,6 @@ public final class PageScanner {
         return r;
     }
 
-    /** Scans every page; returns the total number of NEW proxies added. */
-    public int scanAll(List<String> pages) {
-        int total = 0;
-        for (String p : pages) {
-            total += scanPage(p).added;
-        }
-        return total;
-    }
-
     // --- t.me scroll-up ---------------------------------------------------
 
     /**

@@ -31,4 +31,17 @@ class MainActivity : ComponentActivity() {
         }
         setContent { App(engine) }
     }
+
+    // Let the engine throttle its heavy per-2 s poll while the UI isn't visible
+    // (screen off / app backgrounded) to save battery; restore full cadence when
+    // the Activity comes back to the foreground.
+    override fun onStart() {
+        super.onStart()
+        EngineHolder.get(this).setUiActive(true)
+    }
+
+    override fun onStop() {
+        super.onStop()
+        EngineHolder.get(this).setUiActive(false)
+    }
 }

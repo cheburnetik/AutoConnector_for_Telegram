@@ -184,21 +184,11 @@ public final class HandshakeStats {
     public static long tgConnected(HandshakeMode m, io.autoconnector.engine.core.NetworkMode n){ return getScoped("g",  m, n); }
     public static long longSessions(HandshakeMode m, io.autoconnector.engine.core.NetworkMode n){return getScoped("l",  m, n); }
     public static long fatSessions(HandshakeMode m, io.autoconnector.engine.core.NetworkMode n){ return getScoped("f",  m, n); }
-    public static long sessions5k(HandshakeMode m, io.autoconnector.engine.core.NetworkMode n) { return getScoped("s5",  m, n); }
-    public static long sessions100k(HandshakeMode m, io.autoconnector.engine.core.NetworkMode n){ return getScoped("s100", m, n); }
     public static long usable(HandshakeMode m, io.autoconnector.engine.core.NetworkMode n)     { return getScoped("u",  m, n); }
     public static long usableDurationMs(HandshakeMode m, io.autoconnector.engine.core.NetworkMode n){ return getScoped("ud", m, n); }
     public static long totalDurationMs(HandshakeMode m, io.autoconnector.engine.core.NetworkMode n){ return getScoped("td", m, n); }
     public static long totalActiveMs(HandshakeMode m, io.autoconnector.engine.core.NetworkMode n){ return getScoped("ta", m, n); }
     public static long totalBytes(HandshakeMode m, io.autoconnector.engine.core.NetworkMode n) { return getScoped("tb", m, n); }
-
-    /** Average throughput (bytes/sec) over the "active" window — first real
-     *  data byte until last byte, handshake excluded. */
-    public static double avgBytesPerSec(HandshakeMode m, io.autoconnector.engine.core.NetworkMode n) {
-        long act = totalActiveMs(m, n);
-        if (act < 1000) return 0;
-        return totalBytes(m, n) / (act / 1000.0);
-    }
 
     private static synchronized long get(String prefix, HandshakeMode m) {
         return sp != null ? sp.getLong(key(prefix, m), 0) : 0;

@@ -29,26 +29,30 @@ public final class CheckRunner {
         void line(String s);
     }
 
-    /** @deprecated kept for source compat — read/write {@link io.autoconnector.engine.core.ScanGate} directly. */
-    @Deprecated
-    public static boolean GLOBAL_ABORT;  // mirror of ScanGate, no longer authoritative
-
-    private static final int DEFAULT_CONCURRENCY = 12;
+    /** SO read timeout for the handshake phase — generous so a slow-but-live
+     *  proxy isn't false-flagged dead. */
     private static final int PROBE_TIMEOUT_MS = 8000;
+    /** TCP-connect timeout — shorter than the read timeout: a live proxy answers
+     *  the TCP handshake in well under a second, so an unreachable host gives up
+     *  in ~3.5s instead of 8s, roughly halving wasted radio time per dead host. */
+    private static final int PROBE_CONNECT_TIMEOUT_MS = 3500;
     /** Rotating counter to sample successful checks into the per-host history
      *  (1 in 8) so continuous scanning doesn't flood attempt_log / the disk. */
     private static final AtomicInteger AL_SAMPLE = new AtomicInteger();
     /** Coarse per-probe traffic estimate (handshake + resPQ round-trip). */
     private static final int PROBE_BYTES_ESTIMATE = 1400;
+    /** Throttle for {@link ProxyStore#purgeOldChecks()}: it does a full DELETE
+     *  over the 24h check_log, so running it on every probe pass is wasteful.
+     *  Gate it to at most once per {@link #PURGE_INTERVAL_MS}. */
+    private static final java.util.concurrent.atomic.AtomicLong LAST_PURGE_MS =
+            new java.util.concurrent.atomic.AtomicLong();
+    private static final long PURGE_INTERVAL_MS = 5 * 60_000L;
 
     private final ProxyStore store;
     private final Log log;
     private final int concurrency;
-    private final HealthChecker checker = new HealthChecker(PROBE_TIMEOUT_MS);
-
-    public CheckRunner(ProxyStore store, Log log) {
-        this(store, log, DEFAULT_CONCURRENCY);
-    }
+    private final HealthChecker checker =
+            new HealthChecker(PROBE_CONNECT_TIMEOUT_MS, PROBE_TIMEOUT_MS);
 
     public CheckRunner(ProxyStore store, Log log, int concurrency) {
         this.store = store;
@@ -92,7 +96,14 @@ public final class CheckRunner {
     }
 
     private void runOnInner(List<ProxyEntry> list, String label, ExecutorService pool) {
-        try { store.purgeOldChecks(); } catch (Exception ignored) {}
+        // Prune the 24h check_log at most once every PURGE_INTERVAL_MS instead of
+        // on every pass — the full DELETE is wasted work when passes run back to
+        // back. CAS guards against concurrent passes both purging at once.
+        long nowP = System.currentTimeMillis();
+        long prevP = LAST_PURGE_MS.get();
+        if (nowP - prevP >= PURGE_INTERVAL_MS && LAST_PURGE_MS.compareAndSet(prevP, nowP)) {
+            try { store.purgeOldChecks(); } catch (Exception ignored) {}
+        }
         log.line("— checking " + list.size() + " proxies (" + label + ") —");
 
         AtomicInteger full = new AtomicInteger();
@@ -159,28 +170,44 @@ public final class CheckRunner {
             int pingMs = (r.connectMs > 0) ? r.connectMs : r.rttMs;
             if (r.connectMs > 0)
                 io.autoconnector.engine.traffic.ScanPingBuffer.INSTANCE.note(r.connectMs);
+            // Batch this probe's writes (updateStats + cooldown + logCheck +
+            // logAttempt + recordProbe) into ONE transaction: a single commit
+            // per probe instead of 4-5 autocommits — far fewer WAL fsyncs
+            // (battery / flash). Only the quick DB writes are inside the txn; the
+            // slow network handshake already finished above. Rating/scoring is
+            // unchanged — the legacy aggregate columns are still written.
             try {
-                // Aggregate (legacy) record — UI screens that haven't been
-                // mode-split yet still read these columns.
-                Rating.record(p, r.ok(), pingMs, r.detail);
-                store.updateStats(p);
-                store.logCheck(p.id, r.ok());
-                // Record into the per-host history shown on the detail card. To
-                // keep disk writes low under continuous scanning we log EVERY
-                // failure (the interesting events) but only a 1-in-8 sample of
-                // routine successful re-checks; Telegram connects are always
-                // logged separately by the relay.
+                store.beginTransaction();
                 try {
+                    // Aggregate (legacy) record — UI screens that haven't been
+                    // mode-split yet still read these columns.
+                    Rating.record(p, r.ok(), pingMs, r.detail);
+                    store.updateStats(p);
+                    // Probe-failure cooldown: a host that keeps failing the probe
+                    // earns a growing, capped cool_until so it drops out of
+                    // dueForCheck instead of timing out every pass; a passing
+                    // probe (a real resPQ from a live DC) clears the streak.
+                    if (r.ok()) store.clearProbeCooldown(p.id);
+                    else store.markProbeFailure(p.id, System.currentTimeMillis());
+                    store.logCheck(p.id, r.ok());
+                    // Record into the per-host history shown on the detail card. To
+                    // keep disk writes low under continuous scanning we log EVERY
+                    // failure (the interesting events) but only a 1-in-8 sample of
+                    // routine successful re-checks; Telegram connects are always
+                    // logged separately by the relay. logAttempt never throws.
                     if (!r.ok() || (AL_SAMPLE.incrementAndGet() & 0x7) == 0L) {
                         store.logAttempt(p.id, 0, r.ok(), -1, -1, r.ok() ? pingMs : -1, 0, 0, 0);
                     }
-                } catch (Exception ignored) {}
-                // Per-mode record — what the relay actually uses to pick
-                // an upstream on the current network.
-                io.autoconnector.engine.core.NetworkMode mode =
-                        io.autoconnector.engine.core.NetworkMonitor.currentMode();
-                if (mode != io.autoconnector.engine.core.NetworkMode.UNKNOWN) {
-                    store.recordProbe(p, mode, r.ok(), pingMs, r.detail);
+                    // Per-mode record — what the relay actually uses to pick
+                    // an upstream on the current network.
+                    io.autoconnector.engine.core.NetworkMode mode =
+                            io.autoconnector.engine.core.NetworkMonitor.currentMode();
+                    if (mode != io.autoconnector.engine.core.NetworkMode.UNKNOWN) {
+                        store.recordProbe(p, mode, r.ok(), pingMs, r.detail);
+                    }
+                    store.setTransactionSuccessful();
+                } finally {
+                    store.endTransaction();
                 }
             } catch (Exception ignored) {}
             switch (r.grade) {
@@ -196,15 +223,16 @@ public final class CheckRunner {
         }
     }
 
-    /** Single-char prefix used by MainActivity's log-line colourer to tell
-     *  a background-probe outcome from a relay-time error: green for OK,
-     *  approximation for STEALTH, dim middle-dot for the routine DEAD —
-     *  visually distinct from the bright "✗ relay failed" from the pipe. */
+    /** Single-char prefix the log-line colourer reads to grade a probe outcome:
+     *  a bold green dot "●" for a working host (OK), an approximation "≈" for the
+     *  partially-reachable STEALTH host (also OK/green), and a red cross "✗" for
+     *  the routine DEAD host — so the scan log reads green for success, red for
+     *  failure at a glance. */
     private static String badge(HealthChecker.Grade g) {
         switch (g) {
-            case FULL: return "✓";
+            case FULL: return "●";
             case STEALTH: return "≈";
-            default: return "·";
+            default: return "✗";
         }
     }
 }

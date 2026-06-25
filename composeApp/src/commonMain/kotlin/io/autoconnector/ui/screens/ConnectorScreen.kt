@@ -374,18 +374,23 @@ internal fun GraphRow(
     val sv = secValues.getOrElse(secValues.size - 2) { secValues.lastOrNull() ?: 0L }
     val mv = minValues.getOrElse(minValues.size - 2) { minValues.lastOrNull() ?: 0L }
     val valueLine = pairFmt(sv, mv)
+    // Settings toggle: when graphs are off, keep the numeric readings but drop the
+    // two animated Canvas charts (no per-frame redraw → less battery).
+    val drawGraphs = io.autoconnector.ui.components.LocalDrawGraphs.current
     Row(
         Modifier.fillMaxWidth().height(50.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(Modifier.weight(0.30f)) {
+        Column(Modifier.weight(if (drawGraphs) 0.30f else 1f)) {
             Text(title, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = AppColors.onSurface, maxLines = 1)
             // two current readings «за сек · за минуту» on one line, shared unit.
             Text(valueLine, fontWeight = FontWeight.Bold, fontSize = 11.sp, color = color, maxLines = 1)
         }
-        LiveBarGraph(secValues, color, secTick, Modifier.weight(0.35f).fillMaxHeight(), minScale, logBase, gridFmt)
-        LiveBarGraph(minValues, color, minTick, Modifier.weight(0.35f).fillMaxHeight(), minScale, logBase, gridFmt)
+        if (drawGraphs) {
+            LiveBarGraph(secValues, color, secTick, Modifier.weight(0.35f).fillMaxHeight(), minScale, logBase, gridFmt)
+            LiveBarGraph(minValues, color, minTick, Modifier.weight(0.35f).fillMaxHeight(), minScale, logBase, gridFmt)
+        }
     }
 }
 

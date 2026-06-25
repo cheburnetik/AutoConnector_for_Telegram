@@ -466,4 +466,21 @@ object Fr : Strings {
     override val connTimeoutHelp = "Combien de temps attendre un upstream (TCP + TLS + première réponse MTProto) avant de passer au proxy suivant."
 
     override val factoryResetDone = "Tout a été réinitialisé. Fermez l'application et rouvrez-la."
+
+    // tray
+    override val trayOpenWindow = "Ouvrir la fenêtre"
+    override val trayRefreshSubs = "Actualiser les abonnements"
+    override val trayExit = "Quitter"
+    override fun trayConnectorLabel(on: Boolean) =
+        if (on) "Connecteur : ON (désactiver)" else "Connecteur : OFF (activer)"
+    override fun trayScanLabel(on: Boolean) =
+        if (on) "Scan : ON (désactiver)" else "Scan : OFF (activer)"
+    override fun trayLive(n: Int) = "Proxys actifs : ${n}"
+    override val appearance = "Apparence"
+    override val themeLabel = "Thème"
+    override val themeAuto = "Auto (suivre le système)"
+    override val themeLight = "Clair"
+    override val themeDark = "Sombre"
+    override val drawGraphsLabel = "Afficher les graphiques"
+    override val drawGraphsSub = "Graphiques en direct dans les onglets Connecteur et Analyse — désactivez pour économiser la batterie"
 }

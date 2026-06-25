@@ -453,4 +453,21 @@ object Ur : Strings {
     override val backupJsonLabel = "بیک اپ JSON"
     override val backupAndroidFileNote = "یہاں فائلیں دستیاب نہیں — کاپی / پیسٹ استعمال کریں۔"
     override val factoryResetDone = "سب کچھ ری سیٹ ہو گیا۔ براہِ کرم ایپ بند کرکے دوبارہ کھولیں۔"
+
+    // tray
+    override val trayOpenWindow = "ونڈو کھولیں"
+    override val trayRefreshSubs = "سبسکرپشنز ریفریش کریں"
+    override val trayExit = "باہر نکلیں"
+    override fun trayConnectorLabel(on: Boolean) =
+        if (on) "کنیکٹر: آن (آف کریں)" else "کنیکٹر: آف (آن کریں)"
+    override fun trayScanLabel(on: Boolean) =
+        if (on) "اسکین: آن (آف کریں)" else "اسکین: آف (آن کریں)"
+    override fun trayLive(n: Int) = "زندہ پراکسیاں: ${n}"
+    override val appearance = "ظاہری شکل"
+    override val themeLabel = "تھیم"
+    override val themeAuto = "خودکار (سسٹم کے مطابق)"
+    override val themeLight = "روشن"
+    override val themeDark = "تاریک"
+    override val drawGraphsLabel = "گراف بنائیں"
+    override val drawGraphsSub = "کنیکٹر اور اسکین ٹیبز پر لائیو چارٹس — بیٹری بچانے کے لیے بند کریں"
 }

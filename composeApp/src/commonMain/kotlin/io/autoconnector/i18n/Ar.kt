@@ -455,4 +455,21 @@ object Ar : Strings {
     override val backupJsonLabel = "JSON النسخة الاحتياطية"
     override val backupAndroidFileNote = "الملفات غير متاحة هنا — استخدم نسخ / لصق."
     override val factoryResetDone = "أُعيد تعيين كل شيء. أغلق التطبيق ثم افتحه مرة أخرى."
+
+    // tray
+    override val trayOpenWindow = "فتح النافذة"
+    override val trayRefreshSubs = "تحديث الاشتراكات"
+    override val trayExit = "خروج"
+    override fun trayConnectorLabel(on: Boolean) =
+        if (on) "الموصِّل: مشغَّل (إيقاف)" else "الموصِّل: متوقف (تشغيل)"
+    override fun trayScanLabel(on: Boolean) =
+        if (on) "الفحص: مشغَّل (إيقاف)" else "الفحص: متوقف (تشغيل)"
+    override fun trayLive(n: Int) = "البروكسيات الحية: ${n}"
+    override val appearance = "المظهر"
+    override val themeLabel = "السمة"
+    override val themeAuto = "تلقائي (مطابقة النظام)"
+    override val themeLight = "فاتح"
+    override val themeDark = "داكن"
+    override val drawGraphsLabel = "رسم الرسوم البيانية"
+    override val drawGraphsSub = "رسوم بيانية حية في علامتي تبويب الموصّل والفحص — أوقفها لتوفير البطارية"
 }

@@ -467,4 +467,21 @@ object Pl : Strings {
 
     // shown after a factory reset
     override val factoryResetDone = "Wszystko zostało zresetowane. Zamknij aplikację i otwórz ją ponownie."
+
+    // tray
+    override val trayOpenWindow = "Otwórz okno"
+    override val trayRefreshSubs = "Odśwież subskrypcje"
+    override val trayExit = "Zamknij"
+    override fun trayConnectorLabel(on: Boolean) =
+        if (on) "Konektor: WŁ. (wyłącz)" else "Konektor: WYŁ. (włącz)"
+    override fun trayScanLabel(on: Boolean) =
+        if (on) "Skan: WŁ. (wyłącz)" else "Skan: WYŁ. (włącz)"
+    override fun trayLive(n: Int) = "Działające proxy: ${n}"
+    override val appearance = "Wygląd"
+    override val themeLabel = "Motyw"
+    override val themeAuto = "Automatyczny (zgodnie z systemem)"
+    override val themeLight = "Jasny"
+    override val themeDark = "Ciemny"
+    override val drawGraphsLabel = "Rysuj wykresy"
+    override val drawGraphsSub = "Wykresy na żywo na kartach Konektor i Skanowanie — wyłącz, aby oszczędzać baterię"
 }

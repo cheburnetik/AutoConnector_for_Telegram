@@ -15,9 +15,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListScope
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -70,7 +67,6 @@ import io.autoconnector.engine.CatalogItem
 import io.autoconnector.i18n.LocalStrings
 import io.autoconnector.i18n.Strings
 import io.autoconnector.i18n.modeLabel
-import io.autoconnector.ui.components.Caption
 import io.autoconnector.ui.components.StatTable
 import io.autoconnector.ui.components.cell
 import io.autoconnector.ui.components.RatingBars
@@ -85,19 +81,6 @@ private val ICON_CHECKED = Icons.Filled.Schedule   // когда последн�
 private val ICON_TG = Icons.Filled.Send            // когда Telegram подключался
 private val ICON_CHECKS = Icons.Filled.DoneAll      // успешно / всего проверок
 private val ICON_TRAFFIC = Icons.Filled.SwapVert    // трафик через прокси
-
-/** Catalog tiles (2 rows each), sorted by rating, emitted into the page LazyColumn. */
-fun LazyListScope.catalogItems(items: List<CatalogItem>, modeLabel: String, onClick: (CatalogItem) -> Unit) {
-    if (items.isEmpty()) {
-        item { Caption(LocalStrings.current.catalogEmpty(modeLabel), Modifier.padding(16.dp)) }
-        return
-    }
-    item { Spacer(Modifier.height(6.dp)) }
-    items(items, key = { it.id }) { p ->
-        Column(Modifier.padding(horizontal = 12.dp, vertical = 3.dp)) { CatalogTile(p) { onClick(p) } }
-    }
-    item { Spacer(Modifier.height(6.dp)) }
-}
 
 // The five selectable network modes shown as the catalog tab row.
 private val CATALOG_MODES = listOf("vpn", "lte", "wifi", "ethernet", "wp")
@@ -301,29 +284,6 @@ private fun fmtMins(m: Long, t: Strings): String = when {
     m < 1440 -> "${m / 60}${t.agoHour}"
     else -> "${m / 1440}${t.agoDay}"
 }
-
-private fun p2(n: Int): String = if (n in 0..9) "0$n" else "$n"
-
-/** Format an epoch-ms instant as local "DD/MM HH:MM" without kotlinx-datetime. */
-private fun fmtStamp(ms: Long): String {
-    val local = ms + io.autoconnector.ui.localOffsetMs(ms)
-    val secs = local / 1000
-    val min = ((secs / 60) % 60).toInt()
-    val hour = ((secs / 3600) % 24).toInt()
-    val days = secs / 86400                     // days since 1970-01-01
-    // Civil-from-days (Howard Hinnant's algorithm).
-    val z = days + 719468
-    val era = (if (z >= 0) z else z - 146096) / 146097
-    val doe = z - era * 146097
-    val yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
-    val doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
-    val mp = (5 * doy + 2) / 153
-    val d = (doy - (153 * mp + 2) / 5 + 1).toInt()
-    val mon = (if (mp < 10) mp + 3 else mp - 9).toInt()
-    return "${p2(d)}/${p2(mon)} ${p2(hour)}:${p2(min)}"
-}
-
-private fun msOrDash(v: Int, t: Strings): String = if (v >= 0) "$v${t.unitMs}" else t.dash
 
 private fun humanBytes(b: Long): String = when {
     b <= 0L -> "0"

@@ -62,9 +62,13 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.autoconnector.engine.AppInfo
@@ -362,6 +366,8 @@ private fun SettingsPage(cb: MoreCallbacks) {
     var linkHttp by remember { mutableStateOf(s.proxyLinkHttp) }
     var vpnMode by remember { mutableStateOf(s.proxyModeCode) }
     var lang by remember { mutableStateOf(s.langCode) }
+    var themeMode by remember { mutableStateOf(s.themeMode) }
+    var drawGraphs by remember { mutableStateOf(s.drawGraphs) }
     var expEngine by remember { mutableStateOf(s.expEngineMode) }
     var connEngine by remember { mutableStateOf(s.relayConnectMode) }
     var raceWidth by remember { mutableStateOf(s.relayRaceWidth) }
@@ -417,6 +423,8 @@ private fun SettingsPage(cb: MoreCallbacks) {
                 dpiApplyDirect = dpiDirect,
                 proxyLinkHttp = linkHttp,
                 langCode = lang,
+                themeMode = themeMode,
+                drawGraphs = drawGraphs,
                 expEngineMode = expEngine,
                 netLogEnabled = netLog,
                 relayConnectMode = connEngine,
@@ -472,6 +480,15 @@ private fun SettingsPage(cb: MoreCallbacks) {
                 }
             }
         }
+
+        // Appearance — light/dark theme (auto = follow the OS) + a master switch
+        // for the live graphs.
+        Section(t.appearance)
+        ChoiceRow(t.themeAuto, "", selected = themeMode == 0) { themeMode = 0; save() }
+        ChoiceRow(t.themeLight, "", selected = themeMode == 1) { themeMode = 1; save() }
+        ChoiceRow(t.themeDark, "", selected = themeMode == 2) { themeMode = 2; save() }
+        SwitchRow(t.drawGraphsLabel, drawGraphs) { drawGraphs = it; save() }
+        Text(t.drawGraphsSub, color = AppColors.onSurfaceMuted, fontSize = 13.sp)
 
         Section(t.relayPorts) { help = t.relayPorts to t.relayPortsHelp }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1531,6 +1548,15 @@ private fun HotkeysPage(cb: MoreCallbacks) {
 
 // === Volume-button pattern trigger (Android variant of Hotkeys) =========
 
+/** Render the ↑/↓ volume arrows a bit larger and bold so the patterns read clearly. */
+private fun emphasizeArrows(s: String): AnnotatedString = buildAnnotatedString {
+    s.forEach { ch ->
+        if (ch == '↑' || ch == '↓')
+            withStyle(SpanStyle(fontWeight = FontWeight.Bold, fontSize = 19.sp)) { append(ch) }
+        else append(ch)
+    }
+}
+
 @Composable
 private fun VolumePatternPage(cb: MoreCallbacks) {
     val t = LocalStrings.current
@@ -1565,6 +1591,8 @@ private fun VolumePatternPage(cb: MoreCallbacks) {
             }
         }
         Text(t.volTriggerSub, fontSize = 14.sp, color = AppColors.onSurfaceMuted, lineHeight = 19.sp)
+        // Full top description of what this mode does and who it's for.
+        Text(t.volIntro, fontSize = 14.sp, color = AppColors.onSurface, lineHeight = 20.sp)
         if (showHelp) {
             HelpDialog(title = t.volHelpTitle, body = t.volHelpBody, onDismiss = { showHelp = false })
         }
@@ -1602,18 +1630,18 @@ private fun VolumePatternPage(cb: MoreCallbacks) {
         Section(t.volPatternsTitle)
         Box(Modifier.fillMaxWidth()) {
             OutlinedButton(onClick = { patExpanded = true }, modifier = Modifier.fillMaxWidth()) {
-                Text(t.volPatternPick + ": " + patternLabels[selIdx.coerceIn(0, 9)], fontSize = 16.sp, maxLines = 1)
+                Text(emphasizeArrows(t.volPatternPick + ": " + patternLabels[selIdx.coerceIn(0, 9)]), fontSize = 16.sp, maxLines = 1)
             }
             DropdownMenu(patExpanded, { patExpanded = false }) {
                 patternLabels.forEachIndexed { i, label ->
                     DropdownMenuItem(
-                        text = { Text("№${i + 1}  $label", fontSize = 16.sp) },
+                        text = { Text(emphasizeArrows("№${i + 1}  $label"), fontSize = 16.sp) },
                         onClick = { selIdx = i; cb.onSetVolPatternIndex(i); patExpanded = false },
                     )
                 }
             }
         }
-        Caption(t.volPatternsLegend)
+        Text(emphasizeArrows(t.volPatternsLegend), color = AppColors.onSurfaceMuted, fontSize = 11.sp)
 
         // Detailed access-granting instructions — at the bottom, after the pattern pick.
         Spacer(Modifier.height(8.dp))
@@ -1631,6 +1659,27 @@ private fun VolumePatternPage(cb: MoreCallbacks) {
                 color = if (granted) AppColors.green else AppColors.red,
                 fontWeight = FontWeight.Bold, fontSize = 15.sp,
             )
+        }
+
+        // AI fallback — if the manual permission steps didn't work, ask ChatGPT/Gemini
+        // with a ready-made prompt tailored to the user's phone.
+        Spacer(Modifier.height(8.dp))
+        Section(t.volAiTitle)
+        Text(t.volAiBody, fontSize = 14.sp, lineHeight = 20.sp, color = AppColors.onSurface)
+        Spacer(Modifier.height(8.dp))
+        Box(
+            Modifier.fillMaxWidth()
+                .background(AppColors.card, RoundedCornerShape(10.dp))
+                .padding(12.dp),
+        ) { Text(t.volAiPrompt, fontSize = 13.sp, lineHeight = 18.sp, color = AppColors.onSurface) }
+        Spacer(Modifier.height(8.dp))
+        Button(onClick = { cb.onCopy(t.volAiPrompt) }, modifier = Modifier.fillMaxWidth()) {
+            Text(t.volAiCopy, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { cb.onOpenUrl("https://chatgpt.com") }, modifier = Modifier.weight(1f)) { Text("ChatGPT", fontSize = 14.sp) }
+            OutlinedButton(onClick = { cb.onOpenUrl("https://gemini.google.com") }, modifier = Modifier.weight(1f)) { Text("Gemini", fontSize = 14.sp) }
         }
         Spacer(Modifier.height(16.dp))
     }

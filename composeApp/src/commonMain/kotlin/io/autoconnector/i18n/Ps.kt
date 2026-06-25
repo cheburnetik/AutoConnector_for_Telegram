@@ -448,4 +448,21 @@ object Ps : Strings by En {
     override val connTimeoutTitle = "هوسټ ته د نښلون مهلت"
     override val connTimeoutHelp = "د راتلونکې پراکسۍ د ازموینې دمخه څومره یو اپ‌سټریم (TCP + TLS + لومړی MTProto ځواب) انتظار وکړئ."
     override val factoryResetDone = "هرڅه صفر شول. اپلیکیشن وتړئ او بیا یې پیل کړئ."
+
+    // tray
+    override val trayOpenWindow = "کړکۍ پرانیستل"
+    override val trayRefreshSubs = "ګډونونه تازه کول"
+    override val trayExit = "وتل"
+    override fun trayConnectorLabel(on: Boolean) =
+        if (on) "نښلوونکی: روښانه (بندول)" else "نښلوونکی: بند (روښانول)"
+    override fun trayScanLabel(on: Boolean) =
+        if (on) "سکن: روښانه (بندول)" else "سکن: بند (روښانول)"
+    override fun trayLive(n: Int) = "ژوندي پراکسۍ: ${n}"
+    override val appearance = "بڼه"
+    override val themeLabel = "تیم"
+    override val themeAuto = "اتومات (د سیسټم سره سم)"
+    override val themeLight = "روښانه"
+    override val themeDark = "تیاره"
+    override val drawGraphsLabel = "ګرافونه جوړول"
+    override val drawGraphsSub = "د نښلوونکي او سکن ټبونو کې ژوندي چارټونه — د بطرۍ ساتلو لپاره یې بند کړئ"
 }

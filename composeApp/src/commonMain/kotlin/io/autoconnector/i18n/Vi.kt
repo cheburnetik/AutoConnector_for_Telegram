@@ -456,4 +456,21 @@ object Vi : Strings {
     override val connTimeoutTitle = "Thời gian chờ kết nối mỗi máy chủ"
     override val connTimeoutHelp = "Chờ một luồng lên bao lâu (TCP + TLS + phản hồi MTProto đầu tiên) trước khi thử proxy tiếp theo."
     override val factoryResetDone = "Đã đặt lại mọi thứ. Hãy đóng ứng dụng và mở lại."
+
+    // tray
+    override val trayOpenWindow = "Mở cửa sổ"
+    override val trayRefreshSubs = "Làm mới đăng ký"
+    override val trayExit = "Thoát"
+    override fun trayConnectorLabel(on: Boolean) =
+        if (on) "Bộ kết nối: BẬT (tắt)" else "Bộ kết nối: TẮT (bật)"
+    override fun trayScanLabel(on: Boolean) =
+        if (on) "Quét: BẬT (tắt)" else "Quét: TẮT (bật)"
+    override fun trayLive(n: Int) = "Proxy còn sống: ${n}"
+    override val appearance = "Giao diện"
+    override val themeLabel = "Chủ đề"
+    override val themeAuto = "Tự động (theo hệ thống)"
+    override val themeLight = "Sáng"
+    override val themeDark = "Tối"
+    override val drawGraphsLabel = "Vẽ biểu đồ"
+    override val drawGraphsSub = "Biểu đồ trực tiếp trên tab Bộ kết nối và Quét — tắt để tiết kiệm pin"
 }

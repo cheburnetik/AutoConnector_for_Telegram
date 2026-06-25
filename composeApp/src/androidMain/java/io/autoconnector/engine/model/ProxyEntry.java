@@ -67,11 +67,6 @@ public class ProxyEntry {
         return type.name() + "|" + host.toLowerCase() + ":" + port + "|" + s;
     }
 
-    /** Mean relayed session duration in ms, or 0 if never used. */
-    public long avgSessionMs() {
-        return tgConnections > 0 ? totalSessionMs / tgConnections : 0;
-    }
-
     /** Link form suitable for pasting into Telegram's proxy settings. */
     public String tgLink() {
         if (type == ProxyType.MTPROTO) {
