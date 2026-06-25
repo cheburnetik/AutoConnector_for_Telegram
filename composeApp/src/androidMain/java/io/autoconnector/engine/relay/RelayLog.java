@@ -54,9 +54,5 @@ public final class RelayLog {
         }
     }
 
-    public static boolean hasListeners() {
-        return !listeners.isEmpty();
-    }
-
     private RelayLog() {}
 }

@@ -158,6 +158,12 @@ interface Strings {
     val volCheckOk: String get() = "✓ Done — access granted, the trigger works."
     val volCheckFail: String get() = "✗ Still no access — complete the steps above."
     val volPatternsList: String get() = "↑↑↓↓ · ↓↓↑↑ · ↑↓↑↓ · ↓↑↓↑ · ↑↑↑↑ · ↓↓↓↓ · ↑↓↓↑ · ↓↑↑↓ · ↑↑↑↓↓↓ · ↓↓↓↑↑↑   (↑ = volume up, ↓ = volume down)"
+    // Volume-trigger page: top intro + "AI fallback" advice block.
+    val volIntro: String get() = "Press a volume up/down combination a few times and AutoConnector simulates a tap on the next alive proxy — Telegram opens on your phone and offers to add that proxy. This way you don't have to open AutoConnector to copy a proxy. This mode suits people who keep AutoConnector just for the catalogue, don't turn on relay mode, and only want to grab a proxy."
+    val volAiTitle: String get() = "Still doesn't work?"
+    val volAiBody: String get() = "If the permission steps above didn't help, open ChatGPT or Gemini and send this prompt — it will give you the exact steps for your phone model:"
+    val volAiPrompt: String get() = "How do I grant the Accessibility permission on Android to an app that was NOT installed from Google Play (an unsigned app from an APK file)? Android blocks it as a \"restricted setting\". Walk me through, step by step, how to remove that block and enable the accessibility service for the app. My phone: [enter your make, model and Android version], skin: [MIUI / One UI / ColorOS / stock Android — if you know]. The app is called \"AutoConnector for Telegram\". Describe the exact steps for my specific model and version."
+    val volAiCopy: String get() = "Copy prompt"
     // Catalog host-card history: legend explaining the columns / units.
     val histLegend: String get() = "Columns — Who: ✓/✗ TG = real Telegram connect, scan = background check. When: time ago. TCP/TLS/Req: handshake & first-request latency, ms. Session: how long the relay session lasted. ↓/↑: bytes received / sent through the host."
     val tgOkTotalHint: String get() = "Telegram connects / successful / total checks"
@@ -345,6 +351,27 @@ interface Strings {
     val langTr: String; val langId: String; val langHi: String; val langBn: String; val langMy: String
     /** The word "language" in THIS locale (for the collapsed language-picker button). */
     val langWord: String
+
+    // desktop system-tray menu (defaulted to English so every locale compiles and
+    // falls back gracefully; translated per-locale where provided).
+    val trayOpenWindow: String get() = "Open window"
+    val trayRefreshSubs: String get() = "Refresh subscriptions"
+    val trayExit: String get() = "Exit"
+    fun trayConnectorLabel(on: Boolean): String =
+        if (on) "Connector: ON (turn off)" else "Connector: OFF (turn on)"
+    fun trayScanLabel(on: Boolean): String =
+        if (on) "Scan: ON (turn off)" else "Scan: OFF (turn on)"
+    fun trayLive(n: Int): String = "Live proxies: $n"
+
+    // appearance: light/dark theme + graph drawing (defaulted to English so every
+    // locale compiles; translated per-locale where provided).
+    val appearance: String get() = "Appearance"
+    val themeLabel: String get() = "Theme"
+    val themeAuto: String get() = "Auto"
+    val themeLight: String get() = "Light"
+    val themeDark: String get() = "Dark"
+    val drawGraphsLabel: String get() = "Draw graphs"
+    val drawGraphsSub: String get() = "Live charts on the Connector and Scan tabs — turn off to save battery"
 }
 
 /** Short display caption for a network-mode code, independent of locale. */

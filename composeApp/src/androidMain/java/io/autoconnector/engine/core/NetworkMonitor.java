@@ -67,12 +67,6 @@ public final class NetworkMonitor {
         }
     }
 
-    /** Current user override, or {@code null} when in auto mode. */
-    public static NetworkMode manualMode() {
-        NetworkMonitor i = instance;
-        return i != null ? i.manual : null;
-    }
-
     /** True when no manual override is active (mode follows detection). */
     public static boolean isAuto() {
         NetworkMonitor i = instance;

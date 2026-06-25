@@ -455,4 +455,21 @@ object Ko : Strings {
     override val connTimeoutTitle = "호스트별 연결 타임아웃"
     override val connTimeoutHelp = "다음 프록시로 넘어가기 전에 하나의 업스트림(TCP + TLS + 첫 MTProto 응답)을 얼마나 기다릴지."
     override val factoryResetDone = "모두 초기화되었습니다. 앱을 닫고 다시 여세요."
+
+    // tray
+    override val trayOpenWindow = "창 열기"
+    override val trayRefreshSubs = "구독 새로 고침"
+    override val trayExit = "종료"
+    override fun trayConnectorLabel(on: Boolean) =
+        if (on) "커넥터: 켜짐 (끄기)" else "커넥터: 꺼짐 (켜기)"
+    override fun trayScanLabel(on: Boolean) =
+        if (on) "스캔: 켜짐 (끄기)" else "스캔: 꺼짐 (켜기)"
+    override fun trayLive(n: Int) = "작동 중인 프록시: ${n}"
+    override val appearance = "모양"
+    override val themeLabel = "테마"
+    override val themeAuto = "자동 (시스템 설정에 따름)"
+    override val themeLight = "라이트"
+    override val themeDark = "다크"
+    override val drawGraphsLabel = "그래프 그리기"
+    override val drawGraphsSub = "커넥터 및 스캔 탭의 실시간 차트 — 배터리 절약을 위해 끄세요"
 }

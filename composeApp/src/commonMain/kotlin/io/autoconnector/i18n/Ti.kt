@@ -367,4 +367,21 @@ object Ti : Strings by En {
     override val wpHintTitle = "White እንታይ እዩ?"
     override val wpHint = "White — WhitePages: ናይ ኢድ መርበብ ፕሮፋይል። ብኢድ ጥራይ ይነቅሕ (ኣውቶ-ምረጻ ፈጺሙ ኣይመርጾን)። " +
         "ናይ ገዛእ ርእሱ ደረጃ ሆስት ይሕዝ፣ ምዝገባታት የውርድን ካብ VPN/Wi-Fi/LTE ብናጻ ይድህስስን።"
+
+    // tray
+    override val trayOpenWindow = "መስኮት ክፈት"
+    override val trayRefreshSubs = "ምዝገባታት ኣሕድስ"
+    override val trayExit = "ውጻእ"
+    override fun trayConnectorLabel(on: Boolean) =
+        if (on) "መራኸቢ: ነቒሑ (ኣጥፍእ)" else "መራኸቢ: ጠፊኡ (ኣንቅሕ)"
+    override fun trayScanLabel(on: Boolean) =
+        if (on) "ምድህሳስ: ነቒሑ (ኣጥፍእ)" else "ምድህሳስ: ጠፊኡ (ኣንቅሕ)"
+    override fun trayLive(n: Int) = "ህያዋን ፕሮክሲ: ${n}"
+    override val appearance = "ትርኢት"
+    override val themeLabel = "ገጽታ"
+    override val themeAuto = "ኣውቶማቲክ (ምስ ስርዓት)"
+    override val themeLight = "ብሩህ"
+    override val themeDark = "ጸልማት"
+    override val drawGraphsLabel = "ግራፋት ምስኣል"
+    override val drawGraphsSub = "ቀጥታዊ ግራፋት ኣብ ታባት መራኸቢን ምድህሳስን — ባትሪ ንምዕቃብ ኣጥፍኦ"
 }

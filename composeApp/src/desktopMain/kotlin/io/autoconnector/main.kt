@@ -14,6 +14,7 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import io.autoconnector.i18n.deviceLanguage
+import io.autoconnector.i18n.stringsFor
 import io.autoconnector.ui.App
 import io.autoconnector.ui.components.LocalUiActive
 import java.awt.Font
@@ -147,8 +148,14 @@ fun main() = application {
     // font size AND the per-item spacing — neither is adjustable on the native
     // AWT menu.
     if (traySupported) {
-        val dyn = remember { arrayOfNulls<JMenuItem>(3) } // [connector, scan, status]
+        // Static menu items kept so their labels can be re-translated when the UI
+        // language changes at runtime. Indices: 0 open-window, 1 connector,
+        // 2 scan, 3 live-count, 4 copy-random, 5 open-random, 6 scan-now,
+        // 7 refresh-subs, 8 settings, 9 exit. (The brand header never translates.)
+        val items = remember { arrayOfNulls<JMenuItem>(10) }
         val st by engine.state.collectAsState()
+        val settings by engine.settings.collectAsState()
+        val langCode = settings.langCode
 
         DisposableEffect(Unit) {
             // CRITICAL: build the tray entirely ON THE EDT. Creating Swing
@@ -178,28 +185,29 @@ fun main() = application {
                         return mi
                     }
 
-                    item("AutoConnector for Telegram", bold = true) // header (disabled)
+                    val tr0 = stringsFor(langCode)
+                    item("AutoConnector for Telegram", bold = true) // brand header (never translated)
                     popup.add(JSeparator())
-                    item("Open window") { showWindow() }
+                    items[0] = item(tr0.trayOpenWindow) { showWindow() }
                     popup.add(JSeparator())
-                    dyn[0] = item("…") { engine.setProxyEnabled(!engine.state.value.proxyEnabled) }
-                    dyn[1] = item("…") { engine.setScanEnabled(!engine.state.value.scanEnabled) }
-                    dyn[2] = item("…") // alive-count status (disabled)
+                    items[1] = item("…") { engine.setProxyEnabled(!engine.state.value.proxyEnabled) }
+                    items[2] = item("…") { engine.setScanEnabled(!engine.state.value.scanEnabled) }
+                    items[3] = item("…") // alive-count status (disabled)
                     popup.add(JSeparator())
-                    item("Copy a random proxy") {
+                    items[4] = item(tr0.copyRandom) {
                         val links = engine.exportAliveLinks()
                         if (links.isNotEmpty()) engine.copyToClipboard(links[(System.nanoTime() % links.size).toInt()])
                     }
-                    item("Open a random proxy") {
+                    items[5] = item(tr0.openRandom) {
                         val links = engine.exportAliveLinks()
                         if (links.isNotEmpty()) engine.openLink(links[(System.nanoTime() % links.size).toInt()])
                     }
                     popup.add(JSeparator())
-                    item("Scan now") { engine.scanNow() }
-                    item("Refresh subscriptions") { engine.refreshNow() }
-                    item("Settings") { showWindow() }
+                    items[6] = item(tr0.scanNow) { engine.scanNow() }
+                    items[7] = item(tr0.trayRefreshSubs) { engine.refreshNow() }
+                    items[8] = item(tr0.settings) { showWindow() }
                     popup.add(JSeparator())
-                    item("Exit") { quit() }
+                    items[9] = item(tr0.trayExit) { quit() }
 
                     val owner = JWindow().apply { isAlwaysOnTop = true }
                     popup.addPopupMenuListener(object : PopupMenuListener {
@@ -239,19 +247,25 @@ fun main() = application {
                     try { (created[0] as? TrayIcon)?.let { SystemTray.getSystemTray().remove(it) } } catch (_: Throwable) {}
                     try { (created[1] as? JWindow)?.dispose() } catch (_: Throwable) {}
                 }
-                dyn.fill(null)
+                items.fill(null)
             }
         }
 
-        // Refresh the dynamic labels whenever the relevant state changes (on EDT).
-        LaunchedEffect(st.proxyEnabled, st.scanEnabled, st.aliveCount) {
-            val conn = "Connector: " + if (st.proxyEnabled) "ON (turn off)" else "OFF (turn on)"
-            val scan = "Scan: " + if (st.scanEnabled) "ON (turn off)" else "OFF (turn on)"
-            val status = "Live proxies: " + st.aliveCount
+        // Re-translate every tray label whenever the UI language OR the relevant
+        // state changes — so the tray follows the language picked in the app.
+        LaunchedEffect(langCode, st.proxyEnabled, st.scanEnabled, st.aliveCount) {
+            val tr = stringsFor(langCode)
             SwingUtilities.invokeLater {
-                dyn[0]?.let { it.text = conn }
-                dyn[1]?.let { it.text = scan }
-                dyn[2]?.let { it.text = status }
+                items[0]?.let { it.text = tr.trayOpenWindow }
+                items[1]?.let { it.text = tr.trayConnectorLabel(st.proxyEnabled) }
+                items[2]?.let { it.text = tr.trayScanLabel(st.scanEnabled) }
+                items[3]?.let { it.text = tr.trayLive(st.aliveCount) }
+                items[4]?.let { it.text = tr.copyRandom }
+                items[5]?.let { it.text = tr.openRandom }
+                items[6]?.let { it.text = tr.scanNow }
+                items[7]?.let { it.text = tr.trayRefreshSubs }
+                items[8]?.let { it.text = tr.settings }
+                items[9]?.let { it.text = tr.trayExit }
             }
         }
     }

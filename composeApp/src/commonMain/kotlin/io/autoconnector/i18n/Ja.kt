@@ -481,4 +481,21 @@ object Ja : Strings {
     override val connTimeoutTitle = "ホストごとの接続タイムアウト"
     override val connTimeoutHelp = "次のプロキシを試す前に、1つのアップストリーム（TCP + TLS + 最初の MTProto 応答）をどれだけ待つか。"
     override val factoryResetDone = "すべてリセットされました。アプリを閉じて、もう一度開いてください。"
+
+    // tray
+    override val trayOpenWindow = "ウィンドウを開く"
+    override val trayRefreshSubs = "購読を更新"
+    override val trayExit = "終了"
+    override fun trayConnectorLabel(on: Boolean) =
+        if (on) "コネクター: オン（オフにする）" else "コネクター: オフ（オンにする）"
+    override fun trayScanLabel(on: Boolean) =
+        if (on) "スキャン: オン（オフにする）" else "スキャン: オフ（オンにする）"
+    override fun trayLive(n: Int) = "生きているプロキシ: ${n}"
+    override val appearance = "外観"
+    override val themeLabel = "テーマ"
+    override val themeAuto = "自動（システムに合わせる）"
+    override val themeLight = "ライト"
+    override val themeDark = "ダーク"
+    override val drawGraphsLabel = "グラフを描画"
+    override val drawGraphsSub = "コネクターとスキャンのタブにリアルタイムのグラフを表示 — バッテリー節約のためオフにします"
 }

@@ -456,4 +456,21 @@ object Te : Strings {
     override val connTimeoutTitle = "ప్రతి-హోస్ట్ కనెక్ట్ టైమ్‌అవుట్"
     override val connTimeoutHelp = "తదుపరి ప్రాక్సీకి వెళ్లే ముందు ఒక అప్‌స్ట్రీమ్ (TCP + TLS + మొదటి MTProto ప్రత్యుత్తరం) కోసం ఎంతకాలం వేచి ఉండాలి."
     override val factoryResetDone = "ప్రతిదీ రీసెట్ చేయబడింది. దయచేసి యాప్‌ను మూసివేసి మళ్లీ తెరవండి."
+
+    // tray
+    override val trayOpenWindow = "విండో తెరువు"
+    override val trayRefreshSubs = "సబ్‌స్క్రిప్షన్‌లను రిఫ్రెష్ చేయి"
+    override val trayExit = "నిష్క్రమించు"
+    override fun trayConnectorLabel(on: Boolean) =
+        if (on) "కనెక్టర్: ఆన్ (ఆఫ్ చేయి)" else "కనెక్టర్: ఆఫ్ (ఆన్ చేయి)"
+    override fun trayScanLabel(on: Boolean) =
+        if (on) "స్కాన్: ఆన్ (ఆఫ్ చేయి)" else "స్కాన్: ఆఫ్ (ఆన్ చేయి)"
+    override fun trayLive(n: Int) = "సజీవ ప్రాక్సీలు: ${n}"
+    override val appearance = "రూపం"
+    override val themeLabel = "థీమ్"
+    override val themeAuto = "ఆటో (సిస్టమ్‌కు అనుగుణంగా)"
+    override val themeLight = "లేత"
+    override val themeDark = "ముదురు"
+    override val drawGraphsLabel = "గ్రాఫ్‌లను గీయండి"
+    override val drawGraphsSub = "కనెక్టర్ మరియు స్కాన్ ట్యాబ్‌లలో ప్రత్యక్ష చార్ట్‌లు — బ్యాటరీని ఆదా చేయడానికి ఆఫ్ చేయండి"
 }

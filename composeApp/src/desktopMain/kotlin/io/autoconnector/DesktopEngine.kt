@@ -14,8 +14,10 @@ import io.autoconnector.engine.ScanParams
 import io.autoconnector.engine.HandshakeOption
 import io.autoconnector.engine.HandshakeStatRow
 import io.autoconnector.engine.LogCat
-import io.autoconnector.engine.LogLevel
 import io.autoconnector.engine.LogLine
+import io.autoconnector.engine.classify
+import io.autoconnector.engine.portOf
+import io.autoconnector.engine.stripPort
 import io.autoconnector.engine.ProxyInfo
 import io.autoconnector.engine.Session
 import io.autoconnector.engine.SourceItem
@@ -61,7 +63,6 @@ import java.io.File
 private const val IDLE_THRESHOLD_MS = 30_000L
 private const val MATURE_BYTES = 4096L
 private const val CONNECTED_MIN_BYTES = 1024L
-private const val MAINS_CHECK_INTERVAL_MS = 2 * 60_000L
 private const val LOG_CAP_TELE = 500
 private const val LOG_CAP_SCAN = 300
 private const val LOG_CAP_SUBS = 150
@@ -319,6 +320,8 @@ class DesktopEngine(private val dataDir: File) : Engine {
             prewarmMode = p.prewarmMode(),
             prewarmPool = p.prewarmPool(),
             prewarmHoldSecs = p.prewarmHoldSecs(),
+            themeMode = p.themeMode(),
+            drawGraphs = p.drawGraphs(),
         )
     }
 
@@ -381,6 +384,8 @@ class DesktopEngine(private val dataDir: File) : Engine {
         p.setPrewarmMode(s.prewarmMode)
         p.setPrewarmPool(s.prewarmPool)
         p.setPrewarmHoldSecs(s.prewarmHoldSecs)
+        p.setThemeMode(s.themeMode)
+        p.setDrawGraphs(s.drawGraphs)
         NetLog.setEnabled(s.netLogEnabled)
         // Re-apply the manual mode override when the user changed it here, and
         // seed-scan the freshly selected mode if its pool is thin.
@@ -1698,12 +1703,6 @@ class DesktopEngine(private val dataDir: File) : Engine {
         return ProxyInfo(entry.host, entry.port, type, tls, secret, dpi, obf)
     }
 
-    private fun portOf(hp: String?): Int {
-        if (hp == null) return 0
-        val c = hp.lastIndexOf(':')
-        return if (c > 0) hp.substring(c + 1).toIntOrNull() ?: 0 else 0
-    }
-
     private fun modeBadge(p: Prefs): String {
         val net = NetworkMonitor.currentMode()
         if (p.shouldBypassProxies())
@@ -1908,29 +1907,11 @@ class DesktopEngine(private val dataDir: File) : Engine {
         }
     }
 
-    private fun classify(line: String): LogLevel {
-        val c = line.firstOrNull() ?: ' '
-        return when (c) {
-            '✓', '≈', '→' -> LogLevel.OK
-            '✗', '⨂' -> LogLevel.FAIL
-            '↪' -> LogLevel.ROUTE
-            '·' -> LogLevel.MUTED
-            '⟳', '⚠', '⏸' -> LogLevel.WARN
-            else -> LogLevel.INFO
-        }
-    }
-
     private fun rate(bps: Long) = "${TrafficMeter.human(bps)}/с"
-
-    private fun stripPort(hp: String?): String {
-        if (hp == null) return ""
-        val c = hp.lastIndexOf(':')
-        return if (c > 0) hp.substring(0, c) else hp
-    }
 
     companion object {
         // Single dotted-semver version line for the desktop build (matches the
         // GitHub release tag vX.Y.Z). Build date is injected at launch — see appInfo().
-        private const val DESKTOP_VERSION = "1.1.20"
+        private const val DESKTOP_VERSION = "1.1.22"
     }
 }

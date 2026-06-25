@@ -89,7 +89,34 @@ public final class RelayService extends Service {
         // we scan continuously (loop with a 1 s yield, not a hot spin).
         float mult = prefs.currentScanMult(net, alive);
         int sec = io.autoconnector.engine.core.Prefs.effectiveCheckSec(prefs.checkIntervalMin(), mult);
-        return sec <= 0 ? 1_000L : sec * 1_000L;
+        long base = sec <= 0 ? 1_000L : sec * 1_000L;
+        // Battery: when the screen is OFF and no Telegram client is connected,
+        // back background exploration off hard (×6, capped) — nobody is watching
+        // the UI and nothing is relaying, so frequent probing only drains the
+        // battery. The moment the screen turns on OR a client connects, the
+        // normal cadence is restored exactly (this branch simply isn't taken).
+        // We never SHORTEN the user's interval: take the larger of base and the
+        // capped boost, and never go below 1 s.
+        if (screenOff() && RelayStats.active.get() == 0) {
+            long boosted = Math.min(SCREEN_OFF_IDLE_CAP_MS, base * 6L);
+            base = Math.max(base, boosted);
+        }
+        return Math.max(1_000L, base);
+    }
+
+    /** Cap for the screen-off idle scan-interval backoff (Task: battery). */
+    private static final long SCREEN_OFF_IDLE_CAP_MS = 30_000L;
+
+    /** True when the device screen is off (non-interactive). Unknown → false
+     *  (assume awake) so a read failure never triggers the backoff. */
+    private boolean screenOff() {
+        try {
+            android.os.PowerManager pm =
+                    (android.os.PowerManager) getSystemService(Context.POWER_SERVICE);
+            return pm != null && !pm.isInteractive();
+        } catch (Throwable t) {
+            return false;
+        }
     }
 
     /** Once-a-second SparkBuffer ingest, runs as long as the service is alive,
@@ -526,7 +553,21 @@ public final class RelayService extends Service {
             int batch = io.autoconnector.engine.core.Prefs.effectiveBatch(prefs.checkBatch(), mult);
             int conc = io.autoconnector.engine.core.Prefs.effectiveConcurrency(prefs.checkConcurrency(), mult);
 
-            List<ProxyEntry> due = store.dueForCheck(batch);
+            // Battery: the energy-saver toggles gate ONLY this exploratory probe
+            // batch — sticky-upstream (mains) liveness and the active relay always
+            // keep running. When a saver condition is in force we skip pulling
+            // fresh dueForCheck hosts so we don't groom the wider pool on cellular,
+            // on battery, or when low. The minAge overload also honours the user's
+            // anti-flood floor («не чаще N мин») on Android, which the plain
+            // dueForCheck(batch) silently ignored.
+            List<ProxyEntry> due;
+            if (energySaverBlocksExploration(prefs)) {
+                RelayLog.emit("@scan", "⏸ энергосбережение: фоновую разведку пропускаю "
+                        + "(главные проверяются как обычно)");
+                due = java.util.Collections.emptyList();
+            } else {
+                due = store.dueForCheck(batch, prefs.minRescanMin() * 60_000L);
+            }
             List<ProxyEntry> combined = new java.util.ArrayList<>(mains);
             for (ProxyEntry d : due) {
                 if (!containsId(combined, d.id)) combined.add(d);
@@ -567,6 +608,60 @@ public final class RelayService extends Service {
     private static boolean containsId(List<ProxyEntry> list, long id) {
         for (ProxyEntry p : list) if (p.id == id) return true;
         return false;
+    }
+
+    /**
+     * True when a battery-saver toggle should suppress the EXPLORATORY probe
+     * batch on this tick. Only background exploration is gated — the active relay
+     * and sticky-upstream liveness checks always run. Reads are cheap and
+     * re-evaluated each tick (2-min cadence), so no caching is needed. Any read
+     * failure falls through to "don't block" (the safe fallback that keeps
+     * scanning working):
+     *   • charging-only    → block while NOT charging
+     *   • Wi-Fi-only       → block on a metered (cellular) active network
+     *   • skip-low-battery → block while the battery is low
+     */
+    private boolean energySaverBlocksExploration(Prefs prefs) {
+        try {
+            if (prefs.chargingOnly() && !isCharging()) return true;
+            if (prefs.wifiOnly() && isActiveNetworkMetered()) return true;
+            if (prefs.skipLowBattery() && isBatteryLow()) return true;
+        } catch (Throwable ignored) {
+            // Couldn't read power/network state — never block exploration on error.
+        }
+        return false;
+    }
+
+    /** Reads charging state from the sticky ACTION_BATTERY_CHANGED intent.
+     *  Unknown → true (assume charging) so a read failure never blocks scanning. */
+    private boolean isCharging() {
+        Intent bs = registerReceiver(null,
+                new android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+        if (bs == null) return true;
+        int status = bs.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1);
+        if (status < 0) return true;
+        return status == android.os.BatteryManager.BATTERY_STATUS_CHARGING
+                || status == android.os.BatteryManager.BATTERY_STATUS_FULL;
+    }
+
+    /** Active network is metered (typically cellular). Unknown → false so a read
+     *  failure never blocks scanning under the Wi-Fi-only toggle. */
+    private boolean isActiveNetworkMetered() {
+        android.net.ConnectivityManager cm =
+                (android.net.ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+        return cm != null && cm.isActiveNetworkMetered();
+    }
+
+    /** Battery is at/below the low threshold (~15 %, matching WorkManager's
+     *  BATTERY_NOT_LOW). Unknown → false so a read failure never blocks scanning. */
+    private boolean isBatteryLow() {
+        Intent bs = registerReceiver(null,
+                new android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+        if (bs == null) return false;
+        int level = bs.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1);
+        int scale = bs.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1);
+        if (level < 0 || scale <= 0) return false;
+        return (level * 100f / scale) <= 15f;
     }
 
     @Override

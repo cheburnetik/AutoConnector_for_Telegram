@@ -24,6 +24,11 @@ public final class RelayStats {
     public static final AtomicLong bytesUp = new AtomicLong();
     /** Bytes carried upstream → Telegram. */
     public static final AtomicLong bytesDown = new AtomicLong();
+    /** Wall-clock ms of the most recent live relay connection registration.
+     *  Lets background machinery (e.g. the pre-warm pool) cheaply tell "a
+     *  Telegram client is using us / used us very recently" from "idle for a
+     *  while" without scanning the live registry. 0 = never. */
+    public static final AtomicLong lastClientActivityMs = new AtomicLong();
 
     private static final Map<Long, LiveConn> live = new ConcurrentHashMap<>();
     private static final AtomicLong liveSeq = new AtomicLong();
@@ -77,6 +82,7 @@ public final class RelayStats {
     public static long register(LiveConn c) {
         long id = liveSeq.incrementAndGet();
         live.put(id, c);
+        lastClientActivityMs.set(System.currentTimeMillis());
         return id;
     }
 
@@ -111,15 +117,6 @@ public final class RelayStats {
         bytesUp.set(0);
         bytesDown.set(0);
         live.clear();
-    }
-
-    /** Resets cumulative counters only — leaves the live-connection registry
-     *  alone so active sessions stay visible after the user hits "Сбросить". */
-    public static void resetCumulative() {
-        totalConns.set(0);
-        bytesUp.set(0);
-        bytesDown.set(0);
-        io.autoconnector.engine.traffic.SparkBuffer.INSTANCE.reset();
     }
 
     private RelayStats() {}

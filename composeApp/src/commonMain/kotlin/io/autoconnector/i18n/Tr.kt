@@ -453,4 +453,21 @@ object Tr : Strings {
     override val backupJsonLabel = "Yedek JSON"
     override val backupAndroidFileNote = "Dosyalar burada kullanılamaz — Kopyala / Yapıştır kullanın."
     override val factoryResetDone = "Her şey sıfırlandı. Lütfen uygulamayı kapatıp tekrar açın."
+
+    // tray
+    override val trayOpenWindow = "Pencereyi aç"
+    override val trayRefreshSubs = "Abonelikleri yenile"
+    override val trayExit = "Çıkış"
+    override fun trayConnectorLabel(on: Boolean) =
+        if (on) "Bağlayıcı: AÇIK (kapat)" else "Bağlayıcı: KAPALI (aç)"
+    override fun trayScanLabel(on: Boolean) =
+        if (on) "Tarama: AÇIK (kapat)" else "Tarama: KAPALI (aç)"
+    override fun trayLive(n: Int) = "Canlı proxy: ${n}"
+    override val appearance = "Görünüm"
+    override val themeLabel = "Tema"
+    override val themeAuto = "Otomatik (sistemle eşleş)"
+    override val themeLight = "Açık"
+    override val themeDark = "Koyu"
+    override val drawGraphsLabel = "Grafik çiz"
+    override val drawGraphsSub = "Bağlayıcı ve Tarama sekmelerinde canlı grafikler — pil tasarrufu için kapatın"
 }

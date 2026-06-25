@@ -456,4 +456,21 @@ object Ta : Strings {
     override val connTimeoutTitle = "ஹோஸ்ட்-வாரியான இணைப்பு நேரக்கெடு"
     override val connTimeoutHelp = "அடுத்த ப்ராக்ஸிக்குச் செல்வதற்கு முன் ஒரு அப்ஸ்ட்ரீமுக்காக (TCP + TLS + முதல் MTProto பதில்) எவ்வளவு நேரம் காத்திருப்பது."
     override val factoryResetDone = "எல்லாம் மீட்டமைக்கப்பட்டது. பயன்பாட்டை மூடி மீண்டும் திறக்கவும்."
+
+    // tray
+    override val trayOpenWindow = "சாளரத்தைத் திற"
+    override val trayRefreshSubs = "சந்தாக்களைப் புதுப்பி"
+    override val trayExit = "வெளியேறு"
+    override fun trayConnectorLabel(on: Boolean) =
+        if (on) "இணைப்பான்: ஆன் (அணைக்க)" else "இணைப்பான்: ஆஃப் (இயக்க)"
+    override fun trayScanLabel(on: Boolean) =
+        if (on) "ஸ்கேன்: ஆன் (அணைக்க)" else "ஸ்கேன்: ஆஃப் (இயக்க)"
+    override fun trayLive(n: Int) = "செயலில் ப்ராக்ஸிகள்: ${n}"
+    override val appearance = "தோற்றம்"
+    override val themeLabel = "தீம்"
+    override val themeAuto = "தானியங்கி (கணினிக்கு ஏற்ப)"
+    override val themeLight = "வெளிர்"
+    override val themeDark = "இருள்"
+    override val drawGraphsLabel = "வரைபடங்களை வரையவும்"
+    override val drawGraphsSub = "இணைப்பான் மற்றும் ஸ்கேன் தாவல்களில் நேரடி விளக்கப்படங்கள் — பேட்டரியை சேமிக்க அணைக்கவும்"
 }

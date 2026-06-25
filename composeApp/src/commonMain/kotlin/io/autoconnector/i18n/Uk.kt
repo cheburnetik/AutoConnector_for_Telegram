@@ -457,4 +457,21 @@ object Uk : Strings {
     override val connTimeoutTitle = "Таймаут підключення до хоста"
     override val connTimeoutHelp = "Скільки чекати один аплінк (TCP + TLS + перша відповідь MTProto), перш ніж пробувати наступний проксі."
     override val factoryResetDone = "Усе скинуто. Закрийте застосунок і запустіть заново."
+
+    // tray
+    override val trayOpenWindow = "Відкрити вікно"
+    override val trayRefreshSubs = "Оновити підписки"
+    override val trayExit = "Вихід"
+    override fun trayConnectorLabel(on: Boolean) =
+        if (on) "Конектор: УВІМК (вимкнути)" else "Конектор: ВИМК (увімкнути)"
+    override fun trayScanLabel(on: Boolean) =
+        if (on) "Сканування: УВІМК (вимкнути)" else "Сканування: ВИМК (увімкнути)"
+    override fun trayLive(n: Int) = "Живих проксі: ${n}"
+    override val appearance = "Зовнішній вигляд"
+    override val themeLabel = "Тема"
+    override val themeAuto = "Авто (як у системі)"
+    override val themeLight = "Світла"
+    override val themeDark = "Темна"
+    override val drawGraphsLabel = "Малювати графіки"
+    override val drawGraphsSub = "Графіки в реальному часі на вкладках Конектор і Сканування — вимкніть, щоб заощадити заряд"
 }

@@ -378,6 +378,23 @@ object Kk : Strings by En {
     override val wpHint = "White — WhitePages: қолмен орнатылатын желі режимі. Тек қолмен қосылады (авто-таңдау оны қоймайды). " +
         "Хосттардың жеке рейтингін жүргізеді, жазылымдарды жүктейді әрі VPN/Wi-Fi/LTE-ден тәуелсіз сканерлейді."
 
+    // tray
+    override val trayOpenWindow = "Терезені ашу"
+    override val trayRefreshSubs = "Жазылымдарды жаңарту"
+    override val trayExit = "Шығу"
+    override fun trayConnectorLabel(on: Boolean) =
+        if (on) "Коннектор: ҚОСУЛЫ (өшіру)" else "Коннектор: ӨШУЛІ (қосу)"
+    override fun trayScanLabel(on: Boolean) =
+        if (on) "Скан: ҚОСУЛЫ (өшіру)" else "Скан: ӨШУЛІ (қосу)"
+    override fun trayLive(n: Int) = "Тірі прокси: ${n}"
+    override val appearance = "Сыртқы көрінісі"
+    override val themeLabel = "Тақырып"
+    override val themeAuto = "Авто (жүйеге сәйкес)"
+    override val themeLight = "Ашық"
+    override val themeDark = "Қараңғы"
+    override val drawGraphsLabel = "Графиктерді салу"
+    override val drawGraphsSub = "Connector және Scan қойындыларындағы тікелей графиктер — батареяны үнемдеу үшін өшіріңіз"
+
     override val factoryResetDone = "Бәрі тасталды. Қолданбаны жауып, қайта іске қосыңыз."
 
     override val recentAttempts = "Соңғы қосылулар мен тексерулер"

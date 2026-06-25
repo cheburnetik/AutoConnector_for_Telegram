@@ -454,4 +454,21 @@ object Bn : Strings {
     override val backupPasteLabel = "এখানে ব্যাকআপ JSON পেস্ট করুন"
     override val backupJsonLabel = "ব্যাকআপ JSON"
     override val backupAndroidFileNote = "এখানে ফাইল অনুপলব্ধ — কপি / পেস্ট ব্যবহার করুন।"
+
+    // tray
+    override val trayOpenWindow = "উইন্ডো খুলুন"
+    override val trayRefreshSubs = "সাবস্ক্রিপশন রিফ্রেশ করুন"
+    override val trayExit = "প্রস্থান"
+    override fun trayConnectorLabel(on: Boolean) =
+        if (on) "কানেক্টর: চালু (বন্ধ করুন)" else "কানেক্টর: বন্ধ (চালু করুন)"
+    override fun trayScanLabel(on: Boolean) =
+        if (on) "স্ক্যান: চালু (বন্ধ করুন)" else "স্ক্যান: বন্ধ (চালু করুন)"
+    override fun trayLive(n: Int) = "সচল প্রক্সি: ${n}"
+    override val appearance = "চেহারা"
+    override val themeLabel = "থিম"
+    override val themeAuto = "স্বয়ংক্রিয় (সিস্টেম অনুযায়ী)"
+    override val themeLight = "হালকা"
+    override val themeDark = "গাঢ়"
+    override val drawGraphsLabel = "গ্রাফ আঁকুন"
+    override val drawGraphsSub = "সংযোগকারী ও স্ক্যান ট্যাবে লাইভ চার্ট — ব্যাটারি বাঁচাতে বন্ধ করুন"
 }

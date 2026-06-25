@@ -456,4 +456,21 @@ object My : Strings {
     override val backupAndroidFileNote = "ဤနေရာတွင် ဖိုင်များ မရရှိ — ကူးယူ / ကူးထည့် ကို သုံးပါ။"
 
     override val factoryResetDone = "အားလုံး ပြန်လည်သတ်မှတ်ပြီး။ အက်ပ်ကို ပိတ်ပြီး ပြန်ဖွင့်ပါ။"
+
+    // tray
+    override val trayOpenWindow = "ဝင်းဒိုး ဖွင့်"
+    override val trayRefreshSubs = "Subscription များ ပြန်လည်ရယူ"
+    override val trayExit = "ထွက်"
+    override fun trayConnectorLabel(on: Boolean) =
+        if (on) "ချိတ်ဆက်ကိရိယာ: ဖွင့် (ပိတ်ရန်)" else "ချိတ်ဆက်ကိရိယာ: ပိတ် (ဖွင့်ရန်)"
+    override fun trayScanLabel(on: Boolean) =
+        if (on) "စကင်: ဖွင့် (ပိတ်ရန်)" else "စကင်: ပိတ် (ဖွင့်ရန်)"
+    override fun trayLive(n: Int) = "အသက်ဝင် proxy: ${n}"
+    override val appearance = "အသွင်အပြင်"
+    override val themeLabel = "အပြင်အဆင်"
+    override val themeAuto = "အလိုအလျောက် (စနစ်နှင့်ကိုက်ညီ)"
+    override val themeLight = "အလင်း"
+    override val themeDark = "အမှောင်"
+    override val drawGraphsLabel = "ဂရပ်များဆွဲရန်"
+    override val drawGraphsSub = "ချိတ်ဆက်ကိရိယာနှင့် စကင်တက်ဘ်များတွင် တိုက်ရိုက်ဇယားများ — ဘက်ထရီချွေတာရန် ပိတ်ပါ"
 }

@@ -26,12 +26,6 @@ public enum NetworkMode {
     /** Fallback when the transport isn't yet determined. */
     UNKNOWN("unk", "?");
 
-    /** True for modes the auto-detector may pick (everything except the
-     *  manual-only WhitePages and the UNKNOWN placeholder). */
-    public boolean isAutoSelectable() {
-        return this == VPN || this == WIFI || this == LTE || this == ETHERNET;
-    }
-
     public final String code;
     public final String label;
 

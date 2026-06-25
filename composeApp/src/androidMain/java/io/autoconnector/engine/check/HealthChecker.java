@@ -63,15 +63,29 @@ public final class HealthChecker {
         }
     }
 
+    /** SO read timeout (ms) — kept generous so a slow-but-live proxy still
+     *  completes the handshake and isn't false-flagged dead. */
     private final int timeoutMs;
+    /** TCP-connect timeout (ms) — typically SHORTER than {@link #timeoutMs}: a
+     *  live proxy answers the TCP handshake in well under a second, so capping
+     *  the connect wait roughly halves the radio time wasted on unreachable
+     *  hosts without risking false negatives on the (separate, longer) read
+     *  phase. */
+    private final int connectTimeoutMs;
 
     /** Anti-DPI handshake policy used for FakeTLS probes — kept in sync with
      *  the relay so background checks mirror what a real Telegram connect does. */
     private volatile io.autoconnector.engine.net.HandshakeMode probeMode =
             io.autoconnector.engine.net.HandshakeMode.NORMAL;
 
+    /** Back-compat: one timeout used for both connect and read. */
     public HealthChecker(int timeoutMs) {
-        this.timeoutMs = timeoutMs;
+        this(timeoutMs, timeoutMs);
+    }
+
+    public HealthChecker(int connectTimeoutMs, int readTimeoutMs) {
+        this.connectTimeoutMs = connectTimeoutMs;
+        this.timeoutMs = readTimeoutMs;
     }
 
     public void setProbeMode(io.autoconnector.engine.net.HandshakeMode m) {
@@ -213,7 +227,9 @@ public final class HealthChecker {
     private Socket openSocket(String host, int port) throws java.io.IOException {
         Socket s = new Socket();
         long t0 = System.nanoTime();
-        s.connect(new InetSocketAddress(host, port), timeoutMs);
+        // Short connect timeout (unreachable hosts give up sooner); generous read
+        // timeout for the handshake that follows.
+        s.connect(new InetSocketAddress(host, port), connectTimeoutMs);
         LAST_CONNECT_MS.set((int) ((System.nanoTime() - t0) / 1_000_000L));
         s.setSoTimeout(timeoutMs);
         return s;

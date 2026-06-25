@@ -455,4 +455,21 @@ object Fa : Strings {
     override val backupJsonLabel = "JSON پشتیبان"
     override val backupAndroidFileNote = "فایل‌ها اینجا در دسترس نیستند — از کپی / چسباندن استفاده کنید."
     override val factoryResetDone = "همه‌چیز بازنشانی شد. لطفاً برنامه را ببندید و دوباره باز کنید."
+
+    // tray
+    override val trayOpenWindow = "باز کردن پنجره"
+    override val trayRefreshSubs = "تازه‌سازی اشتراک‌ها"
+    override val trayExit = "خروج"
+    override fun trayConnectorLabel(on: Boolean) =
+        if (on) "رله: روشن (خاموش کردن)" else "رله: خاموش (روشن کردن)"
+    override fun trayScanLabel(on: Boolean) =
+        if (on) "اسکن: روشن (خاموش کردن)" else "اسکن: خاموش (روشن کردن)"
+    override fun trayLive(n: Int) = "پروکسی‌های زنده: ${n}"
+    override val appearance = "ظاهر"
+    override val themeLabel = "زمینه"
+    override val themeAuto = "خودکار (مطابق سیستم)"
+    override val themeLight = "روشن"
+    override val themeDark = "تیره"
+    override val drawGraphsLabel = "رسم نمودارها"
+    override val drawGraphsSub = "نمودارهای زنده در زبانه‌های متصل‌کننده و اسکن — برای صرفه‌جویی در باتری خاموش کنید"
 }

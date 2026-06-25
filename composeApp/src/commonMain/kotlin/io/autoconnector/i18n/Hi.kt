@@ -453,4 +453,21 @@ object Hi : Strings {
     override val backupJsonLabel = "बैकअप JSON"
     override val backupAndroidFileNote = "यहाँ फ़ाइलें उपलब्ध नहीं — कॉपी / पेस्ट का उपयोग करें।"
     override val factoryResetDone = "सब कुछ रीसेट हो गया। कृपया ऐप बंद करें और फिर से खोलें।"
+
+    // tray
+    override val trayOpenWindow = "विंडो खोलें"
+    override val trayRefreshSubs = "सब्सक्रिप्शन रिफ्रेश करें"
+    override val trayExit = "बाहर निकलें"
+    override fun trayConnectorLabel(on: Boolean) =
+        if (on) "कनेक्टर: चालू (बंद करें)" else "कनेक्टर: बंद (चालू करें)"
+    override fun trayScanLabel(on: Boolean) =
+        if (on) "स्कैन: चालू (बंद करें)" else "स्कैन: बंद (चालू करें)"
+    override fun trayLive(n: Int) = "लाइव प्रॉक्सी: ${n}"
+    override val appearance = "रूप"
+    override val themeLabel = "थीम"
+    override val themeAuto = "स्वतः (सिस्टम के अनुसार)"
+    override val themeLight = "हल्का"
+    override val themeDark = "गहरा"
+    override val drawGraphsLabel = "ग्राफ़ बनाएं"
+    override val drawGraphsSub = "Connector और Scan टैब पर लाइव चार्ट — बैटरी बचाने के लिए बंद करें"
 }

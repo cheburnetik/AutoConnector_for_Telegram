@@ -39,19 +39,4 @@ public final class VolumePatterns {
         }
         return true;
     }
-
-    /** Index of the pattern that exactly equals the TAIL of {@code buf[0..len)}
-     *  (most-recent press at {@code buf[len-1]}), or -1 if none matches. */
-    public static int matchTail(boolean[] buf, int len) {
-        for (int pi = 0; pi < PATTERNS.length; pi++) {
-            boolean[] p = PATTERNS[pi];
-            if (len < p.length) continue;
-            boolean ok = true;
-            for (int k = 0; k < p.length; k++) {
-                if (buf[len - p.length + k] != p[k]) { ok = false; break; }
-            }
-            if (ok) return pi;
-        }
-        return -1;
-    }
 }

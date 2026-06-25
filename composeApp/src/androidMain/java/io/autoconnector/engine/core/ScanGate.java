@@ -34,10 +34,6 @@ public final class ScanGate {
         aborted = v;
     }
 
-    public static boolean isProbesPaused() {
-        return probesPaused;
-    }
-
     public static void setProbesPaused(boolean v) {
         probesPaused = v;
     }

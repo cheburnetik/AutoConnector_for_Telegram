@@ -419,6 +419,73 @@ public class ProxyStore extends SQLiteOpenHelper {
                 new String[]{String.valueOf(proxyId), String.valueOf(System.currentTimeMillis())}) > 0;
     }
 
+    // --- background-probe cooldown ----------------------------------------
+    // The relay sets cool_until from REAL Telegram failures (markRelayFailure).
+    // A host that instead keeps FAILING the cheap background probe used to be
+    // re-probed every pass, each burning a full connect timeout — pure battery
+    // waste. We reuse the same consec_fail / cool_until columns + coolBackoff()
+    // curve so a host that fails the probe COOL_AFTER times in a row earns a
+    // growing, CAPPED (≤30 min) cooldown and drops out of dueForCheck() until it
+    // expires. A passing probe performs a full resPQ round-trip from a live DC —
+    // the same proof markAliveFromRelay() treats as authoritative — so it clears
+    // the streak/cooldown outright, identical to a relay success. Kept on the
+    // global T row only: it is the single dependable cross-mode signal, whereas
+    // the per-mode PMS streak is intentionally rewritten by recordProbe() on
+    // every probe (CONFLICT_REPLACE). dueForCheckForMode() therefore also reads
+    // this global cool_until.
+
+    /**
+     * Records a FAILED background probe for cooldown purposes only: bumps the
+     * consecutive-failure streak and, once it reaches {@link #COOL_AFTER}, sets a
+     * growing capped {@code cool_until}. Deliberately leaves
+     * {@code failures}/{@code score} alone — those are already updated by
+     * {@link #updateStats}/{@link #recordProbe} for the same probe.
+     */
+    public void markProbeFailure(long proxyId, long now) {
+        SQLiteDatabase db = getWritableDatabase();
+        Cursor c = db.rawQuery("SELECT consec_fail FROM " + T + " WHERE id=?",
+                new String[]{String.valueOf(proxyId)});
+        int consec;
+        try {
+            if (c == null || !c.moveToFirst()) return;
+            consec = c.getInt(0) + 1;
+        } finally { if (c != null) c.close(); }
+        ContentValues v = new ContentValues();
+        v.put("consec_fail", consec);
+        if (consec >= COOL_AFTER) v.put("cool_until", now + coolBackoff(consec));
+        db.update(T, v, "id=?", new String[]{String.valueOf(proxyId)});
+    }
+
+    /** Clears the probe/relay failure streak + cooldown after a successful probe
+     *  so a host just proven alive is immediately eligible again (no waiting out
+     *  a stale cooldown). The {@code AND (...)} guard makes this a no-op write for
+     *  an already-clean host — the common case on a healthy pool — so the success
+     *  path doesn't pay an extra row-write every probe. */
+    public void clearProbeCooldown(long proxyId) {
+        getWritableDatabase().execSQL(
+                "UPDATE " + T + " SET consec_fail=0, cool_until=0"
+                        + " WHERE id=? AND (consec_fail<>0 OR cool_until<>0)",
+                new Object[]{proxyId});
+    }
+
+    // --- write-batching ---------------------------------------------------
+    // Thin pass-throughs so a caller can fold several small writes (e.g. one
+    // probe's updateStats + logCheck + recordProbe + logAttempt) into ONE
+    // commit instead of 4-5 autocommit transactions — far fewer WAL fsyncs
+    // (battery / flash wear). getWritableDatabase() returns the helper's cached
+    // singleton connection, so begin/set/end below all act on the same txn.
+    // MUST be used as begin → … → setTransactionSuccessful → endTransaction in
+    // a try/finally.
+
+    /** Opens a write transaction; pair with {@link #endTransaction()}. */
+    public void beginTransaction() { getWritableDatabase().beginTransaction(); }
+
+    /** Marks the open transaction as committable. */
+    public void setTransactionSuccessful() { getWritableDatabase().setTransactionSuccessful(); }
+
+    /** Closes the open transaction (commit if marked successful, else rollback). */
+    public void endTransaction() { getWritableDatabase().endTransaction(); }
+
     /** Records one completed relay session through the given proxy. */
     public void recordSession(long proxyId, long durationMs) {
         getWritableDatabase().execSQL(
@@ -625,17 +692,8 @@ public class ProxyStore extends SQLiteOpenHelper {
         return scalar("SELECT COUNT(*) FROM " + T + " WHERE alive=1", null);
     }
 
-    public int countByType(ProxyType t) {
-        return scalar("SELECT COUNT(*) FROM " + T + " WHERE type=?",
-                new String[]{t.name()});
-    }
-
     public int countDead() {
         return scalar("SELECT COUNT(*) FROM " + T + " WHERE last_check>0 AND alive=0", null);
-    }
-
-    public int countUnchecked() {
-        return scalar("SELECT COUNT(*) FROM " + T + " WHERE last_check=0", null);
     }
 
     /** All-time probe outcomes summed across every proxy: {successes, failures}. */
@@ -656,11 +714,6 @@ public class ProxyStore extends SQLiteOpenHelper {
         return scalar("SELECT COUNT(*) FROM " + T
                         + " WHERE alive=1 AND last_check>?",
                 new String[]{String.valueOf(cutoff)});
-    }
-
-    /** Hosts that ever served at least one successful Telegram session. */
-    public int countEverServedTelegram() {
-        return scalar("SELECT COUNT(*) FROM " + T + " WHERE tg_connections>0", null);
     }
 
     /**
@@ -747,6 +800,12 @@ public class ProxyStore extends SQLiteOpenHelper {
             conds.add("(last_check=0 OR last_check<=?)");
             args.add(String.valueOf(now - minAgeMs));
         }
+        // Skip hosts on cooldown (relay failures OR repeated probe failures — see
+        // markProbeFailure): re-probing them every pass just burns connect
+        // timeouts. cool_until defaults to 0, so never-checked hosts stay
+        // eligible, and the capped backoff re-admits a host once it expires.
+        conds.add("cool_until<=?");
+        args.add(String.valueOf(now));
         // Exclude hosts already being probed RIGHT NOW so two concurrent check
         // passes (e.g. the fresh-start bootstrap loop + the mains loop) don't
         // both grab the same overdue host — no duplicate probing.
@@ -1244,14 +1303,6 @@ public class ProxyStore extends SQLiteOpenHelper {
                         + " WHERE alive=1 AND rtt_ms>0", null);
     }
 
-    /** Per-mode counterpart of {@link #avgAliveRtt()}. */
-    public int avgAliveRttForMode(NetworkMode mode) {
-        return scalar("SELECT CAST(AVG(m.rtt_ms) AS INT) FROM " + PMS + " m"
-                        + " JOIN " + T + " p ON p.id=m.proxy_id"
-                        + " WHERE m.mode=? AND m.alive=1 AND m.rtt_ms>0",
-                new String[]{mode.code});
-    }
-
     /** Zeroes every per-mode rating/tally for one network mode while keeping
      *  the rows (and the hosts) in place, so the next scan re-rates this mode
      *  from scratch. The global catalog stats are left untouched. */
@@ -1304,6 +1355,13 @@ public class ProxyStore extends SQLiteOpenHelper {
             conds.add("(m.last_check IS NULL OR m.last_check=0 OR m.last_check<=?)");
             args.add(String.valueOf(now - minAgeMs));
         }
+        // Skip hosts on cooldown. We read the GLOBAL p.cool_until (T) rather than
+        // the per-mode m.cool_until: the global value is the dependable signal
+        // (probe failures + relay failures), while the per-mode streak is reset
+        // by recordProbe()'s CONFLICT_REPLACE on every probe. Default 0 keeps
+        // never-checked hosts eligible.
+        conds.add("p.cool_until<=?");
+        args.add(String.valueOf(now));
         // Skip hosts already in flight on any concurrent pass (no duplicates).
         String inflight = inFlightCsv();
         if (inflight != null) conds.add("p.id NOT IN (" + inflight + ")");

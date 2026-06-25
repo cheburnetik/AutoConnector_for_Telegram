@@ -16,18 +16,8 @@ public final class BurstMode {
 
     private static volatile long activeUntil = 0L;
 
-    public static void activate() {
-        activeUntil = SystemClock.uptimeMillis() + DURATION_MS;
-    }
-
     public static boolean isActive() {
         return SystemClock.uptimeMillis() < activeUntil;
-    }
-
-    /** Seconds left in the burst window, 0 if inactive. */
-    public static long remainingSec() {
-        long left = activeUntil - SystemClock.uptimeMillis();
-        return left > 0 ? left / 1000 : 0;
     }
 
     private BurstMode() {}

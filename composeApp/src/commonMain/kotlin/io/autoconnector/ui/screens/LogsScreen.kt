@@ -62,9 +62,6 @@ private class Sess(val key: String, val lines: List<LogLine>) {
  * connections at once, so each session is shown as a single compact, status-
  * coloured row (id · port + a one-line summary). Tap to expand the full per-
  * session log. Every rendered line is prefixed with its HH:MM:SS timestamp.
- *
- * `errorsOnly` / `onErrorsOnly` are retained only for caller compatibility —
- * the "errors only" filter was removed; Telegram logs always show all sessions.
  */
 fun LazyListScope.logsItems(
     logs: List<LogLine>,
@@ -72,8 +69,6 @@ fun LazyListScope.logsItems(
     onLogTab: (LogTab) -> Unit,
     expanded: Set<String>,
     onToggleSession: (String) -> Unit,
-    errorsOnly: Boolean,
-    onErrorsOnly: (Boolean) -> Unit,
 ) {
     item { LogSubTabs(logTab, onLogTab) }
 

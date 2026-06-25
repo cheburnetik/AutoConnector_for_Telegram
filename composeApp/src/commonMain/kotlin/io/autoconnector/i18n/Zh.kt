@@ -470,4 +470,21 @@ object Zh : Strings {
     override val backupJsonLabel = "备份 JSON"
     override val backupAndroidFileNote = "此处无法使用文件 —— 请使用复制 / 粘贴。"
     override val factoryResetDone = "一切已重置。请关闭应用并重新打开。"
+
+    // tray
+    override val trayOpenWindow = "打开窗口"
+    override val trayRefreshSubs = "更新订阅"
+    override val trayExit = "退出"
+    override fun trayConnectorLabel(on: Boolean) =
+        if (on) "连接器：开（关闭）" else "连接器：关（开启）"
+    override fun trayScanLabel(on: Boolean) =
+        if (on) "扫描：开（关闭）" else "扫描：关（开启）"
+    override fun trayLive(n: Int) = "可用代理：${n}"
+    override val appearance = "外观"
+    override val themeLabel = "主题"
+    override val themeAuto = "自动（跟随系统）"
+    override val themeLight = "浅色"
+    override val themeDark = "深色"
+    override val drawGraphsLabel = "绘制图表"
+    override val drawGraphsSub = "在连接器和扫描标签页上显示实时图表 — 关闭可省电"
 }

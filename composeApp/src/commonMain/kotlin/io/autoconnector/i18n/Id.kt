@@ -454,4 +454,21 @@ object Id : Strings {
     override val backupJsonLabel = "JSON cadangan"
     override val backupAndroidFileNote = "Berkas tidak tersedia di sini — gunakan Salin / Tempel."
     override val factoryResetDone = "Semuanya telah diatur ulang. Tutup aplikasi dan buka lagi."
+
+    // tray
+    override val trayOpenWindow = "Buka jendela"
+    override val trayRefreshSubs = "Segarkan langganan"
+    override val trayExit = "Keluar"
+    override fun trayConnectorLabel(on: Boolean) =
+        if (on) "Konektor: AKTIF (matikan)" else "Konektor: MATI (aktifkan)"
+    override fun trayScanLabel(on: Boolean) =
+        if (on) "Pindai: AKTIF (matikan)" else "Pindai: MATI (aktifkan)"
+    override fun trayLive(n: Int) = "Proksi aktif: ${n}"
+    override val appearance = "Tampilan"
+    override val themeLabel = "Tema"
+    override val themeAuto = "Otomatis (ikuti sistem)"
+    override val themeLight = "Terang"
+    override val themeDark = "Gelap"
+    override val drawGraphsLabel = "Gambar grafik"
+    override val drawGraphsSub = "Grafik langsung di tab Connector dan Scan — matikan untuk menghemat baterai"
 }
