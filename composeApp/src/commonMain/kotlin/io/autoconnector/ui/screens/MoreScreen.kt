@@ -983,7 +983,7 @@ private fun DarkRule() {
                 layout(p.width, p.height) { p.place(-12.dp.roundToPx(), 0) }
             }
             .height(1.dp)
-            .background(Color(0xFF222222)),
+            .background(AppColors.cardBorder),
     )
 }
 
@@ -1006,7 +1006,7 @@ private fun Section(title: String, onHelp: (() -> Unit)? = null) {
                     }
                 }
                 .height(1.dp)
-                .background(Color(0xFF777777)),
+                .background(AppColors.cardBorder),
         )
         Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(title, color = AppColors.accent, fontWeight = FontWeight.Bold, fontSize = 15.sp)
@@ -1255,8 +1255,8 @@ private fun SourceTile(src: SourceItem, cb: MoreCallbacks, t: Strings) {
                 fontFamily = monospaceFontFamily(), fontSize = 13.sp, fontWeight = FontWeight.Bold,
             ),
             colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
-                unfocusedContainerColor = Color(0xFFDDDDDD),
-                focusedContainerColor = Color(0xFFDDDDDD),
+                unfocusedContainerColor = AppColors.card,
+                focusedContainerColor = AppColors.card,
             ),
         )
         // 2) Action buttons directly under the URL field + black On/Off + toggle.
@@ -1268,7 +1268,7 @@ private fun SourceTile(src: SourceItem, cb: MoreCallbacks, t: Strings) {
             Spacer(Modifier.weight(1f))
             Text(
                 if (src.enabled) "On" else "Off",
-                color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 12.sp,
+                color = AppColors.onSurface, fontWeight = FontWeight.Bold, fontSize = 12.sp,
             )
             Spacer(Modifier.width(2.dp))
             Switch(

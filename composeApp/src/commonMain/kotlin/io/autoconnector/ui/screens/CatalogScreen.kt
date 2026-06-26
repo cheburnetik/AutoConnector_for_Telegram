@@ -588,12 +588,12 @@ fun CatalogModeManagePage(
                     Button(
                         onClick = { pending = ManageConfirm(label, hint, t.gotIt) { onResetStats() } },
                         modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDDDDDD), contentColor = Color.Black),
+                        colors = ButtonDefaults.buttonColors(containerColor = AppColors.card, contentColor = AppColors.onSurface),
                     ) { Text(label) }
                     Text(hint, color = AppColors.onSurfaceMuted, fontSize = 13.sp)
                 }
 
-                androidx.compose.material3.HorizontalDivider(thickness = 1.dp, color = Color.Black)
+                androidx.compose.material3.HorizontalDivider(thickness = 1.dp, color = AppColors.cardBorder)
 
                 // Delete everything in this mode (destructive).
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -602,12 +602,12 @@ fun CatalogModeManagePage(
                     Button(
                         onClick = { pending = ManageConfirm(label, hint, t.delete) { onForget() } },
                         modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDDDDDD), contentColor = Color.Black),
+                        colors = ButtonDefaults.buttonColors(containerColor = AppColors.card, contentColor = AppColors.onSurface),
                     ) { Text(label) }
                     Text(hint, color = AppColors.onSurfaceMuted, fontSize = 13.sp)
                 }
 
-                androidx.compose.material3.HorizontalDivider(thickness = 1.dp, color = Color.Black)
+                androidx.compose.material3.HorizontalDivider(thickness = 1.dp, color = AppColors.cardBorder)
 
                 // Copy hosts + ratings here from another mode.
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {

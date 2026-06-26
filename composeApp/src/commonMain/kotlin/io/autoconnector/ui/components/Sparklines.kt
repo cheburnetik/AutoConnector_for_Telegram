@@ -44,11 +44,11 @@ val LocalDrawGraphs = staticCompositionLocalOf { true }
 // (the width of the leftmost bar) while the fresh leftmost bar grows from zero.
 private const val ANIM_MS = 300_000_000L       // 0.3 s for both slide and grow
 private const val LOG_MIX = 0.40               // blend: 40% log + 60% linear
-private val FrameColor = Color(0xDD202833)
+private val FrameColor = Color(0x55808080)
 private val PanelColor = Color(0x0C808080)
-private val GridColor = Color(0x2E000000)
-private val LabelFill = Color(0xFF333A44)
-private val LabelHalo = Color(0xFFFFFFFF)
+private val GridColor = Color(0x40808080)
+private val LabelFill = Color(0xFFEAEEF2)
+private val LabelHalo = Color(0xE0000000)
 
 // Frame-invariant gridline label styling — these never change, so they are hoisted
 // out of the per-frame draw lambda (they used to be reallocated on every frame).

@@ -1912,6 +1912,6 @@ class DesktopEngine(private val dataDir: File) : Engine {
     companion object {
         // Single dotted-semver version line for the desktop build (matches the
         // GitHub release tag vX.Y.Z). Build date is injected at launch — see appInfo().
-        private const val DESKTOP_VERSION = "1.1.22"
+        private const val DESKTOP_VERSION = "1.1.24"
     }
 }
