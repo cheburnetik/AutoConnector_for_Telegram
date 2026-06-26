@@ -82,6 +82,20 @@ private fun initialWindowSize(): DpSize {
 
 fun main() = application {
     val engine = remember { DesktopEngine(appDataDir()) }
+    // Crash diagnostics: the GUI launcher has no console, so route any uncaught
+    // exception (composition / EDT / coroutine) to a log file in the user's home.
+    remember {
+        val prev = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { t, e ->
+            runCatching {
+                java.io.File(System.getProperty("user.home"), "autoconnector-crash.log")
+                    .appendText("[" + java.util.Date() + "] thread=" + t.name + "\n" + e.stackTraceToString() + "\n\n")
+            }
+            e.printStackTrace()
+            prev?.uncaughtException(t, e)
+        }
+        0
+    }
     // Start the engine OFF the composition thread so the window always appears,
     // even if start() blocks (global-hotkey native hook, relay bind, first DB
     // open). Guarded so a startup error can't crash the UI.

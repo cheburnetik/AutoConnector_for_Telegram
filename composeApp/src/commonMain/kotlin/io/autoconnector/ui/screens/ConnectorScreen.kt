@@ -229,7 +229,7 @@ internal fun PrewarmTable(s: EngineState, t: Strings) {
                 cell(r.traffic, mono = true),
             ))
         }
-        StatTable(rows = rows, weights = listOf(2.2f, 0.9f, 1f, 1.3f), fontSize = 13, bg = Color.White, border = Color(0xFF999999))
+        StatTable(rows = rows, weights = listOf(2.2f, 0.9f, 1f, 1.3f), fontSize = 13, bg = AppColors.card, border = AppColors.cardBorder)
     }
 }
 
@@ -279,7 +279,7 @@ internal fun ActiveSocketsTable(s: EngineState, t: Strings) {
                 cell(c.traffic, mono = true),
             ))
         }
-        StatTable(rows = rows, weights = listOf(2.2f, 1f, 1f), fontSize = 14, bg = Color.White, border = Color(0xFF999999))
+        StatTable(rows = rows, weights = listOf(2.2f, 1f, 1f), fontSize = 14, bg = AppColors.card, border = AppColors.cardBorder)
         // Footnote explaining the * marker (only when a warm socket is present).
         if (s.sessions.any { it.fromPrewarm }) Caption(t.prewarmStar)
     }
@@ -296,12 +296,12 @@ private fun ConnNowTable(rows: List<Pair<String, String>>) {
     Box(
         Modifier.fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
-            .background(Color.White)
-            .border(1.dp, Color(0xFF999999), RoundedCornerShape(10.dp)),
+            .background(AppColors.card)
+            .border(1.dp, AppColors.cardBorder, RoundedCornerShape(10.dp)),
     ) {
         Column {
             rows.forEachIndexed { i, (label, value) ->
-                if (i > 0) Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFF999999)))
+                if (i > 0) Box(Modifier.fillMaxWidth().height(1.dp).background(AppColors.cardBorder))
                 Row(
                     Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -323,7 +323,7 @@ private fun ConnNowTable(rows: List<Pair<String, String>>) {
 @Composable
 internal fun CurrentProxyTable(p: ProxyInfo?, t: Strings) {
     if (p == null) {
-        StatTable(rows = listOf(listOf(cell(t.noActiveProxy, AppColors.onSurfaceMuted))), bg = Color.White, border = Color(0xFF999999))
+        StatTable(rows = listOf(listOf(cell(t.noActiveProxy, AppColors.onSurfaceMuted))), bg = AppColors.card, border = AppColors.cardBorder)
         return
     }
     val rows = ArrayList<List<Cell>>()
@@ -333,7 +333,7 @@ internal fun CurrentProxyTable(p: ProxyInfo?, t: Strings) {
     p.tls?.let { rows.add(listOf(cell("FakeTLS / SNI", AppColors.onSurfaceMuted), cell(it, mono = true))) }
     p.secret?.let { rows.add(listOf(cell(t.secret, AppColors.onSurfaceMuted), cell(it, mono = true))) }
     rows.add(listOf(cell(t.antiDpi, AppColors.onSurfaceMuted), cell(p.dpi, mono = true)))
-    StatTable(rows = rows, weights = listOf(1f, 2f), bg = Color.White, border = Color(0xFF999999))
+    StatTable(rows = rows, weights = listOf(1f, 2f), bg = AppColors.card, border = AppColors.cardBorder)
 }
 
 private fun statusLabel(c: ConnState, t: Strings): String = when (c) {

@@ -8,6 +8,7 @@ import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -68,7 +69,7 @@ object AppColors {
         background = Color(0xFF14171C), card = Color(0xFF1D2228), cardBorder = Color(0xFF2E353E),
         onSurface = Color(0xFFE7ECF2), onSurfaceMuted = Color(0xFF98A4B2),
         green = Color(0xFF35C667), amber = Color(0xFFE0A53A), blue = Color(0xFF5AA0F0),
-        red = Color(0xFFF0564E), gray = Color(0xFF8A94A0),
+        red = Color(0xFFE06B62), gray = Color(0xFF8A94A0),
     )
 
     // Live palette — Compose snapshot state, defaults to Light (declared above).
@@ -164,7 +165,12 @@ private fun Typography.withFontFamily(ff: FontFamily) = copy(
 fun AppTheme(dark: Boolean = false, content: @Composable () -> Unit) {
     // Swap the global palette BEFORE composing children so the first frame already
     // renders in the right theme (children read the fresh snapshot values).
-    AppColors.apply(dark)
+    // Publish the palette to the global snapshot state in a SideEffect — i.e.
+    // AFTER (re)composition, never during it. Writing this shared state during a
+    // RE-composition (live light↔dark toggle) is what crashed Compose on desktop;
+    // the MaterialTheme scheme below already uses the static palette, so colours
+    // are correct from the first frame regardless.
+    SideEffect { AppColors.apply(dark) }
     val ff = defaultFontFamily()
     val typography = if (ff != null) appTypography.withFontFamily(ff) else appTypography
     MaterialTheme(
