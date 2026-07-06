@@ -35,3 +35,6 @@ run-windows-wine.sh
 # JVM crash artifacts
 *.hprof
 hs_err_pid*.log
+
+# Local credentials (server-only, never commit)
+.creds.local
