@@ -9,6 +9,8 @@ import android.os.Build
 import android.provider.Settings
 import androidx.core.app.NotificationManagerCompat
 import io.autoconnector.engine.AppInfo
+import io.autoconnector.engine.BulkAddResult
+import io.autoconnector.engine.SubscriptionDedup
 import io.autoconnector.engine.CatalogItem
 import io.autoconnector.engine.ConnState
 import io.autoconnector.engine.Engine
@@ -458,13 +460,15 @@ class AndroidEngine(context: Context) : Engine {
         refreshSources()
     }
 
-    override fun addSourcesBulk(urls: String): Int {
-        var n = 0
-        urls.lines().map { it.trim() }
-            .filter { it.startsWith("http://") || it.startsWith("https://") }
-            .forEach { store.upsertSource(it); n++ }
-        if (n > 0) { refreshSources(); appendLog("✓ subscriptions added: $n", LogCat.SUBS) }
-        return n
+    override fun addSourcesBulk(urls: String): BulkAddResult {
+        val plan = SubscriptionDedup.plan(urls, store.listSources().map { it.url })
+        plan.toAdd.forEach { store.upsertSource(it) }
+        if (plan.toAdd.isNotEmpty()) {
+            refreshSources()
+            appendLog("✓ subscriptions added: ${plan.toAdd.size}", LogCat.SUBS)
+        }
+        plan.ignored.forEach { appendLog("⚠ subscription ignored (${it.reason}): ${it.url}", LogCat.SUBS) }
+        return BulkAddResult(plan.toAdd.size, plan.ignored)
     }
 
     override fun addManualProxies(text: String): Int {

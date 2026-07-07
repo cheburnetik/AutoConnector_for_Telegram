@@ -27,11 +27,14 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.HelpOutline
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.OpenInNew
+import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
@@ -72,6 +75,8 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.autoconnector.engine.AppInfo
+import io.autoconnector.engine.BulkAddResult
+import io.autoconnector.engine.DupReason
 import io.autoconnector.engine.EngineSettings
 import io.autoconnector.engine.EngineState
 import io.autoconnector.engine.ExpEngineOption
@@ -122,7 +127,7 @@ class MoreCallbacks(
     val onUpdateSettings: (EngineSettings) -> Unit,
     val sources: List<SourceItem>,
     val onAddSource: (String) -> Unit,
-    val onAddSourcesBulk: (String) -> Int,
+    val onAddSourcesBulk: (String) -> BulkAddResult,
     val onAddManualProxies: (String) -> Int,
     val onRemoveSource: (Long) -> Unit,
     val onToggleSource: (Long, Boolean) -> Unit,
@@ -1211,9 +1216,26 @@ private fun ChoiceRow(title: String, desc: String, selected: Boolean, onSelect: 
 
 // === Sources ============================================================
 
+/** Sort keys for the subscriptions list. Each can be applied ascending or
+ *  descending via the direction toggle. */
+private enum class SourceSort { DEFAULT, ALIVE, TOTAL, DEAD, LAST_REFRESH, NAME, ENABLED }
+
+private fun sortLabelText(t: Strings, s: SourceSort): String = when (s) {
+    SourceSort.DEFAULT -> t.sortDefault
+    SourceSort.ALIVE -> t.sortAlive
+    SourceSort.TOTAL -> t.sortTotal
+    SourceSort.DEAD -> t.sortDead
+    SourceSort.LAST_REFRESH -> t.sortLastRefresh
+    SourceSort.NAME -> t.sortName
+    SourceSort.ENABLED -> t.sortEnabled
+}
+
 @Composable
 private fun SourcesPage(cb: MoreCallbacks) {
     val t = LocalStrings.current
+    var sort by remember { mutableStateOf(SourceSort.DEFAULT) }
+    var desc by remember { mutableStateOf(false) }
+    var sortMenu by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize()) {
         // Header: a [+] opens the dedicated bulk-add page.
         Row(
@@ -1224,10 +1246,63 @@ private fun SourcesPage(cb: MoreCallbacks) {
             Spacer(Modifier.width(8.dp))
             Button({ cb.onOpenDest(MoreDest.ADD_SOURCES) }) { Text("+", fontSize = 18.sp) }
         }
+        // Sort bar: pick a key, then flip ascending/descending with the arrow.
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("${t.sortLabel}:", color = AppColors.onSurfaceMuted, fontSize = 13.sp)
+            Spacer(Modifier.width(8.dp))
+            Box(Modifier.weight(1f)) {
+                OutlinedButton({ sortMenu = true }, Modifier.fillMaxWidth()) {
+                    Icon(Icons.Filled.Sort, t.sortLabel, Modifier.size(18.dp), tint = AppColors.onSurface)
+                    Spacer(Modifier.width(6.dp))
+                    Text(sortLabelText(t, sort), fontSize = 13.sp, color = AppColors.onSurface)
+                }
+                DropdownMenu(sortMenu, { sortMenu = false }) {
+                    SourceSort.entries.forEach { opt ->
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    sortLabelText(t, opt),
+                                    fontSize = 14.sp,
+                                    fontWeight = if (opt == sort) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (opt == sort) AppColors.accent else AppColors.onSurface,
+                                )
+                            },
+                            onClick = { sort = opt; sortMenu = false },
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.width(4.dp))
+            IconButton({ desc = !desc }) {
+                Icon(
+                    if (desc) Icons.Filled.ArrowDownward else Icons.Filled.ArrowUpward,
+                    if (desc) t.sortDesc else t.sortAsc,
+                    tint = AppColors.accent,
+                )
+            }
+        }
         // Only real http(s) subscriptions appear here. Manually-pasted proxies
         // (the "manual:fixed" sentinel source) are NOT subscriptions — they live
         // in the catalog only. Tiles are full-bleed with an edge-to-edge divider.
-        val subs = cb.sources.filter { it.url.startsWith("http") }
+        val subs = remember(cb.sources, sort, desc) {
+            val base = cb.sources.filter { it.url.startsWith("http") }
+            val cmp: Comparator<SourceItem> = when (sort) {
+                SourceSort.DEFAULT -> compareBy { it.seq }
+                SourceSort.ALIVE -> compareBy { it.alive }
+                SourceSort.TOTAL -> compareBy { it.total }
+                SourceSort.DEAD -> compareBy { it.dead }
+                // "never downloaded" (-1) counts as the oldest, so it sinks to the
+                // bottom in the default (most-recent-first) ascending order.
+                SourceSort.LAST_REFRESH -> compareBy { if (it.lastRefreshMinsAgo < 0) Long.MAX_VALUE else it.lastRefreshMinsAgo }
+                SourceSort.NAME -> compareBy { it.url.lowercase() }
+                SourceSort.ENABLED -> compareByDescending<SourceItem> { it.enabled }.thenBy { it.seq }
+            }
+            val sorted = base.sortedWith(cmp)
+            if (desc) sorted.reversed() else sorted
+        }
         Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState())) {
             subs.forEachIndexed { i, src ->
                 if (i > 0) HorizontalDivider(thickness = 2.dp, color = AppColors.gray)
@@ -1322,6 +1397,7 @@ private fun AddSourcesPage(cb: MoreCallbacks) {
     var subsText by remember { mutableStateOf("") }
     var proxyText by remember { mutableStateOf("") }
     var result by remember { mutableStateOf<String?>(null) }
+    var ignored by remember { mutableStateOf<List<io.autoconnector.engine.IgnoredLine>>(emptyList()) }
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -1345,15 +1421,37 @@ private fun AddSourcesPage(cb: MoreCallbacks) {
         )
         Button(
             {
-                val a = if (subsText.isNotBlank()) cb.onAddSourcesBulk(subsText) else 0
+                val a = if (subsText.isNotBlank()) cb.onAddSourcesBulk(subsText) else BulkAddResult(0)
                 val b = if (proxyText.isNotBlank()) cb.onAddManualProxies(proxyText) else 0
-                result = t.addedFmt(a, b)
+                result = t.addedFmt(a.added, b)
+                ignored = a.ignored
                 subsText = ""; proxyText = ""
             },
             Modifier.fillMaxWidth(),
         ) { Text(t.addButton, fontSize = 16.sp) }
         result?.let { Text(it, color = AppColors.green, fontWeight = FontWeight.Bold, fontSize = 14.sp) }
+        // Auto-ignored duplicates / invalid lines: tell the user exactly what was
+        // dropped and why (one line each), so a silent dedupe never looks like a bug.
+        if (ignored.isNotEmpty()) {
+            Text(
+                t.ignoredDupFmt(ignored.size),
+                color = AppColors.accent, fontWeight = FontWeight.Bold, fontSize = 13.sp,
+            )
+            ignored.forEach { ig ->
+                Text(
+                    "• ${ig.url} — ${dupReasonText(t, ig.reason)}",
+                    color = AppColors.onSurfaceMuted, fontSize = 12.sp, fontFamily = monospaceFontFamily(),
+                )
+            }
+        }
     }
+}
+
+/** Localised human reason for why a pasted subscription line was auto-ignored. */
+private fun dupReasonText(t: Strings, r: DupReason): String = when (r) {
+    DupReason.EXISTING -> t.dupReasonExisting
+    DupReason.IN_BATCH -> t.dupReasonInBatch
+    DupReason.NOT_URL -> t.dupReasonNotUrl
 }
 
 /** minutes-ago → short "Nм/Nч/Nд" (paired with [Strings.agoFmt]). */

@@ -310,6 +310,24 @@ interface Strings {
     val addProxiesLabel: String; val addProxiesHelp: String
     val addButton: String
     fun addedFmt(subs: Int, proxies: Int): String
+    // Bulk-add: auto-ignored duplicate / invalid lines. Defaults are English;
+    // Ru/En override. New members carry default bodies so the ~34 per-language
+    // files don't all need editing.
+    fun ignoredDupFmt(count: Int): String = "Auto-ignored $count line(s):"
+    val dupReasonExisting: String get() = "already in the list"
+    val dupReasonInBatch: String get() = "duplicated in the pasted list"
+    val dupReasonNotUrl: String get() = "not a valid http(s) URL"
+    // Subscriptions sort bar.
+    val sortLabel: String get() = "Sort"
+    val sortAsc: String get() = "Ascending"
+    val sortDesc: String get() = "Descending"
+    val sortDefault: String get() = "Default order"
+    val sortAlive: String get() = "Live hosts"
+    val sortTotal: String get() = "Total hosts"
+    val sortDead: String get() = "Dead hosts"
+    val sortLastRefresh: String get() = "Last downloaded"
+    val sortName: String get() = "URL (A–Z)"
+    val sortEnabled: String get() = "Enabled first"
     // connector graphs
     val perSecond: String
     val graphSpeed: String; val graphVolume: String; val graphLatency: String; val graphConnects: String

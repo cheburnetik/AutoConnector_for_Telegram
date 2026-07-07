@@ -95,6 +95,69 @@ data class SourceItem(
     val downloadingSec: Long = 0,       // …for this many seconds
 )
 
+/** Why one pasted line was skipped during a bulk subscription add. */
+enum class DupReason { EXISTING, IN_BATCH, NOT_URL }
+
+/** A pasted line that was NOT added, with the reason it was skipped. */
+data class IgnoredLine(val url: String, val reason: DupReason)
+
+/** Outcome of [Engine.addSourcesBulk]: how many subscriptions were actually
+ *  added, plus every line that was auto-ignored (duplicate / invalid) so the UI
+ *  can tell the user exactly what was dropped and why. */
+data class BulkAddResult(
+    val added: Int,
+    val ignored: List<IgnoredLine> = emptyList(),
+)
+
+/** The insert plan produced by [SubscriptionDedup.plan]. */
+class BulkAddPlan(val toAdd: List<String>, val ignored: List<IgnoredLine>)
+
+/** Duplicate detection for subscription URLs — shared by both platform engines
+ *  so Android and desktop behave identically. */
+object SubscriptionDedup {
+    /** Canonical key for duplicate detection: trims, drops the `#fragment` and
+     *  any trailing slashes, and lower-cases only the scheme+host (path and
+     *  query are kept as-is, since those can be case-sensitive). This catches
+     *  the common near-duplicates — trailing slash, host case, fragment — that
+     *  the DB's raw-string UNIQUE constraint would miss. */
+    fun normalize(raw: String): String {
+        var u = raw.trim()
+        val frag = u.indexOf('#'); if (frag >= 0) u = u.substring(0, frag)
+        u = u.trimEnd('/')
+        val s = u.indexOf("://")
+        if (s < 0) return u.lowercase()
+        var pathStart = u.length
+        var i = s + 3
+        while (i < u.length) { val c = u[i]; if (c == '/' || c == '?') { pathStart = i; break }; i++ }
+        return u.substring(0, pathStart).lowercase() + u.substring(pathStart)
+    }
+
+    /** Splits pasted [text] into the subscriptions to insert vs. the lines to
+     *  skip, comparing each line against [existingUrls] and against earlier
+     *  lines of the same paste. Blank lines are dropped silently. */
+    fun plan(text: String, existingUrls: List<String>): BulkAddPlan {
+        val seen = HashSet<String>()
+        existingUrls.forEach { seen.add(normalize(it)) }
+        val batch = HashSet<String>()
+        val toAdd = ArrayList<String>()
+        val ignored = ArrayList<IgnoredLine>()
+        for (rawLine in text.lines()) {
+            val line = rawLine.trim()
+            if (line.isEmpty()) continue
+            if (!(line.startsWith("http://") || line.startsWith("https://"))) {
+                ignored.add(IgnoredLine(line, DupReason.NOT_URL)); continue
+            }
+            val key = normalize(line)
+            when {
+                seen.contains(key) -> ignored.add(IgnoredLine(line, DupReason.EXISTING))
+                !batch.add(key)    -> ignored.add(IgnoredLine(line, DupReason.IN_BATCH))
+                else               -> toAdd.add(line)
+            }
+        }
+        return BulkAddPlan(toAdd, ignored)
+    }
+}
+
 data class EngineSettings(
     val portA: Int = 0,
     val portB: Int = 0,
@@ -446,8 +509,10 @@ interface Engine {
     fun removeSource(id: Long)
     fun setSourceEnabled(id: Long, enabled: Boolean)
 
-    /** Bulk-add subscriptions: each non-blank http(s) line becomes a source. Returns how many were added. */
-    fun addSourcesBulk(urls: String): Int
+    /** Bulk-add subscriptions: each non-blank http(s) line becomes a source,
+     *  unless it duplicates an existing subscription or an earlier line in the
+     *  same paste. Returns how many were added plus every auto-ignored line. */
+    fun addSourcesBulk(urls: String): BulkAddResult
 
     /** Parse a pasted batch of proxy links and add them as a fixed (non-downloadable) list. Returns how many new proxies were added. */
     fun addManualProxies(text: String): Int

@@ -38,3 +38,4 @@ hs_err_pid*.log
 
 # Local credentials (server-only, never commit)
 .creds.local
+
